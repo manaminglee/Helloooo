@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { getCreatorAuthHeaders } from '../utils/creatorAuth';
 
 const API_BASE = import.meta.env.VITE_SOCKET_URL || '';
 
@@ -90,7 +91,7 @@ export function useCreators() {
     try {
       const res = await fetch(`${API_BASE}/api/creators/withdraw`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },
         body: JSON.stringify({ upi })
       });
       const data = await res.json();
@@ -121,33 +122,37 @@ export function useCreators() {
     }
   };
 
-  const fetchMyActivity = async () => {
+  const fetchMyActivity = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/creators/my-activity`);
+      const res = await fetch(`${API_BASE}/api/creators/my-activity`, {
+        headers: { ...getCreatorAuthHeaders() }
+      });
       const data = await res.json();
       if (!res.ok) return { entries: [], error: data.error };
       return { entries: data.entries || [] };
     } catch (e) {
       return { entries: [], error: 'Network error' };
     }
-  };
+  }, []);
 
-  const fetchMyWithdrawals = async () => {
+  const fetchMyWithdrawals = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/creators/my-withdrawals`);
+      const res = await fetch(`${API_BASE}/api/creators/my-withdrawals`, {
+        headers: { ...getCreatorAuthHeaders() }
+      });
       const data = await res.json();
       if (!res.ok) return { withdrawals: [], error: data.error };
       return { withdrawals: data.withdrawals || [] };
     } catch (e) {
       return { withdrawals: [], error: 'Network error' };
     }
-  };
+  }, []);
 
   const updateProfile = async (bio, avatar_url) => {
     try {
       const res = await fetch(`${API_BASE}/api/creators/update-profile`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },
         body: JSON.stringify({ bio, avatar_url })
       });
       const data = await res.json();

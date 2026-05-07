@@ -21,7 +21,14 @@ export function AdminDashboard({ onJoinRoom }) {
   const [history, setHistory] = useState([]);
   const [economyLogs, setEconomyLogs] = useState([]);
   const [toast, setToast] = useState(null);
-  const [adForm, setAdForm] = useState({ hero: '', sidebar: '', footer: '' });
+  const [adForm, setAdForm] = useState({
+    hero: '',
+    sidebar: '',
+    footer: '',
+    chat_banner: '',
+    chat_sidebar: '',
+  });
+  const [manualGrantIp, setManualGrantIp] = useState('');
   const socketRef = useRef(null);
 
   const fetchStats = async (adminKey) => {
@@ -32,7 +39,7 @@ export function AdminDashboard({ onJoinRoom }) {
       if (res.ok) {
         const data = await res.json();
         setStats(data);
-        if (data.adScripts) setAdForm(data.adScripts);
+        if (data.adScripts) setAdForm((prev) => ({ ...prev, ...data.adScripts }));
         setError('');
         setIsLogged(true);
         sessionStorage.setItem('mm_admin_key', adminKey);
@@ -131,8 +138,16 @@ export function AdminDashboard({ onJoinRoom }) {
         headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
         body: JSON.stringify({ adScripts: adForm }),
       });
-      if (res.ok) setToast('✅ Ad Settings Updated!');
-    } catch (e) { }
+      if (res.ok) {
+        const data = await res.json();
+        setStats((prev) => (prev ? { ...prev, ...data } : data));
+        if (data.adScripts) setAdForm((prev) => ({ ...prev, ...data.adScripts }));
+        fetchStats(key);
+        setToast('✅ Ad Settings Updated!');
+      } else setToast('⚠️ Ad save failed');
+    } catch (e) {
+      setToast('⚠️ Network error');
+    }
   };
 
   const handleEndRoom = async (roomId) => {
@@ -440,12 +455,42 @@ export function AdminDashboard({ onJoinRoom }) {
     </div>
   );
 
+  const tabList = [
+    { id: 'overview', label: 'Overview', icon: '📊' },
+    { id: 'users', label: 'Users', icon: '👤' },
+    { id: 'creators', label: 'Creators', icon: '⭐', badge: creators.filter(c => c.status === 'pending').length },
+    { id: 'room-monitoring', label: 'Rooms', icon: '👁️' },
+    { id: 'economy', label: 'Economy', icon: '🪙' },
+    { id: 'security', label: 'Security', icon: '🛡️' },
+    { id: 'ads', label: 'Ads', icon: '💰' },
+    { id: 'logic', label: 'Settings', icon: '⚙️' },
+    { id: 'history', label: 'History', icon: '📜' },
+    { id: 'admin-ai', label: 'AI', icon: '🧠' },
+  ];
+
   return (
     <div className="min-h-screen bg-black text-[#f8fafc] font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
-      <div className="flex min-h-screen">
+      <div className="flex flex-col lg:flex-row min-h-screen">
+        {/* Mobile / tablet tab strip */}
+        <nav className="lg:hidden flex gap-1 overflow-x-auto p-2 border-b border-white/10 bg-zinc-950/95 sticky top-0 z-[100] shrink-0" aria-label="Admin sections">
+          {tabList.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`shrink-0 px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-tight whitespace-nowrap border transition-all ${
+                activeTab === tab.id ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' : 'bg-white/5 text-white/40 border-white/10'
+              }`}
+            >
+              <span className="mr-1 opacity-70">{tab.icon}</span>
+              {tab.label}
+              {tab.badge > 0 && <span className="ml-1 text-amber-400">({tab.badge})</span>}
+            </button>
+          ))}
+        </nav>
 
         {/* Sidebar Nav */}
-        <aside className="w-72 border-r border-white/5 bg-black/40 backdrop-blur-3xl p-8 hidden lg:flex flex-col gap-10">
+        <aside className="w-72 border-r border-white/5 bg-black/40 backdrop-blur-3xl p-8 hidden lg:flex flex-col gap-10 shrink-0">
           <div className="flex items-center gap-4 px-2">
             <img src="/apple-touch-icon.png" alt="M" className="w-10 h-10 object-contain drop-shadow-[0_0_10px_#06b6d4]" />
             <div className="flex flex-col">
@@ -455,24 +500,14 @@ export function AdminDashboard({ onJoinRoom }) {
           </div>
 
           <nav className="flex flex-col gap-1.5">
-            {[
-              { id: 'overview', label: 'Overview', icon: '📊' },
-              { id: 'users', label: 'Active Users', icon: '👤' },
-              { id: 'creators', label: 'Creator Hub', icon: '⭐', badge: creators.filter(c => c.status === 'pending').length },
-              { id: 'room-monitoring', label: 'Live Monitoring', icon: '👁️' },
-              { id: 'economy', label: 'Economy Hub', icon: '🪙' },
-              { id: 'security', label: 'Security & Moderation', icon: '🛡️' },
-              { id: 'ads', label: 'Ads Manager', icon: '💰' },
-              { id: 'logic', label: 'System Settings', icon: '⚙️' },
-              { id: 'history', label: 'Admin History', icon: '📜' },
-              { id: 'admin-ai', label: 'Admin AI (Health)', icon: '🧠', color: 'text-amber-400' },
-            ].map(tab => (
+            {tabList.map(tab => (
               <button
                 key={tab.id}
+                type="button"
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center gap-4 px-5 py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all ${activeTab === tab.id ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-xl' : 'text-white/30 hover:text-white/60 hover:bg-white/5'}`}
               >
-                <span className="text-lg opacity-60 grayscale group-hover:grayscale-0">{tab.icon}</span>
+                <span className="text-lg opacity-60">{tab.icon}</span>
                 <span className="flex-1 text-left">{tab.label}</span>
                 {tab.badge > 0 && (
                   <span className="px-2 py-0.5 rounded-full bg-amber-500 text-black text-[8px] font-black min-w-[18px] text-center animate-pulse">
@@ -501,7 +536,7 @@ export function AdminDashboard({ onJoinRoom }) {
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-y-auto p-6 md:p-12 lg:p-14 custom-scrollbar lg:bg-[radial-gradient(circle_at_top_right,rgba(6,182,212,0.03),transparent_40%)]">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-12 lg:p-14 custom-scrollbar lg:bg-[radial-gradient(circle_at_top_right,rgba(6,182,212,0.03),transparent_40%)] min-w-0">
           <header className="flex flex-col md:flex-row md:items-center justify-between mb-12 gap-8 animate-fade-in-down">
             <div>
               <div className="flex items-center gap-3 mb-2">
@@ -898,7 +933,7 @@ export function AdminDashboard({ onJoinRoom }) {
                         <div className="text-[9px] text-white/10 mt-1">{new Date(w.created_at).toLocaleString()}</div>
                       </div>
                       <div className="text-right">
-                        <div className="text-xl font-black text-emerald-400 italic mb-2 tracking-tighter">₹{w.amount}</div>
+                        <div className="text-xl font-black text-emerald-400 italic mb-2 tracking-tighter">₹{Number(w.amount_rs ?? w.amount ?? 0).toLocaleString()}</div>
                         <span className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest ${
                           w.status === 'paid' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
                         }`}>{w.status}</span>
@@ -933,11 +968,13 @@ export function AdminDashboard({ onJoinRoom }) {
                 </div>
 
                 <form onSubmit={handleAdSave} className="space-y-8">
-                  <div className="grid lg:grid-cols-3 gap-8">
+                  <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-8">
                     {[
-                      { id: 'hero', label: 'Primary Hero Slot', desc: 'Center top landing' },
-                      { id: 'sidebar', label: 'Sidebar Gutter', desc: 'Floating side slot' },
-                      { id: 'footer', label: 'Basement Overlay', desc: 'Bottom landing slot' },
+                      { id: 'hero', label: 'Primary Hero Slot', desc: 'Landing top' },
+                      { id: 'sidebar', label: 'Mid-page rail', desc: 'Landing middle' },
+                      { id: 'footer', label: 'Pre-footer', desc: 'Landing bottom' },
+                      { id: 'chat_banner', label: 'Chat banner', desc: 'All chat/video UIs' },
+                      { id: 'chat_sidebar', label: 'Chat sidebar', desc: 'Group rooms (desktop)' },
                     ].map(slot => (
                       <div key={slot.id} className="space-y-4">
                         <div className="flex justify-between items-center px-1">
@@ -981,15 +1018,23 @@ export function AdminDashboard({ onJoinRoom }) {
                   <div className="p-6 rounded-3xl bg-white/5 border border-white/10 text-center">
                     <div className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Manual IP Grant</div>
                     <div className="flex gap-2">
-                       <input 
-                         type="text" 
+                       <input
+                         type="text"
+                         value={manualGrantIp}
+                         onChange={(e) => setManualGrantIp(e.target.value)}
                          placeholder="IP Address..."
-                         className="bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-[10px] font-black uppercase text-amber-500 outline-none focus:border-amber-500/40"
+                         className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-[10px] font-black uppercase text-amber-500 outline-none focus:border-amber-500/40"
                          onKeyDown={(e) => {
-                           if (e.key === 'Enter') handleUpdateCoins(e.target.value, 100);
+                           if (e.key === 'Enter' && manualGrantIp.trim()) handleUpdateCoins(manualGrantIp.trim(), 100);
                          }}
                        />
-                       <button className="px-4 py-2 bg-amber-500 text-black rounded-xl font-black text-[10px] uppercase">Grant +100</button>
+                       <button
+                         type="button"
+                         onClick={() => manualGrantIp.trim() && handleUpdateCoins(manualGrantIp.trim(), 100)}
+                         className="px-4 py-2 bg-amber-500 text-black rounded-xl font-black text-[10px] uppercase hover:bg-amber-400"
+                       >
+                         Grant +100
+                       </button>
                     </div>
                   </div>
                 </div>
@@ -1199,12 +1244,9 @@ export function AdminDashboard({ onJoinRoom }) {
         </div>
       )}
 
-      {/* Tablet/Mobile Overlay Warning */}
-      <div className="lg:hidden fixed inset-0 z-[5000] bg-black p-12 flex flex-col items-center justify-center text-center">
-        <img src="/apple-touch-icon.png" alt="Logo" className="w-24 h-24 mb-10 opacity-20" />
-        <h2 className="text-2xl font-black italic uppercase tracking-tighter mb-4">Device Restriction</h2>
-        <p className="text-[11px] text-white/30 font-black uppercase tracking-[0.2em] leading-relaxed mb-12">The Administrative Dashboard requires a desktop view for proper management. Access is restricted on mobile devices.</p>
-        <button onClick={() => window.location.href = '/'} className="px-10 py-5 bg-white/5 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-white/10 hover:bg-white hover:text-black transition-all">Return to Home</button>
+      {/* Mobile: non-blocking hint — full UI remains usable */}
+      <div className="lg:hidden sticky bottom-0 z-[200] px-4 py-3 bg-amber-500/90 text-black text-[9px] font-black uppercase tracking-widest text-center border-t border-amber-400/50">
+        Mobile view: rotate to landscape or use desktop for wide tables
       </div>
     </div>
   );
@@ -1231,7 +1273,7 @@ function AdminAI({ keyProp }) {
     }
   };
 
-  useEffect(() => { fetchAI(); }, []);
+  useEffect(() => { fetchAI(); }, [keyProp]);
 
   return (
     <div className="space-y-10 animate-fade-in">

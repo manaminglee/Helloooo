@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from 'react';
+import { getCreatorAuthHeaders } from '../utils/creatorAuth';
 
 const API_BASE = import.meta.env.VITE_SOCKET_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 
@@ -45,11 +46,11 @@ function CreatorLedgerStrip({ enabled }) {
 
   useEffect(() => {
     if (!enabled) return;
-    fetch(`${API_BASE}/api/creators/my-activity`)
+    fetch(`${API_BASE}/api/creators/my-activity`, { headers: { ...getCreatorAuthHeaders() } })
       .then((r) => r.json())
       .then((d) => setActivity(d.entries || []))
       .catch(() => setActivity([]));
-    fetch(`${API_BASE}/api/creators/my-withdrawals`)
+    fetch(`${API_BASE}/api/creators/my-withdrawals`, { headers: { ...getCreatorAuthHeaders() } })
       .then((r) => r.json())
       .then((d) => setWithdrawals(d.withdrawals || []))
       .catch(() => setWithdrawals([]));
@@ -62,7 +63,7 @@ function CreatorLedgerStrip({ enabled }) {
       <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4 max-h-48 overflow-y-auto">
         <div className="text-[9px] font-black uppercase tracking-widest text-white/35 mb-2">Recent activity</div>
         {activity.length === 0 ? (
-          <p className="text-[10px] text-white/25">No log entries yet (requires Supabase activity_logs).</p>
+          <p className="text-[10px] text-white/25">No activity yet. Share your referral link to earn coins.</p>
         ) : (
           <ul className="space-y-2">
             {activity.slice(0, 8).map((row, i) => (

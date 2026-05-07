@@ -4,6 +4,7 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { countryToFlag } from '../utils/countryFlag';
+import { AdSlot } from './AdSlot';
 import { CoinBadge } from './CoinBadge';
 import { ReportSafetyModal } from './ReportSafetyModal';
 
@@ -51,7 +52,7 @@ function SecurityShield() {
   );
 }
 
-export default function GroupTextRoom({ roomId: roomIdProp, interest: interestProp, nickname, isCreator = false, myCountry, socket, isQueuing, onLeave, onFindNewPod, onJoined, coinState, registered = false, currentActiveSeconds = 0 }) {
+export default function GroupTextRoom({ roomId: roomIdProp, interest: interestProp, nickname, isCreator = false, myCountry, socket, isQueuing, onLeave, onFindNewPod, onJoined, coinState, adsEnabled = false, adScripts = {}, registered = false, currentActiveSeconds = 0 }) {
   const { balance, streak, canClaim, nextClaim, claimCoins } = coinState;
   
   const [status, setStatus] = useState(isQueuing ? 'searching' : 'connected');
@@ -331,6 +332,10 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
         </div>
       </header>
 
+      <div className="shrink-0 px-4 border-b border-white/[0.06] bg-black/30">
+        <AdSlot slotKey="chat_banner" script={adScripts?.chat_banner} adsEnabled={adsEnabled} compact />
+      </div>
+
       {/* MAIN BODY */}
       <div className="flex-1 flex overflow-hidden relative">
         
@@ -524,13 +529,15 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
         </div>
 
         {/* SIDE PANEL (DESKTOP) */}
-        <aside className="hidden sm:flex w-72 h-full flex-col bg-[#0a0c16] border-l border-white/[0.06] p-8 z-30">
-           <div className="flex items-center gap-3 mb-10">
+        <aside className="hidden sm:flex w-72 h-full flex-col bg-[#0a0c16] border-l border-white/[0.06] p-6 z-30 overflow-y-auto custom-scrollbar">
+           <div className="flex items-center gap-3 mb-6">
               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <h3 className="text-xs font-black uppercase tracking-[0.2em] text-white/40">The Realm Online</h3>
            </div>
 
-           <div className="flex-1 space-y-6 overflow-y-auto pr-2 custom-scrollbar">
+           <AdSlot slotKey="chat_sidebar" script={adScripts?.chat_sidebar} adsEnabled={adsEnabled} compact className="mb-6" />
+
+           <div className="flex-1 space-y-6 overflow-y-auto pr-2 custom-scrollbar min-h-0">
               {[{ socketId: 'me', nickname: nickname || 'You', country: myCountry, isMe: true }, ...peers].map((p, i) => (
                 <div key={p.socketId} className="flex items-center gap-4 group animate-fade-in" style={{ animationDelay: `${i * 0.1}s` }}>
                    <div className="w-10 h-10 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-center group-hover:border-indigo-500/50 transition-all">

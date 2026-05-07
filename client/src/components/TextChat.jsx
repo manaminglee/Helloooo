@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { countryToFlag } from '../utils/countryFlag';
+import { AdSlot } from './AdSlot';
 import { useLatency } from '../hooks/useLatency';
 import { CoinBadge } from './CoinBadge';
 import { ReportSafetyModal } from './ReportSafetyModal';
@@ -170,7 +171,7 @@ function VanishingMessage({ m, isMe, onReply }) {
   );
 }
 
-export default function TextChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', isCreator = false, onBack, onJoined, onFindNewPartner, adsEnabled, coinState, registered = false, currentActiveSeconds = 0 }) {
+export default function TextChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', isCreator = false, onBack, onJoined, onFindNewPartner, adsEnabled = false, adScripts = {}, coinState, registered = false, currentActiveSeconds = 0 }) {
   const { balance, streak, canClaim, nextClaim, claimCoins } = coinState;
   const [messages, setMessages] = useState([]);
   const [sparks, setSparks] = useState([]);
@@ -648,7 +649,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col pt-24 pb-8 max-w-4xl w-full mx-auto px-6 gap-6 min-h-0 relative z-10">
+      <main className="flex-1 flex flex-col pt-24 pb-8 max-w-4xl w-full mx-auto px-6 gap-4 min-h-0 relative z-10">
+        <AdSlot slotKey="chat_banner" script={adScripts?.chat_banner} adsEnabled={adsEnabled} compact className="shrink-0" />
         
         {/* CHAT CONTAINER */}
         <div className="flex-1 flex flex-col rounded-[40px] overflow-hidden border border-white/[0.05] bg-[#0a0a0a]/60 backdrop-blur-3xl shadow-[0_0_50px_rgba(0,0,0,0.5)] min-h-0 relative">

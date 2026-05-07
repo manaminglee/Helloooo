@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import { LandingPage } from './components/LandingPage';
 import { PreloadSplash } from './components/PreloadSplash';
 import { AgeVerificationGate } from './components/AgeVerificationGate';
@@ -36,8 +36,12 @@ export default function App() {
   const [roomId, setRoomId] = useState(null);
   const [preloadDone, setPreloadDone] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
-  const { socket, connected, country, onlineCount, adsEnabled, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds } = useSocket();
+  const { socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds } = useSocket();
   const coinState = useCoins();
+  const coinStateWithAds = useMemo(
+    () => ({ ...coinState, adsEnabled, adScripts }),
+    [coinState, adsEnabled, adScripts]
+  );
 
 
   const handlePreloadReady = useCallback(() => setPreloadDone(true), []);
@@ -171,7 +175,7 @@ export default function App() {
             onJoin={handleJoin}
             connected={connected}
             onlineCount={onlineCount}
-            coinState={coinState}
+            coinState={coinStateWithAds}
             isJoining={isJoining}
             registered={registered}
             currentActiveSeconds={activeSeconds}
@@ -191,6 +195,7 @@ export default function App() {
             nickname={nickname}
             isCreator={isCreator}
             adsEnabled={adsEnabled}
+            adScripts={adScripts}
             onBack={handleBack}
             onJoined={handleJoined}
             onFindNewPartner={handleFindNewPartner}
@@ -213,6 +218,7 @@ export default function App() {
             nickname={nickname}
             isCreator={isCreator}
             adsEnabled={adsEnabled}
+            adScripts={adScripts}
             onBack={handleBack}
             onJoined={handleJoined}
             onFindNewPartner={handleFindNewPartner}
@@ -238,6 +244,8 @@ export default function App() {
             onFindNewPod={roomId ? handleFindNewPod : undefined}
             onJoined={handleJoined}
             coinState={coinState}
+            adsEnabled={adsEnabled}
+            adScripts={adScripts}
             registered={registered}
             currentActiveSeconds={activeSeconds}
           />
@@ -259,6 +267,8 @@ export default function App() {
             onFindNewPod={roomId ? handleFindNewPod : undefined}
             onJoined={handleJoined}
             coinState={coinState}
+            adsEnabled={adsEnabled}
+            adScripts={adScripts}
             registered={registered}
             currentActiveSeconds={activeSeconds}
           />

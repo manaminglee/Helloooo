@@ -103,6 +103,8 @@ const settings = {
     hero: '',
     sidebar: '',
     footer: '',
+    chat_banner: '',
+    chat_sidebar: '',
   }
 };
 
@@ -224,6 +226,62 @@ function generateId(prefix) {
 function sanitize(str, max = 50) {
   if (typeof str !== 'string') return '';
   return str.trim().slice(0, max).replace(/[<>]/g, '');
+}
+
+function getClientIp(req) {
+  const xf = req.headers['x-forwarded-for'];
+  if (typeof xf === 'string' && xf.trim()) return xf.split(',')[0].trim();
+  const ip = req.ip || req.connection?.remoteAddress || '';
+  return ip === '::1' ? '127.0.0.1' : ip;
+}
+
+const MIN_CREATOR_WITHDRAWAL_COINS = 2000;
+
+/**
+ * Resolve an approved creator by X-Creator-Token / Bearer referral code, else by authorized IP.
+ */
+async function getApprovedCreatorForRequest(req) {
+  const ip = getClientIp(req);
+  const auth = req.headers.authorization || '';
+  const token = String(req.headers['x-creator-token'] || req.headers['x-creator-referral'] || '').trim()
+    || (auth.startsWith('Bearer ') ? auth.slice(7).trim() : '');
+
+  if (token) {
+    let c = null;
+    if (supabase) {
+      const { data } = await supabase.from('creators').select('*').eq('referral_code', token).maybeSingle();
+      c = data;
+    } else {
+      c = localDb.creators.find((x) => x.referral_code === token);
+    }
+    if (c && c.status === 'approved') return { creator: c, ip, via: 'token' };
+  }
+
+  let c2 = null;
+  if (supabase) {
+    const { data } = await supabase
+      .from('creators')
+      .select('*')
+      .contains('authorized_ips', [ip])
+      .eq('status', 'approved')
+      .maybeSingle();
+    c2 = data;
+  } else {
+    c2 = localDb.creators.find((x) => x.authorized_ips.includes(ip) && x.status === 'approved');
+  }
+  return { creator: c2 || null, ip, via: c2 ? 'ip' : null };
+}
+
+async function linkCreatorIpIfNeeded(creator, ip) {
+  if (!creator || !ip) return;
+  if (!Array.isArray(creator.authorized_ips)) creator.authorized_ips = [];
+  if (creator.authorized_ips.includes(ip)) return;
+  creator.authorized_ips.push(ip);
+  if (supabase) {
+    await supabase.from('creators').update({ authorized_ips: creator.authorized_ips }).eq('id', creator.id);
+  } else {
+    saveLocalDb();
+  }
 }
 
 function interestKey(interest, mode) {
@@ -405,9 +463,13 @@ app.use(rateLimit({
   standardHeaders: true,
 }));
 
-// Public settings (for client feature flags like ads, dev tools)
+// Public settings (for client feature flags like ads, dev tools, ad HTML slots)
 app.get('/api/settings', (req, res) => {
-  res.json({ adsEnabled: settings.adsEnabled, allowDevTools: settings.allowDevTools });
+  res.json({
+    adsEnabled: settings.adsEnabled,
+    allowDevTools: settings.allowDevTools,
+    adScripts: { ...settings.adScripts },
+  });
 });
 
 // 3-Minute Activity Reward (40 Coins) - Synchronized with Socket.io
@@ -655,18 +717,11 @@ app.post('/api/creators/login', async (req, res) => {
 // Update Creator Profile (Avatar & Bio)
 app.post('/api/creators/update-profile', async (req, res) => {
   const { bio, avatar_url } = req.body || {};
-  const ip = req.ip === '::1' ? '127.0.0.1' : req.ip;
 
   try {
-    let creator = null;
-    if (supabase) {
-      const { data } = await supabase.from('creators').select('*').contains('authorized_ips', [ip]).single();
-      creator = data;
-    } else {
-      creator = localDb.creators.find(c => c.authorized_ips.includes(ip));
-    }
-
+    const { creator, ip } = await getApprovedCreatorForRequest(req);
     if (!creator || creator.status !== 'approved') return res.status(403).json({ error: 'Unauthorized' });
+    await linkCreatorIpIfNeeded(creator, ip);
 
     const updates = {
       bio: bio ? sanitize(bio, 150) : creator.bio,
@@ -734,18 +789,14 @@ app.get('/api/creators/status', async (req, res) => {
 
 app.post('/api/creators/withdraw', async (req, res) => {
   const { upi } = req.body || {};
-  const ip = req.ip === '::1' ? '127.0.0.1' : req.ip;
   if (!upi) return res.status(400).json({ error: 'UPI ID required' });
   try {
-    let creator = null;
-    if (supabase) {
-      const { data } = await supabase.from('creators').select('*').contains('authorized_ips', [ip]).single();
-      creator = data;
-    } else {
-      creator = localDb.creators.find(c => c.authorized_ips.includes(ip));
-    }
+    const { creator, ip } = await getApprovedCreatorForRequest(req);
     if (!creator || creator.status !== 'approved') return res.status(403).json({ error: 'Unauthorized' });
-    if ((creator.coins_earned || 0) < 2000) return res.status(400).json({ error: 'Min. 2000 coins required' });
+    await linkCreatorIpIfNeeded(creator, ip);
+    if ((creator.coins_earned || 0) < MIN_CREATOR_WITHDRAWAL_COINS) {
+      return res.status(400).json({ error: `Min. ${MIN_CREATOR_WITHDRAWAL_COINS} coins required` });
+    }
 
     const withdrawal = {
       id: generateId('wd'),
@@ -921,30 +972,56 @@ app.get('/api/debug/webrtc-config', (req, res) => {
   });
 });
 
-/** Approved creator: recent economy activity for this IP */
+/** Approved creator: recent economy activity (token or IP; aggregates all authorized IPs) */
 app.get('/api/creators/my-activity', async (req, res) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || (req.ip === '::1' ? '127.0.0.1' : req.ip);
   try {
-    let creator = null;
-    if (supabase) {
-      const { data } = await supabase.from('creators').select('id, handle_name').contains('authorized_ips', [ip]).eq('status', 'approved').single();
-      creator = data;
-    } else {
-      creator = localDb.creators.find((c) => c.authorized_ips.includes(ip) && c.status === 'approved');
-    }
+    const { creator, ip } = await getApprovedCreatorForRequest(req);
     if (!creator) return res.status(403).json({ error: 'Not an approved creator' });
+    await linkCreatorIpIfNeeded(creator, ip);
+
+    const ips = (creator.authorized_ips && creator.authorized_ips.length) ? creator.authorized_ips : [ip];
 
     if (supabase) {
       const { data, error } = await supabase
         .from('activity_logs')
         .select('*')
-        .eq('ip', ip)
+        .in('ip', ips)
         .order('created_at', { ascending: false })
         .limit(80);
       if (error) return res.json({ entries: [] });
-      return res.json({ entries: data || [] });
+      let entries = data || [];
+      if (!entries.length) {
+        const { data: refRows } = await supabase
+          .from('referral_logs')
+          .select('*')
+          .eq('creator_id', creator.id)
+          .order('created_at', { ascending: false })
+          .limit(80);
+        entries = (refRows || []).map((l, i) => ({
+          id: `ref_${i}_${l.created_at}`,
+          ip: l.visitor_ip,
+          action: 'referral_visit',
+          amount: 10,
+          details: 'Referral link visit',
+          created_at: l.created_at,
+        }));
+      }
+      return res.json({ entries });
     }
-    res.json({ entries: [] });
+
+    const synthetic = (localDb.referral_logs || [])
+      .filter((l) => l.creator_id === creator.id)
+      .slice(-80)
+      .reverse()
+      .map((l, i) => ({
+        id: `ref_${i}_${l.created_at || i}`,
+        ip: l.visitor_ip,
+        action: 'referral_visit',
+        amount: 10,
+        details: 'Referral link visit',
+        created_at: l.created_at || new Date().toISOString(),
+      }));
+    return res.json({ entries: synthetic });
   } catch (e) {
     res.status(500).json({ error: 'Failed to load activity' });
   }
@@ -952,16 +1029,10 @@ app.get('/api/creators/my-activity', async (req, res) => {
 
 /** Approved creator: withdrawal requests for this account */
 app.get('/api/creators/my-withdrawals', async (req, res) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || (req.ip === '::1' ? '127.0.0.1' : req.ip);
   try {
-    let creator = null;
-    if (supabase) {
-      const { data } = await supabase.from('creators').select('id').contains('authorized_ips', [ip]).eq('status', 'approved').single();
-      creator = data;
-    } else {
-      creator = localDb.creators.find((c) => c.authorized_ips.includes(ip) && c.status === 'approved');
-    }
+    const { creator, ip } = await getApprovedCreatorForRequest(req);
     if (!creator) return res.status(403).json({ error: 'Not an approved creator' });
+    await linkCreatorIpIfNeeded(creator, ip);
 
     if (supabase) {
       const { data } = await supabase
@@ -1061,26 +1132,6 @@ app.get('/api/rooms/active-interests', (req, res) => {
   res.json({ interests: results });
 });
 
-// Cloudflare Turnstile verification
-app.post('/api/verify-turnstile', async (req, res) => {
-  const { token } = req.body || {};
-  const secret = process.env.TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA';
-  if (!token) return res.status(400).json({ success: false, error: 'Token required' });
-  try {
-    const ip = req.ip === '::1' ? '127.0.0.1' : req.ip;
-    const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ secret, response: token, remoteip: ip }),
-    });
-    const data = await r.json();
-    if (data.success) return res.json({ success: true });
-    return res.status(400).json({ success: false, 'error-codes': data['error-codes'] });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: 'Verification failed' });
-  }
-});
-
 // Admin auth: timing-safe comparison so key is not leaked by response time
 function requireAdmin(req, res, next) {
   const adminKey = process.env.ADMIN_KEY;
@@ -1103,9 +1154,12 @@ function requireAdmin(req, res, next) {
 // Admin: toggle settings like ads, allowDevTools, maintenanceMode, etc.
 app.post('/api/admin/settings', requireAdmin, (req, res) => {
   const body = req.body || {};
-  Object.keys(settings).forEach(key => {
-    if (key === 'adScripts' && typeof body[key] === 'object') settings[key] = body[key];
-    else if (typeof body[key] === 'boolean') settings[key] = body[key];
+  Object.keys(settings).forEach((k) => {
+    if (k === 'adScripts' && body.adScripts && typeof body.adScripts === 'object') {
+      settings.adScripts = { ...settings.adScripts, ...body.adScripts };
+    } else if (typeof body[k] === 'boolean' && typeof settings[k] === 'boolean') {
+      settings[k] = body[k];
+    }
   });
   io.emit('settings_updated', settings);
   res.json(settings);
@@ -1227,26 +1281,6 @@ app.post('/api/admin/unwarn', requireAdmin, (req, res) => {
   res.json({ success: true });
 });
 
-app.post('/api/admin/coins/update', requireAdmin, async (req, res) => {
-  const { ip, amount, set } = req.body || {};
-  if (!ip) return res.status(400).json({ error: 'IP required' });
-
-  const user = await getCoinUser(ip);
-  if (set) user.coins = parseInt(amount);
-  else user.coins += parseInt(amount);
-
-  await updateCoinUser(ip, { coins: user.coins });
-
-  // Find connected sockets with this IP and notify them
-  for (const [sid, u] of users.entries()) {
-    if (u.ip === ip) {
-      io.to(sid).emit('coins-updated', { coins: user.coins });
-    }
-  }
-
-  res.json({ success: true, balance: user.coins });
-});
-
 app.post('/api/admin/block', requireAdmin, (req, res) => {
   const { ip } = req.body || {};
   if (ip) {
@@ -1294,22 +1328,6 @@ app.post('/api/admin/content-flagged', requireAdmin, (req, res) => {
     }
   }
   res.json({ success: true, notified: count });
-});
-
-app.post('/api/admin/end-room', requireAdmin, (req, res) => {
-  const { roomId } = req.body || {};
-  const room = rooms.get(roomId);
-  if (room) {
-    io.to(roomId).emit('room-ended-by-admin');
-    [...room.users].forEach(sid => {
-      const s = io.sockets.sockets.get(sid);
-      if (s) s.leave(roomId);
-    });
-    rooms.delete(roomId);
-    if (room.interestKey) interestToRoom.delete(room.interestKey);
-    return res.json({ success: true });
-  }
-  res.status(404).json({ error: 'Room not found' });
 });
 
 app.post('/api/admin/killswitch', requireAdmin, (req, res) => {
@@ -1599,7 +1617,7 @@ app.post('/api/ai/translate', async (req, res) => {
 });
 
 // AI ADMIN SYSTEM SUMMARY
-app.get('/api/admin/ai/summary', adminMiddleware, async (req, res) => {
+app.get('/api/admin/ai/summary', requireAdmin, async (req, res) => {
   const apiKey = process.env.NVIDIA_API_KEY;
   if (!apiKey) return res.json({ summary: 'NVIDIA API Key not configured. AI diagnostics offline.' });
 
@@ -1829,7 +1847,11 @@ io.on('connection', (socket) => {
       coins: coinData.coins || 0,
       registered: !!coinData.registered,
       activeSeconds: coinData.active_seconds || 0,
-      settings: { adsEnabled: settings.adsEnabled, allowDevTools: settings.allowDevTools }
+      settings: {
+        adsEnabled: settings.adsEnabled,
+        allowDevTools: settings.allowDevTools,
+        adScripts: { ...settings.adScripts },
+      },
     });
 
     emitOnlineCount();

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { countryToFlag } from '../utils/countryFlag';
 import { CreatorProfilePopup } from './CreatorProfilePopup';
+import { AdSlot } from './AdSlot';
 
 const BlueTick = () => (
   <span className="inline-flex items-center justify-center w-3 h-3 bg-violet-500 rounded-full ml-1.5 shadow-[0_0_10px_#a78bfa]">
@@ -219,7 +220,7 @@ function RecordingIndicator() {
   );
 }
 
-export default function VideoChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', isCreator = false, adsEnabled = false, onBack, onJoined, onFindNewPartner, coinState, registered = false, currentActiveSeconds = 0 }) {
+export default function VideoChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', isCreator = false, adsEnabled = false, adScripts = {}, onBack, onJoined, onFindNewPartner, coinState, registered = false, currentActiveSeconds = 0 }) {
   const [coins, setCoins] = useState(coinState?.balance || 0);
   const [showProfileHandle, setShowProfileHandle] = useState(null);
 
@@ -1493,6 +1494,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           </button>
         </div>
       )}
+
+      <div className="shrink-0 px-2 sm:px-3">
+        <AdSlot slotKey="chat_banner" script={adScripts?.chat_banner} adsEnabled={adsEnabled} compact />
+      </div>
 
       <main className={`flex-1 flex min-h-0 relative p-1.5 sm:p-2 gap-1.5 sm:gap-2 ${isMobile && showChat ? 'flex-col' : ''}`}>
         <div

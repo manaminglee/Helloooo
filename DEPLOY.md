@@ -53,8 +53,6 @@ git push origin main
 4. Under **Environment Variables**, add:
    - **Key**: `VITE_SOCKET_URL`
    - **Value**: `https://mana-mingle-xxxx.onrender.com` (paste your Render URL from Step 2)
-   - **Key**: `VITE_TURNSTILE_SITE_KEY`
-   - **Value**: Your Cloudflare Turnstile site key (from [dash.cloudflare.com](https://dash.cloudflare.com) → Turnstile)
 
 5. Click **Deploy**. Wait for the build to finish.
 6. Copy your Vercel URL, e.g. `https://manamingle-xxxx.vercel.app` (from the deployment page).
@@ -65,7 +63,6 @@ git push origin main
 
 1. **Render** → Your service → **Environment** tab:
    - Add or edit `FRONTEND_ORIGIN` = your Vercel URL (e.g. `https://manamingle-xxxx.vercel.app`)
-   - Add `TURNSTILE_SECRET_KEY` = your Cloudflare Turnstile secret key (server-side verification)
    - Click **Save Changes**. Render will redeploy.
 
 2. **Vercel** → Your project → **Settings** → **Environment Variables**:

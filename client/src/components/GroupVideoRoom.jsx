@@ -4,6 +4,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { countryToFlag } from '../utils/countryFlag';
+import { AdSlot } from './AdSlot';
 import { useIceServers } from '../hooks/useIceServers';
 import { CoinBadge } from './CoinBadge';
 import { ReportSafetyModal } from './ReportSafetyModal';
@@ -175,7 +176,7 @@ const EMOJIS_3D = [
   { char: '👑', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/1f451/512.webp' },
 ];
 
-export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestProp, nickname, isCreator = false, myCountry, socket, isQueuing, onLeave, onFindNewPod, onJoined, coinState, registered = false, currentActiveSeconds = 0 }) {
+export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestProp, nickname, isCreator = false, myCountry, socket, isQueuing, onLeave, onFindNewPod, onJoined, coinState, adsEnabled = false, adScripts = {}, registered = false, currentActiveSeconds = 0 }) {
   const { balance = 0, streak = 0, canClaim = false, nextClaim = 0, claimCoins = () => { } } = coinState || {};
   const { iceServers } = useIceServers();
   const roomIdRef = useRef(null);
@@ -1271,6 +1272,10 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         </div>
       )}
 
+      <div className="shrink-0 px-2 sm:px-3 border-b border-white/5 bg-black/20">
+        <AdSlot slotKey="chat_banner" script={adScripts?.chat_banner} adsEnabled={adsEnabled} compact />
+      </div>
+
       {/* MAIN VIEWPORT */}
       <main className={`flex-1 flex min-h-0 relative p-1.5 sm:p-2 gap-2 ${showChat ? 'max-sm:flex-col' : ''}`}>
         <div className={`video-grid-container mm-design-panel flex-1 min-h-0 min-w-0 bg-black p-1.5 sm:p-4 pb-[calc(6.25rem+env(safe-area-inset-bottom))] sm:pb-4 relative overflow-auto ${viewMode === 'grid' ? 'grid gap-2 sm:gap-4 grid-cols-1 min-[420px]:grid-cols-2 min-[420px]:grid-rows-2 auto-rows-[minmax(100px,1fr)] min-[420px]:auto-rows-fr' : 'flex flex-col'}`}>
@@ -1327,6 +1332,10 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               ))}
             </>
           )}
+        </div>
+
+        <div className="hidden xl:flex w-48 shrink-0 flex-col border-l border-white/5 bg-black/20 p-2 overflow-y-auto custom-scrollbar">
+          <AdSlot slotKey="chat_sidebar" script={adScripts?.chat_sidebar} adsEnabled={adsEnabled} compact />
         </div>
 
         {/* CHAT PANEL */}

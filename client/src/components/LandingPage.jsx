@@ -9,6 +9,8 @@ import { countryToFlag } from '../utils/countryFlag';
 import { ParticleText } from './ParticleText';
 import { PresenceMap } from './PresenceMap';
 import { CreatorMatrix } from './CreatorMatrix';
+import { AdSlot } from './AdSlot';
+import { CREATOR_MIN_WITHDRAWAL_COINS } from '../utils/creatorAuth';
 
 const BlueTick = () => (
   <span className="inline-flex items-center justify-center w-3 h-3 bg-violet-500 rounded-full ml-1.5 shadow-[0_0_14px_rgba(167,139,250,0.45)]">
@@ -63,18 +65,6 @@ const INSIGHTS = [
   "User Feedback: Telugu-based video feeds are trending today."
 ];
 
-// Reusable Ad Placeholder component
-const AdSection = ({ position, script }) => {
-  if (!script) return (
-    <div className="w-full bg-white/[0.02] border border-white/5 rounded-2xl p-4 text-center my-6">
-      <span className="text-[10px] font-black uppercase tracking-widest text-white/10 italic">Sponsored Content [{position}]</span>
-    </div>
-  );
-  return (
-    <div className="w-full my-6 text-center overflow-hidden rounded-2xl" dangerouslySetInnerHTML={{ __html: script }} />
-  );
-};
-
 export function LandingPage({ onJoin, coinState, isJoining = false, registered = false, currentActiveSeconds = 0 }) {
   const { balance, streak, canClaim, nextClaim, claimCoins, adsEnabled, adScripts } = coinState || {};
   const [interests, setInterests] = useState([]);
@@ -118,9 +108,11 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [dialog, setDialog] = useState(null); // { title, body, confirm?, onConfirm?, onCancel? }
   const [showCommunityPolicy, setShowCommunityPolicy] = useState(false);
   const [pendingVideoMode, setPendingVideoMode] = useState(null);
-  const { creatorStatus, registerCreator, verifyReferral, requestWithdrawal, login, checkStatus, reRequestApproval, updateProfile } = useCreators();
+  const { creatorStatus, registerCreator, verifyReferral, requestWithdrawal, login, checkStatus, reRequestApproval, updateProfile, fetchMyActivity, fetchMyWithdrawals } = useCreators();
   const startRef = useRef(null);
   const [interestPresets, setInterestPresets] = useState([]);
+  const [dashboardActivity, setDashboardActivity] = useState([]);
+  const [dashboardWithdrawals, setDashboardWithdrawals] = useState([]);
 
   useEffect(() => {
     try {
@@ -213,6 +205,18 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
       socket.off('creator-status-changed', handler);
     };
   }, [socket, uniqueAccessCode, waitingForApproval]);
+
+  useEffect(() => {
+    if (!showDashboardModal || !creatorStatus?.referral_code) return;
+    let cancelled = false;
+    (async () => {
+      const [a, w] = await Promise.all([fetchMyActivity(), fetchMyWithdrawals()]);
+      if (cancelled) return;
+      setDashboardActivity(a.entries || []);
+      setDashboardWithdrawals(w.withdrawals || []);
+    })();
+    return () => { cancelled = true; };
+  }, [showDashboardModal, creatorStatus?.referral_code, creatorStatus?.coins_earned, fetchMyActivity, fetchMyWithdrawals]);
 
   const addInterest = (interestArg) => {
     if (!interestArg) return;
@@ -447,7 +451,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
       {!showDashboardModal && (
         <main className="relative z-10 pt-[calc(8rem+env(safe-area-inset-top))] sm:pt-36 pb-16 sm:pb-20 px-4 sm:px-6 max-w-7xl mx-auto flex flex-col items-center">
 
-          {adsEnabled && <AdSection position="hero" script={adScripts?.hero} />}
+          <AdSlot slotKey="hero" script={adScripts?.hero} adsEnabled={adsEnabled} className="w-full max-w-4xl" />
 
           <div className="text-center mb-0 w-full">
             <ParticleText text="MANA MINGLE" className="mb-0" />
@@ -546,6 +550,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             </div>
           </section>
 
+          <AdSlot slotKey="sidebar" script={adScripts?.sidebar} adsEnabled={adsEnabled} className="w-full max-w-2xl" />
 
           {/* UNIQUE COMPACT MODES */}
           <section className="w-full max-w-6xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-16 sm:mb-20" aria-label="Chat modes">
@@ -636,7 +641,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             </div>
           </section>
 
-          {adsEnabled && <AdSection position="footer" script={adScripts?.footer} />}
+          <AdSlot slotKey="footer" script={adScripts?.footer} adsEnabled={adsEnabled} className="w-full max-w-5xl" />
         </main>
       )}
 
@@ -1338,11 +1343,13 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                     <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Share Hub</h4>
                     <div className="p-5 bg-black/40 rounded-2xl border border-white/5">
                       <div className="text-[8px] font-black text-white/20 uppercase mb-2">Referral URL</div>
-                      <div className="text-[11px] font-bold text-white italic truncate mb-4">{`https://manamingle.site/?ref=${creatorStatus.referral_code}`}</div>
+                      <div className="text-[11px] font-bold text-white italic break-all mb-4">{`${typeof window !== 'undefined' ? window.location.origin : ''}/?ref=${creatorStatus.referral_code}`}</div>
                       <button
+                        type="button"
                         onClick={() => {
-                          navigator.clipboard.writeText(`https://manamingle.site/?ref=${creatorStatus.referral_code}`);
-                          alert('Uplink Copied');
+                          const u = `${window.location.origin}/?ref=${creatorStatus.referral_code}`;
+                          navigator.clipboard.writeText(u);
+                          showAlert('Copied', 'Referral link copied to clipboard.');
                         }}
                         className="w-full py-3 bg-white/5 border border-white/10 text-white text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-white hover:text-black transition-all"
                       >Copy Link</button>
@@ -1356,23 +1363,43 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   {/* WALLET BAR */}
                   <div className="p-12 rounded-[60px] bg-gradient-to-br from-emerald-500/10 to-transparent border border-emerald-500/20 flex flex-col md:flex-row items-center justify-between gap-8 relative overflow-hidden group">
                     <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-emerald-500/5 via-transparent to-transparent opacity-40 group-hover:scale-150 transition-all duration-1000" />
-                    <div>
+                    <div className="w-full md:flex-1 min-w-0">
                       <h3 className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.4em] mb-4">Total Liquid Assets</h3>
                       <div className="text-7xl font-black italic text-white flex items-baseline gap-4 tabular-nums">
                         ₹{creatorStatus.earnings_rs || 0}<span className="text-xl text-white/20">INR</span>
                       </div>
-                      <p className="text-[11px] font-bold text-white/30 uppercase tracking-widest mt-4">Calculated from {creatorStatus.coins_earned || 0} lifetime coins</p>
+                      <p className="text-[11px] font-bold text-white/30 uppercase tracking-widest mt-4">Calculated from {creatorStatus.coins_earned || 0} lifetime creator coins</p>
+                      <p className="text-[9px] font-bold text-white/25 mt-2 max-w-md">INR unlocks in blocks of 10,000 coins (₹150 per block). Withdrawals require at least {CREATOR_MIN_WITHDRAWAL_COINS.toLocaleString()} coins.</p>
+                      {(() => {
+                        const coins = creatorStatus.coins_earned || 0;
+                        const pct = Math.min(100, (coins / CREATOR_MIN_WITHDRAWAL_COINS) * 100);
+                        return (
+                          <div className="mt-6 max-w-md">
+                            <div className="flex justify-between text-[9px] font-black uppercase tracking-widest text-white/35 mb-1">
+                              <span>Payout threshold</span>
+                              <span className="tabular-nums">{coins.toLocaleString()} / {CREATOR_MIN_WITHDRAWAL_COINS.toLocaleString()} coins</span>
+                            </div>
+                            <div className="h-2 rounded-full bg-white/10 overflow-hidden border border-white/10">
+                              <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                     <button
+                      type="button"
+                      disabled={(creatorStatus.coins_earned || 0) < CREATOR_MIN_WITHDRAWAL_COINS}
+                      title={(creatorStatus.coins_earned || 0) < CREATOR_MIN_WITHDRAWAL_COINS ? `Need ${CREATOR_MIN_WITHDRAWAL_COINS.toLocaleString()} creator coins to request payout` : 'Request payout'}
                       onClick={async () => {
+                        if ((creatorStatus.coins_earned || 0) < CREATOR_MIN_WITHDRAWAL_COINS) return;
                         const upi = prompt('Enter UPI ID for Payout:');
                         if (upi) {
                           const res = await requestWithdrawal(upi);
-                          if (res.error) alert(res.error);
-                          else (showAlert('Transmitted', 'Withdrawal request sent to admin. Coins will be debited after verified.'));
+                          if (res.error) showAlert('Payout blocked', res.error);
+                          else showAlert('Transmitted', 'Withdrawal request sent to admin. Coins will be debited after verified.');
                         }
                       }}
-                      className="px-12 py-6 bg-emerald-500 text-black font-black uppercase tracking-widest text-xs rounded-[30px] hover:bg-white hover:scale-105 transition-all shadow-[0_20px_50px_rgba(16,185,129,0.3)] active:scale-95"
+                      className="px-12 py-6 bg-emerald-500 text-black font-black uppercase tracking-widest text-xs rounded-[30px] hover:bg-white hover:scale-105 transition-all shadow-[0_20px_50px_rgba(16,185,129,0.3)] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                     >Request Payout</button>
                   </div>
 
@@ -1393,6 +1420,44 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       </div>
                       <div className="text-5xl font-black italic text-white tabular-nums group-hover:text-indigo-400 transition-colors uppercase">{creatorStatus.referral_count || 0}</div>
                       <p className="text-[9px] font-bold text-white/20 uppercase tracking-[0.2em] mt-2 italic">Users joined via your unique uplink</p>
+                    </div>
+                  </div>
+
+                  {/* ACTIVITY & WITHDRAWAL LEDGER */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="p-8 rounded-[40px] bg-white/[0.02] border border-white/5 max-h-64 overflow-y-auto">
+                      <div className="text-[10px] font-black text-white/35 uppercase tracking-widest mb-4">Recent activity</div>
+                      {dashboardActivity.length === 0 ? (
+                        <p className="text-[10px] text-white/25">No entries yet. Share your referral link or use the app from linked devices to populate activity.</p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {dashboardActivity.slice(0, 12).map((row, i) => (
+                            <li key={row.id || i} className="text-[10px] text-white/55 border-b border-white/[0.04] pb-2 flex justify-between gap-2">
+                              <span className="text-emerald-400/90 font-mono truncate">{row.action || row.details || '—'}</span>
+                              {row.amount != null && (
+                                <span className="text-amber-400/90 shrink-0 tabular-nums">{row.amount > 0 ? '+' : ''}{row.amount}</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div className="p-8 rounded-[40px] bg-white/[0.02] border border-white/5 max-h-64 overflow-y-auto">
+                      <div className="text-[10px] font-black text-white/35 uppercase tracking-widest mb-4">Withdrawal history</div>
+                      {dashboardWithdrawals.length === 0 ? (
+                        <p className="text-[10px] text-white/25">No payout requests yet.</p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {dashboardWithdrawals.map((w) => (
+                            <li key={w.id} className="text-[10px] text-white/55 flex justify-between gap-2 border-b border-white/[0.04] pb-2">
+                              <span className="text-white/40">{w.created_at ? new Date(w.created_at).toLocaleString() : '—'}</span>
+                              <span className={`font-black uppercase shrink-0 ${w.status === 'pending' ? 'text-amber-400' : w.status === 'paid' ? 'text-emerald-400' : 'text-white/50'}`}>
+                                {w.status || 'pending'}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   </div>
 

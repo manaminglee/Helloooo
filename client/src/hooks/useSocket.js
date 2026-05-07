@@ -11,6 +11,13 @@ export function useSocket() {
   const [country, setCountry] = useState(null);
   const [onlineCount, setOnlineCount] = useState({ count: 0, regions: { in: 0, us: 0, eu: 0, ot: 0 } });
   const [adsEnabled, setAdsEnabled] = useState(false);
+  const [adScripts, setAdScripts] = useState({
+    hero: '',
+    sidebar: '',
+    footer: '',
+    chat_banner: '',
+    chat_sidebar: '',
+  });
   const [allowDevTools, setAllowDevTools] = useState(true);
   const [nickname, setNickname] = useState('Anonymous');
   const [isCreator, setIsCreator] = useState(false);
@@ -78,6 +85,9 @@ export function useSocket() {
         if (data?.settings) {
           setAdsEnabled(!!data.settings.adsEnabled);
           setAllowDevTools(!!data.settings.allowDevTools);
+          if (data.settings.adScripts && typeof data.settings.adScripts === 'object') {
+            setAdScripts((prev) => ({ ...prev, ...data.settings.adScripts }));
+          }
         }
       });
 
@@ -111,6 +121,9 @@ export function useSocket() {
         if (data) {
           if (typeof data.adsEnabled !== 'undefined') setAdsEnabled(!!data.adsEnabled);
           if (typeof data.allowDevTools !== 'undefined') setAllowDevTools(!!data.allowDevTools);
+          if (data.adScripts && typeof data.adScripts === 'object') {
+            setAdScripts((prev) => ({ ...prev, ...data.adScripts }));
+          }
         }
       });
 
@@ -142,6 +155,9 @@ export function useSocket() {
           const data = await settingsRes.json();
           if (typeof data.adsEnabled !== 'undefined') setAdsEnabled(!!data.adsEnabled);
           if (typeof data.allowDevTools !== 'undefined') setAllowDevTools(!!data.allowDevTools);
+          if (data.adScripts && typeof data.adScripts === 'object') {
+            setAdScripts((prev) => ({ ...prev, ...data.adScripts }));
+          }
         }
       } catch { }
     };
@@ -155,6 +171,7 @@ export function useSocket() {
     country,
     onlineCount,
     adsEnabled,
+    adScripts,
     allowDevTools,
     nickname,
     isCreator,
@@ -162,5 +179,5 @@ export function useSocket() {
     contentFlagged,
     registered,
     activeSeconds,
-  }), [socket, connected, country, onlineCount, adsEnabled, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds]);
+  }), [socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds]);
 }
