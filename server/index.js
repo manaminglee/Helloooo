@@ -1132,6 +1132,26 @@ app.get('/api/rooms/active-interests', (req, res) => {
   res.json({ interests: results });
 });
 
+// Cloudflare Turnstile verification
+app.post('/api/verify-turnstile', async (req, res) => {
+  const { token } = req.body || {};
+  const secret = process.env.TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA';
+  if (!token) return res.status(400).json({ success: false, error: 'Token required' });
+  try {
+    const ip = req.ip === '::1' ? '127.0.0.1' : req.ip;
+    const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret, response: token, remoteip: ip }),
+    });
+    const data = await r.json();
+    if (data.success) return res.json({ success: true });
+    return res.status(400).json({ success: false, 'error-codes': data['error-codes'] });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Verification failed' });
+  }
+});
+
 // Admin auth: timing-safe comparison so key is not leaked by response time
 function requireAdmin(req, res, next) {
   const adminKey = process.env.ADMIN_KEY;
