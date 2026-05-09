@@ -3,6 +3,11 @@
 ManaMingle is a real-time social platform for interest-based text and video conversations.  
 Users can join topic-driven rooms, chat instantly, and connect over WebRTC-powered video sessions with moderation, safety, and creator-focused tooling.
 
+## Live Site
+
+Primary redirect/domain: **[manamingle.site](https://manamingle.site)**  
+If needed, open directly via this link and you will be redirected to the active deployment.
+
 ## Highlights
 
 - Interest-based matching for group and one-to-one experiences
