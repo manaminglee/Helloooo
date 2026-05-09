@@ -1,49 +1,85 @@
-# Realm – Video pods for your vibe
+# ManaMingle
 
-**Realm** is an interest-based group video chat app. Unlike Omegle or random chat clones, you enter a **realm** (interest), pick your **vibe**, and join a **pod** of up to 4 people who share that interest. Everyone sees everyone's video.
+ManaMingle is a real-time social platform for interest-based text and video conversations.  
+Users can join topic-driven rooms, chat instantly, and connect over WebRTC-powered video sessions with moderation, safety, and creator-focused tooling.
 
-## What makes it different
+## Highlights
 
-- **Realm + vibe** – Pick an interest (e.g. Gaming, Music) and your mood (Chill, Hype, Deep talks, etc.)
-- **Pods, not strangers** – Max 4 per pod; everyone shares the same interest
-- **Icebreakers** – Conversation starters shown in the room
-- **In-pod chat** – Text chat alongside video
-- **Find new pod** – Switch to another group with the same interest
-- **Visual identity** – Syne + DM Sans, teal/amber, subtle grain and gradients
+- Interest-based matching for group and one-to-one experiences
+- Real-time messaging with Socket.IO
+- WebRTC video chat with connection resilience improvements
+- Age verification gate with Cloudflare Turnstile support
+- Creator/admin utilities for platform controls and operations
 
-## Quick start
+## Tech Stack
 
-1. **Install**
-   ```bash
-   npm install
-   cd client && npm install && cd ..
-   ```
+- Frontend: React, Vite, Tailwind CSS
+- Backend: Node.js, Express, Socket.IO
+- Realtime/Media: WebRTC + Socket signaling
+- Security: Helmet, CORS controls, request hardening, verification checks
 
-2. **Development**
-   - Terminal 1: `npm run dev` (backend on :3000)
-   - Terminal 2: `npm run dev:client` (React on :5173) → open http://localhost:5173
+## Project Structure
 
-3. **Production**
-   ```bash
-   npm run build
-   npm start
-   ```
-   Open http://localhost:3000
+- `client/` - React frontend (Vite)
+- `server/` - Express and Socket.IO backend logic
+- `vercel.json` - Vercel build/output configuration
+- `.github/workflows/` - CI/CD workflows (including GitHub Pages deployment)
 
-## Stack
+## Local Development
 
-- **Frontend:** React, Vite, Tailwind CSS
-- **Backend:** Node, Express, Socket.IO
-- **Video:** WebRTC mesh (each peer connects to the others)
-- **Security:** Helmet, CORS, rate limiting, sanitization
+### 1) Install dependencies
 
-## Env
+```bash
+npm install
+cd client && npm install && cd ..
+```
 
-See `.env.example`:
-- `PORT` – server port (default 3000)
-- `NODE_ENV` – development / production
-- `FRONTEND_ORIGIN` – CORS origin(s)
-- `TURN_USERNAME` / `TURN_PASSWORD` – optional TURN for strict NATs
+### 2) Run development servers
+
+Backend:
+
+```bash
+npm run dev
+```
+
+Frontend:
+
+```bash
+npm run dev:client
+```
+
+Open `http://localhost:5173` for the client application.
+
+## Production Build
+
+```bash
+npm run build
+npm start
+```
+
+The server runs on `http://localhost:3000` by default.
+
+## Environment Variables
+
+Configure environment values in `.env` (see project examples/templates if available):
+
+- `PORT` - Server port (default: `3000`)
+- `NODE_ENV` - `development` or `production`
+- `FRONTEND_ORIGIN` - Allowed frontend origin(s) for CORS
+- `VITE_SOCKET_URL` - Frontend API/socket base URL
+- `VITE_TURNSTILE_SITE_KEY` - Cloudflare Turnstile site key (client)
+- `TURNSTILE_SECRET_KEY` - Cloudflare Turnstile secret (server)
+- `TURN_USERNAME` / `TURN_PASSWORD` - Optional TURN credentials for difficult NAT networks
+
+## Deployment
+
+### Vercel (Frontend)
+
+This repository includes `vercel.json` configured to build from `client/` and publish `client/dist`.
+
+### GitHub Pages
+
+A workflow is included at `.github/workflows/deploy-pages.yml` to build and deploy the frontend artifact.
 
 ## License
 
