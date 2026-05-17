@@ -1278,7 +1278,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
       {/* MAIN VIEWPORT */}
       <main className={`flex-1 flex min-h-0 relative p-1.5 sm:p-2 gap-2 ${showChat ? 'max-sm:flex-col' : ''}`}>
-        <div className={`video-grid-container mm-design-panel flex-1 min-h-0 min-w-0 bg-black p-1.5 sm:p-4 pb-[calc(6.25rem+env(safe-area-inset-bottom))] sm:pb-4 relative overflow-auto ${viewMode === 'grid' ? 'grid gap-2 sm:gap-4 grid-cols-1 min-[420px]:grid-cols-2 min-[420px]:grid-rows-2 auto-rows-[minmax(100px,1fr)] min-[420px]:auto-rows-fr' : 'flex flex-col'}`}>
+        <div className={`video-grid-container mm-design-panel flex-1 min-h-0 min-w-0 bg-black p-1.5 sm:p-4 pb-[calc(6.25rem+env(safe-area-inset-bottom))] sm:pb-4 relative overflow-hidden ${viewMode === 'grid' ? 'grid gap-2 sm:gap-4 grid-cols-2 grid-rows-2' : 'flex flex-col'}`}>
           <SecurityShield />
           {isRecording && <RecordingIndicator />}
 

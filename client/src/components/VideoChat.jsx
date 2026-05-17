@@ -234,7 +234,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [input, setInput] = useState('');
   const [roomId, setRoomId] = useState(null);
   const [peer, setPeer] = useState(null);
-  const [status, setStatus] = useState('idle');
+  const [status, setStatus] = useState('searching');
   const [replyingTo, setReplyingTo] = useState(null);
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
@@ -268,7 +268,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [cameraBlur, setCameraBlur] = useState(false);
   const [connectedSecs, setConnectedSecs] = useState(0);
   const connectedSecsRef = useRef(0);
-  const [p2pHealth, setP2pHealth] = useState('good'); // 'good' | 'unstable' | 'failed'
+  const [p2pHealth, setP2pHealth] = useState('good');
   const healthTimerRef = useRef(null);
   const tabHiddenAtRef = useRef(null);
   const [showWave, setShowWave] = useState(false);
@@ -307,7 +307,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const firstSocketConnectRef = useRef(true);
   const isMounted = useRef(true);
   const statusRef = useRef(status);
-  
+
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
@@ -336,8 +336,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const mobilePipLayout = isMobile && (status === 'connected' || status === 'searching');
-  const mobileIdleStack = isMobile && status === 'idle';
 
   const isConnected = !!peer && !!roomId;
 
@@ -751,8 +749,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         const vt = stream.getVideoTracks()[0];
         const at = stream.getAudioTracks()[0];
         pc.getSenders().forEach((s) => {
-          if (s.track?.kind === 'video' && vt) s.replaceTrack(vt).catch(() => {});
-          if (s.track?.kind === 'audio' && at) s.replaceTrack(at).catch(() => {});
+          if (s.track?.kind === 'video' && vt) s.replaceTrack(vt).catch(() => { });
+          if (s.track?.kind === 'audio' && at) s.replaceTrack(at).catch(() => { });
         });
       });
       setCameraError(null);
@@ -775,7 +773,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   useEffect(() => {
     const handleDown = (e) => {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
-      
+
       if (e.code === 'Space' || e.key === 'ArrowRight') {
         e.preventDefault();
         handleSkip();
@@ -1480,9 +1478,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
       {status === 'connected' && p2pHealth !== 'good' && (
         <div
-          className={`shrink-0 px-2 sm:px-4 py-2 flex flex-wrap items-center justify-center gap-2 text-[9px] sm:text-[10px] font-bold uppercase tracking-widest border-b ${
-            p2pHealth === 'failed' ? 'bg-rose-500/15 border-rose-500/25 text-rose-100' : 'bg-amber-500/10 border-amber-500/25 text-amber-100'
-          }`}
+          className={`shrink-0 px-2 sm:px-4 py-2 flex flex-wrap items-center justify-center gap-2 text-[9px] sm:text-[10px] font-bold uppercase tracking-widest border-b ${p2pHealth === 'failed' ? 'bg-rose-500/15 border-rose-500/25 text-rose-100' : 'bg-amber-500/10 border-amber-500/25 text-amber-100'
+            }`}
           role="status"
         >
           <span className="text-center">{p2pHealth === 'failed' ? 'Connection lost — try below or skip' : 'Unstable network'}</span>
@@ -1501,19 +1498,15 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
       <main className={`flex-1 flex min-h-0 relative p-1.5 sm:p-2 gap-1.5 sm:gap-2 ${isMobile && showChat ? 'flex-col' : ''}`}>
         <div
-          className={`mm-design-panel flex-1 flex min-h-0 min-w-0 relative overflow-hidden ${
-            mobilePipLayout
-              ? showChat
-                ? 'h-[55%] flex-col'
-                : 'flex-col'
-              : mobileIdleStack
-                ? 'flex-col'
-                : 'flex-row'
-          }`}
+          className={`mm-design-panel flex-1 flex min-h-0 min-w-0 relative overflow-hidden ${isMobile
+            ? showChat
+              ? 'h-[55%] flex-col'
+              : 'flex-col'
+            : 'flex-row'
+            }`}
         >
-          {/* PANEL 1: LOCAL — hidden on mobile when in-call (self is PiP on remote) */}
-          {!mobilePipLayout && (
-          <div className={`relative bg-black overflow-hidden transition-all duration-500 ${mobileIdleStack ? 'w-full flex-[0_0_42%] min-h-[168px] max-h-[46vh] shrink-0 border-b border-violet-500/15' : 'flex-1 border-r border-violet-500/15'}`}>
+          {/* PANEL 1: LOCAL */}
+          <div className={`relative bg-black overflow-hidden transition-all duration-500 ${isMobile ? 'w-full flex-[0_0_42%] min-h-[168px] shrink-0 border-b border-violet-500/15' : 'flex-1 border-r border-violet-500/15'}`}>
             {status === 'idle' && (
               <div className="absolute inset-0 flex flex-col items-center justify-center p-6 z-20 bg-black/60 backdrop-blur-md">
                 {cameraError && (
@@ -1538,15 +1531,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             </div>
             {isCreator && filterTimer > 0 && <div className="absolute top-4 left-4 px-2 py-1 rounded bg-amber-500 text-black text-[8px] font-black animate-pulse shadow-2xl uppercase">Premium: {filterTimer}s</div>}
           </div>
-          )}
 
-          {/* PANEL 2: REMOTE / SEARCHING (+ mobile PiP self-view) */}
-          <div className={`relative bg-realm-surface overflow-hidden ${mobilePipLayout ? 'flex-1 min-h-0 w-full border-t border-violet-500/15 sm:border-l' : mobileIdleStack ? 'flex-1 min-h-0 w-full border-t border-violet-500/15' : 'flex-1 border-l border-violet-500/15'}`}>
+          {/* PANEL 2: REMOTE / SEARCHING */}
+          <div className={`relative bg-realm-surface overflow-hidden ${isMobile ? 'flex-1 min-h-0 w-full border-t border-violet-500/15 sm:border-l' : 'flex-1 border-l border-violet-500/15'}`}>
             {status === 'searching' && (
               <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-realm-void/95 backdrop-blur-[2px] z-50 animate-fade-in">
                 <div className="absolute top-10 flex items-center gap-3 px-4 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-400 text-[10px] font-black uppercase tracking-[0.4em] animate-pulse">
-                   <div className="w-2 h-2 rounded-full bg-violet-500 shadow-[0_0_10px_rgba(167,139,250,0.8)]" />
-                   Turbo Matching Mode
+                  <div className="w-2 h-2 rounded-full bg-violet-500 shadow-[0_0_10px_rgba(167,139,250,0.8)]" />
+                  Turbo Matching Mode
                 </div>
                 <div className="relative w-28 h-28 mb-8">
                   <div className="absolute inset-0 border-4 border-violet-500/10 rounded-full" />
@@ -1558,50 +1550,50 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 </div>
                 <p className="text-white font-black uppercase tracking-[0.5em] text-base mb-2 animate-pulse">Accelerating Network</p>
                 <div className="flex gap-2">
-                   {[...Array(4)].map((_, i) => (
+                  {[...Array(4)].map((_, i) => (
                     <div key={i} className="w-2 h-2 bg-violet-500 rounded-full animate-bounce" style={{ animationDelay: `${i * 150}ms`, boxShadow: '0 0 10px rgba(167,139,250,0.5)' }} />
                   ))}
                 </div>
                 <div className="mt-8 text-[10px] text-white/20 font-bold uppercase tracking-widest text-center max-w-[200px] leading-relaxed">
-                   Synchronizing with global P2P nodes for immediate match.
+                  Synchronizing with global P2P nodes for immediate match.
                 </div>
                 <button onClick={handleStop} className="absolute bottom-12 px-10 py-3 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-rose-500/60 hover:text-rose-400 hover:bg-rose-500/10 transition-all z-[60] active:scale-95">Cancel Blast</button>
               </div>
             )}
-            
+
             {status === 'connected' ? (
               <div className="relative w-full h-full animate-fade-in group">
                 <SecurityShield />
                 {isRecording && <RecordingIndicator />}
-                <div 
+                <div
                   className={`h-full relative overflow-hidden ${peer?.isCreator ? 'cursor-pointer group' : 'cursor-default'}`}
                   onClick={() => peer?.isCreator && setShowProfileHandle(peer.nickname)}
                 >
                   <RemoteVideoComponent stream={peer?.stream} muted={mutedStranger} strangerFilter={strangerFilter} strangerBlur={strangerBlur} />
-                  
+
                   {/* WATERMARKS & AI STATUS */}
                   <div className="absolute top-4 left-4 z-50 flex items-center gap-3 pointer-events-none">
                     <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse shadow-[0_0_8px_#c4b5fd]" />
                     <div className="px-2 py-1 bg-black/40 backdrop-blur-md rounded border border-white/5 text-[8px] font-black text-white/30 uppercase tracking-widest italic">Safety Active</div>
                   </div>
-                  
-                  <div className={`absolute z-50 pointer-events-none px-2 py-1 bg-black/20 rounded text-[8px] font-black text-white/10 uppercase tracking-widest ${mobilePipLayout ? 'top-3 right-3' : 'bottom-4 right-4'}`}>Mana Mingle</div>
-                  
+
+                  <div className={`absolute z-50 pointer-events-none px-2 py-1 bg-black/20 rounded text-[8px] font-black text-white/10 uppercase tracking-widest bottom-4 right-4`}>Mana Mingle</div>
+
                   {peer?.isCreator && (
                     <div className="absolute inset-0 bg-violet-500/0 group-hover:bg-violet-500/10 transition-colors flex items-center justify-center pointer-events-none">
                       <span className="opacity-0 group-hover:opacity-100 bg-violet-500 text-black px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest shadow-2xl transition-all translate-y-4 group-hover:translate-y-0">Explore Creator Content</span>
                     </div>
                   )}
                 </div>
-                
+
                 {strangerCameraOff && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-black/60 backdrop-blur-xl z-20">
                     <span className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 bg-white/5 px-4 py-1.5 rounded-full border border-white/5">Video Hidden</span>
                   </div>
                 )}
-                
-                <div className={`absolute bottom-4 px-3 py-1.5 rounded-xl bg-black/60 text-[10px] font-black uppercase tracking-widest border border-white/10 flex items-center gap-2 z-40 backdrop-blur-md ${mobilePipLayout ? 'left-4 max-w-[calc(100%-9rem)]' : 'left-4'}`}>
-                  {countryToFlag(peer?.country)} 
+
+                <div className={`absolute bottom-4 px-3 py-1.5 rounded-xl bg-black/60 text-[10px] font-black uppercase tracking-widest border border-white/10 flex items-center gap-2 z-40 backdrop-blur-md left-4`}>
+                  {countryToFlag(peer?.country)}
                   <span className={peer?.isCreator ? 'text-violet-400 flex items-center gap-1.5' : 'text-white'}>
                     {peer?.nickname || 'Someone'}
                     {peer?.isCreator && <BlueTick />}
@@ -1611,35 +1603,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             ) : (
               status !== 'searching' && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-black/20 italic">
-                   <p className="text-[10px] font-black uppercase tracking-[0.4em] text-white/5 animate-pulse">Waiting for Match...</p>
+                  <p className="text-[10px] font-black uppercase tracking-[0.4em] text-white/5 animate-pulse">Waiting for Match...</p>
                 </div>
               )
             )}
 
-            {mobilePipLayout && (
-              <div className="pointer-events-none absolute bottom-3 right-3 z-[45] w-[min(34vw,128px)] aspect-[3/4] max-h-[32vh] rounded-xl overflow-hidden border border-violet-500/25 shadow-2xl shadow-violet-950/40 bg-black ring-1 ring-violet-500/20">
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
-                  style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }}
-                />
-                {cameraOff && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-                    <svg className="w-5 h-5 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2zM3 3l18 18" /></svg>
-                  </div>
-                )}
-                <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_6px_#10b981]" />
-                  <span className="text-[8px] font-black uppercase tracking-widest text-white/80 drop-shadow-md">You</span>
-                </div>
-                {isCreator && filterTimer > 0 && (
-                  <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-amber-500 text-black text-[7px] font-black uppercase">Premium</div>
-                )}
-              </div>
-            )}
           </div>
         </div>
 
@@ -1664,7 +1632,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       </main>
 
       <footer className="mm-design-panel-footer min-h-14 sm:min-h-16 px-1 sm:px-4 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 bg-realm-surface/95 backdrop-blur-md flex items-center justify-between gap-1 sm:gap-4 z-[120] shrink-0">
-        
+
         {/* Left Side: Stop Session */}
         <div className="flex items-center gap-1 sm:gap-3 shrink-0">
           {(status === 'connected' || status === 'searching' || status === 'disconnected') && (
@@ -1679,55 +1647,55 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
         {/* Middle: Video/Audio Controls — scroll on very narrow screens */}
         <div className="flex-1 min-w-0 flex justify-center overflow-x-auto overflow-y-hidden [scrollbar-width:thin] py-0.5">
-        <div className="flex items-center gap-1 sm:gap-3 bg-violet-950/30 px-1.5 sm:px-3 py-1 sm:py-1.5 rounded-xl border border-violet-500/15">
-          <div className="flex flex-col items-center gap-0.5">
-            <button type="button" onClick={toggleMute} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${muted ? 'bg-red-500/20 text-red-500' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title={muted ? 'Unmute' : 'Mute'}>
-              {muted ? <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" /></svg> : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>}
-            </button>
-            <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">M</span>
+          <div className="flex items-center gap-1 sm:gap-3 bg-violet-950/30 px-1.5 sm:px-3 py-1 sm:py-1.5 rounded-xl border border-violet-500/15">
+            <div className="flex flex-col items-center gap-0.5">
+              <button type="button" onClick={toggleMute} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${muted ? 'bg-red-500/20 text-red-500' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title={muted ? 'Unmute' : 'Mute'}>
+                {muted ? <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" /></svg> : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>}
+              </button>
+              <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">M</span>
+            </div>
+            <div className="flex flex-col items-center gap-0.5">
+              <button type="button" onClick={toggleCamera} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${cameraOff ? 'bg-red-500/20 text-red-500' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title={cameraOff ? 'Camera on' : 'Camera off'}>
+                {cameraOff ? <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" /></svg> : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>}
+              </button>
+              <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">V</span>
+            </div>
+            <div className="flex flex-col items-center gap-0.5">
+              <button type="button" onClick={() => setCameraBlur(!cameraBlur)} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${cameraBlur ? 'bg-[#1a7f37]/30 text-[#2ea043]' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title="Blur">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+              </button>
+              <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">B</span>
+            </div>
+            {status === 'connected' && (
+              <>
+                <div className="flex flex-col items-center gap-0.5">
+                  <button type="button" onClick={() => setShowChat(!showChat)} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${showChat ? 'bg-violet-500/30 text-violet-400' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title="Chat">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                  </button>
+                  <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">C</span>
+                </div>
+                <div className="flex flex-col items-center gap-0.5">
+                  <button type="button" onClick={sendWave} className="w-8 h-8 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center hover:bg-amber-500/20 transition-all" title="Wave">👋</button>
+                  <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">W</span>
+                </div>
+                <div className="flex flex-col items-center gap-0.5">
+                  <button type="button" onClick={sendGoodVibes} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${goodVibesSent ? 'bg-rose-500 text-white' : 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20'}`} title="Good Vibes">💖</button>
+                  <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">V</span>
+                </div>
+                <div className="flex flex-col items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowReportModal(true)}
+                    className="w-8 h-8 rounded-full bg-white/5 text-rose-400/80 hover:bg-rose-500/20 flex items-center justify-center border border-white/10"
+                    title="Report or block"
+                  >
+                    🚩
+                  </button>
+                  <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">R</span>
+                </div>
+              </>
+            )}
           </div>
-          <div className="flex flex-col items-center gap-0.5">
-            <button type="button" onClick={toggleCamera} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${cameraOff ? 'bg-red-500/20 text-red-500' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title={cameraOff ? 'Camera on' : 'Camera off'}>
-              {cameraOff ? <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" /></svg> : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>}
-            </button>
-            <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">V</span>
-          </div>
-          <div className="flex flex-col items-center gap-0.5">
-            <button type="button" onClick={() => setCameraBlur(!cameraBlur)} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${cameraBlur ? 'bg-[#1a7f37]/30 text-[#2ea043]' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title="Blur">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-            </button>
-            <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">B</span>
-          </div>
-          {status === 'connected' && (
-            <>
-              <div className="flex flex-col items-center gap-0.5">
-                <button type="button" onClick={() => setShowChat(!showChat)} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${showChat ? 'bg-violet-500/30 text-violet-400' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title="Chat">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-                </button>
-                <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">C</span>
-              </div>
-              <div className="flex flex-col items-center gap-0.5">
-                <button type="button" onClick={sendWave} className="w-8 h-8 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center hover:bg-amber-500/20 transition-all" title="Wave">👋</button>
-                <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">W</span>
-              </div>
-              <div className="flex flex-col items-center gap-0.5">
-                <button type="button" onClick={sendGoodVibes} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${goodVibesSent ? 'bg-rose-500 text-white' : 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20'}`} title="Good Vibes">💖</button>
-                <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">V</span>
-              </div>
-              <div className="flex flex-col items-center gap-0.5">
-                <button
-                  type="button"
-                  onClick={() => setShowReportModal(true)}
-                  className="w-8 h-8 rounded-full bg-white/5 text-rose-400/80 hover:bg-rose-500/20 flex items-center justify-center border border-white/10"
-                  title="Report or block"
-                >
-                  🚩
-                </button>
-                <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">R</span>
-              </div>
-            </>
-          )}
-        </div>
         </div>
 
         {/* Right Side: New/Skip */}
