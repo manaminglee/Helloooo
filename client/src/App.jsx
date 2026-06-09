@@ -42,6 +42,7 @@ export default function App() {
   const [showUnblockPay, setShowUnblockPay] = useState(false);
   const [creatorHandle, setCreatorHandle] = useState(null);
   const [pendingJoinRoomId, setPendingJoinRoomId] = useState(null);
+  const [isJoining, setIsJoining] = useState(false);
   const { socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds } = useSocket();
   const coinState = useCoins();
   const coinStateWithAds = useMemo(
