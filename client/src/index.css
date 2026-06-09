@@ -1716,9 +1716,149 @@ h1, h2, h3, .font-display {
   }
 }
 
+/* Mobile draggable local camera PIP (1:1 + group video) */
+.mm-video-pip {
+  width: clamp(104px, 30vw, 132px);
+  aspect-ratio: 1 / 1;
+}
+
+.mm-video-pip--sm {
+  width: clamp(88px, 24vw, 108px);
+}
+
+.mm-video-pip--lg {
+  width: clamp(120px, 36vw, 148px);
+}
+
+@keyframes mm-float-up {
+  0% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-120px) scale(1.4); }
+}
+
+@media (orientation: landscape) and (max-width: 900px) {
+  .mm-video-landscape-stage {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .mm-video-landscape-chat {
+    max-height: 38vh;
+  }
+}
+
+.mm-video-pip-inner {
+  border-radius: 14px;
+  clip-path: polygon(4% 2%, 11% 5%, 18% 1%, 26% 4%, 34% 2%, 42% 5%, 50% 1%, 58% 4%, 66% 2%, 74% 5%, 82% 1%, 90% 4%, 97% 2%,
+    98% 8%, 96% 16%, 98% 24%, 96% 32%, 98% 40%, 96% 48%, 98% 56%, 96% 64%, 98% 72%, 96% 80%, 98% 90%,
+    93% 97%, 85% 95%, 77% 98%, 69% 95%, 61% 98%, 53% 95%, 45% 98%, 37% 95%, 29% 98%, 21% 95%, 13% 98%, 5% 96%,
+    2% 90%, 4% 82%, 2% 74%, 4% 66%, 2% 58%, 4% 50%, 2% 42%, 4% 34%, 2% 26%, 4% 18%, 2% 10%);
+}
+
+.mm-video-pip-inner video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mm-video-stage-mobile {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+
+@media (max-width: 639px) {
+  .mm-video-chat-split {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mm-video-chat-split--with-chat {
+    flex: 1 1 0;
+    min-height: min(58dvh, calc(100dvh - 14rem));
+  }
+
+  .mm-group-video-grid-mobile {
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  }
+
+  .mm-group-video-grid-mobile--chat-open {
+    padding-bottom: 0.75rem;
+  }
+}
+
 /* ============================================================
-   PARTICIPANTS SIDEBAR
+   NVIDIA AI / UNIQUE SESSION UI
    ============================================================ */
+.mm-neural-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.5625rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #76b900;
+  background: rgba(118, 185, 0, 0.08);
+  border: 1px solid rgba(118, 185, 0, 0.25);
+}
+
+.mm-neural-panel {
+  border-radius: 1.25rem;
+  background: linear-gradient(145deg, rgba(10, 12, 20, 0.95), rgba(15, 18, 30, 0.92));
+  border: 1px solid rgba(118, 185, 0, 0.15);
+  box-shadow: 0 0 40px rgba(118, 185, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.mm-neural-btn {
+  padding: 0.75rem 1rem;
+  border-radius: 0.875rem;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.85);
+  transition: all 0.2s ease;
+}
+
+.mm-neural-btn--primary {
+  background: linear-gradient(135deg, #76b900, #5a9100);
+  border-color: rgba(118, 185, 0, 0.5);
+  color: #0a0c10;
+  box-shadow: 0 4px 24px rgba(118, 185, 0, 0.25);
+}
+
+.mm-neural-btn:hover {
+  transform: translateY(-1px);
+}
+
+.mm-neural-section {
+  position: relative;
+}
+
+.mm-neural-card {
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: border-color 0.2s;
+}
+
+.mm-neural-card--live {
+  border-color: rgba(118, 185, 0, 0.45);
+  box-shadow: 0 0 20px rgba(118, 185, 0, 0.12);
+}
+
+.mm-landing-neural-mesh {
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(118, 185, 0, 0.12), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 90% 20%, rgba(167, 139, 250, 0.15), transparent 50%);
+}
+
 .participants-panel {
   width: 180px;
   flex-shrink: 0;

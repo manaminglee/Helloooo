@@ -4,9 +4,17 @@ import { useLatency } from '../hooks/useLatency';
 import { CoinBadge } from './CoinBadge';
 import { ReportSafetyModal } from './ReportSafetyModal';
 import { ChatInputWithEmoji } from './ChatInputWithEmoji';
-import { PHASE_2 } from '../constants/features';
+import { PHASE_2, PHASE_4_UNIQUE } from '../constants/features';
 import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNotify';
 import { ProFeaturesMenu } from './ProFeaturesMenu';
+import { useUniqueSession } from '../hooks/useUniqueSession';
+import {
+  AiStatusPill,
+  CalmModeToggle,
+  CoOpStreakBadge,
+  NvidiaCopilotToast,
+  TrustScoreChip,
+} from './unique/UniqueSessionUI';
 
 const AI_ICEBREAKERS = {
   general: [
@@ -174,7 +182,7 @@ function VanishingMessage({ m, isMe, onReply }) {
   );
 }
 
-export default function TextChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', language = '', region = '', isCreator = false, onBack, onJoined, onFindNewPartner, adsEnabled = false, adScripts = {}, coinState, registered = false, currentActiveSeconds = 0 }) {
+export default function TextChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', language = '', region = '', isCreator = false, onBack, onJoined, onFindNewPartner, adsEnabled = false, adScripts = {}, coinState, registered = false, currentActiveSeconds = 0, conversationMode = 'free', topicContract = 'chill', calmMode: calmModeProp = false }) {
   const { balance, streak, canClaim, nextClaim, claimCoins } = coinState;
   const [messages, setMessages] = useState([]);
   const [sparks, setSparks] = useState([]);
@@ -197,6 +205,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   const [showSkipSuggestion, setShowSkipSuggestion] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null);
+  const [calmMode, setCalmMode] = useState(calmModeProp);
   const roomIdRef = useRef(null);
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -211,6 +220,18 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
   const isConnected = !!peer && !!roomId;
 
+  const unique = useUniqueSession({
+    socket,
+    roomId,
+    status,
+    messages,
+    interest,
+    conversationMode,
+    topicContract,
+    calmMode,
+    autoConsent: true,
+  });
+
   const isFromMe = (m) => {
     if (!m) return false;
     return m.socketId === socket.id || m.fromSelf;
@@ -222,8 +243,16 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
   const emitFind = useCallback(() => {
     if (!socket || !connected) return;
-    socket.emit('find-partner', { mode: 'text', interest: interest || 'general', nickname: nickname || 'Anonymous', language, region: region || country });
-  }, [socket, connected, interest, nickname]);
+    socket.emit('find-partner', {
+      mode: 'text',
+      interest: interest || 'general',
+      nickname: nickname || 'Anonymous',
+      language,
+      region: region || country,
+      conversationMode,
+      topicContract,
+    });
+  }, [socket, connected, interest, nickname, language, region, country, conversationMode, topicContract]);
 
   const clearRoom = useCallback(() => {
     setPeer(null);
@@ -633,6 +662,12 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
         </div>
 
         <div className="flex items-center gap-4">
+          {PHASE_4_UNIQUE.trustScore && <TrustScoreChip trust={unique.trust} />}
+          {PHASE_4_UNIQUE.nvidiaCopilot && <AiStatusPill online={unique.aiOnline} />}
+          {PHASE_4_UNIQUE.coOpStreak && <CoOpStreakBadge minutes={unique.coOpMinutes} />}
+          {PHASE_4_UNIQUE.calmMode && (
+            <CalmModeToggle enabled={calmMode} onToggle={() => setCalmMode((c) => !c)} />
+          )}
           {connected && (
             <>
               <div className="hidden lg:block">
@@ -680,6 +715,12 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
           {/* PEER HEADER */}
           {status === 'connected' && peer && (
+            <>
+              {PHASE_4_UNIQUE.structuredModes && unique.modePrompt && (
+                <div className="px-6 py-2 bg-[#76B900]/5 border-b border-[#76B900]/20 text-center">
+                  <p className="text-[11px] text-white/70 italic">&ldquo;{unique.modePrompt}&rdquo;</p>
+                </div>
+              )}
             <div className="flex items-center justify-between px-8 py-5 border-b border-white/[0.05] bg-white/[0.01]">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-center text-xl shadow-inner group">
@@ -723,6 +764,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
                 </button>
               </div>
             </div>
+            </>
           )}
 
           {/* IDLE / SEARCHING STATES */}
@@ -924,6 +966,12 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
            <span>User ID {socket?.id?.substring(0, 8)}</span>
         </div>
       </main>
+
+      <NvidiaCopilotToast
+        prompt={unique.copilotPrompt}
+        onUse={() => unique.applyCopilotToInput(setInput)}
+        onDismiss={unique.dismissCopilot}
+      />
 
       <ReportSafetyModal
         open={showReportModal}

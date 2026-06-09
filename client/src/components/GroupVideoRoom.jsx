@@ -11,6 +11,29 @@ import { ReportSafetyModal } from './ReportSafetyModal';
 import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNotify';
 import { playConnectSound, playMessageSound, playDisconnectSound, playWaveSound } from '../utils/sounds';
 import { mmDebug } from '../utils/mmDebug';
+import { DraggableVideoPip } from './DraggableVideoPip';
+import { MiniChatGamePanel } from './MiniChatGamePanel';
+import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
+import { useUniqueSession } from '../hooks/useUniqueSession';
+import {
+  AiStatusPill,
+  CalmModeToggle,
+  CoOpStreakBadge,
+  NvidiaCopilotToast,
+  TrustScoreChip,
+} from './unique/UniqueSessionUI';
+import {
+  CollapsibleMobileChatHeader,
+  ConnectionQualityBadge,
+  ConversationRatingModal,
+  DevicePickerSheet,
+  FloatingVideoReactions,
+  TipCreatorModal,
+  useChatSwipeCollapse,
+  VideoMoreSheet,
+  VideoReactionBar,
+  VideoSessionBanners,
+} from './VideoSessionUI';
 
 const BlueTick = () => (
   <span className="inline-flex items-center justify-center w-3 h-3 bg-violet-500 rounded-full ml-1.5 shadow-[0_0_10px_#a78bfa]">
@@ -176,7 +199,7 @@ const EMOJIS_3D = [
   { char: '👑', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/1f451/512.webp' },
 ];
 
-export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestProp, nickname, isCreator = false, myCountry, socket, isQueuing, onLeave, onFindNewPod, onJoined, coinState, adsEnabled = false, adScripts = {}, registered = false, currentActiveSeconds = 0 }) {
+export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestProp, nickname, isCreator = false, myCountry, socket, isQueuing, onLeave, onFindNewPod, onJoined, coinState, adsEnabled = false, adScripts = {}, registered = false, currentActiveSeconds = 0, conversationMode = 'free', topicContract = 'chill', calmMode: calmModeProp = false }) {
   const { balance = 0, streak = 0, canClaim = false, nextClaim = 0, claimCoins = () => { } } = coinState || {};
   const { iceServers } = useIceServers();
   const roomIdRef = useRef(null);
@@ -227,6 +250,22 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const [goodVibesMatch, setGoodVibesMatch] = useState(false);
   const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'speaker'
   const [activeSpeakerId, setActiveSpeakerId] = useState(null);
+  const [pipPos, setPipPos] = useState('br');
+  const [pipSize, setPipSize] = useState('md');
+  const [pipHidden, setPipHidden] = useState(false);
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 640 : false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [showDevicePicker, setShowDevicePicker] = useState(false);
+  const [showTipModal, setShowTipModal] = useState(false);
+  const [showRating, setShowRating] = useState(false);
+  const [ratingDone, setRatingDone] = useState(false);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
+  const [chatUnread, setChatUnread] = useState(0);
+  const [peerRecording, setPeerRecording] = useState(false);
+  const [showSafetyNudge, setShowSafetyNudge] = useState(() => !sessionStorage.getItem('mm_group_video_safety_seen'));
+  const [videoDevices, setVideoDevices] = useState([]);
+  const [audioDevices, setAudioDevices] = useState([]);
+  const chatPanelRef = useRef(null);
   const [showParticipants, setShowParticipants] = useState(false);
   const [handRaised, setHandRaised] = useState(false);
   const [remoteRaisedHands, setRemoteRaisedHands] = useState(new Set()); // socketIds
@@ -236,6 +275,74 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const toastTimerRef = useRef(null);
   const inputRef = useRef(null);
   const connTimerRef = useRef(null);
+  const [calmMode, setCalmMode] = useState(calmModeProp);
+
+  const unique = useUniqueSession({
+    socket,
+    roomId,
+    status: isQueuing ? 'searching' : 'connected',
+    messages,
+    interest: displayInterest,
+    conversationMode,
+    topicContract,
+    calmMode,
+    autoConsent: true,
+  });
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 640);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useChatSwipeCollapse(chatPanelRef, () => isMobile && setChatCollapsed(true));
+
+  useEffect(() => {
+    if (showChat && !chatCollapsed) setChatUnread(0);
+  }, [showChat, chatCollapsed]);
+
+  useEffect(() => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    navigator.mediaDevices.enumerateDevices().then((devices) => {
+      setVideoDevices(devices.filter((d) => d.kind === 'videoinput'));
+      setAudioDevices(devices.filter((d) => d.kind === 'audioinput'));
+    }).catch(() => {});
+  }, [localStreamReady]);
+
+  const cyclePipCorner = () => {
+    const pos = ['tr', 'tl', 'bl', 'br'];
+    setPipPos(pos[(pos.indexOf(pipPos) + 1) % pos.length]);
+  };
+
+  const cyclePipSize = () => setPipSize((s) => (s === 'sm' ? 'md' : s === 'md' ? 'lg' : 'sm'));
+
+  const emitRecordingStatus = (recording) => {
+    const rid = roomIdRef.current || roomId;
+    if (socket && rid) socket.emit('peer-recording-status', { roomId: rid, recording });
+  };
+
+  const sendTip = (amount, targetSid) => {
+    const rid = roomIdRef.current || roomId;
+    const target = targetSid || peers.find((p) => p.isCreator)?.socketId;
+    if (!socket || !rid || !target || balance < amount) return;
+    socket.emit('spend-coins', { amount, reason: 'creator-tip' });
+    socket.emit('tip-creator', { roomId: rid, targetSocketId: target, amount });
+    setToast(`Sent ${amount} coins!`);
+  };
+
+  const dismissSafetyNudge = () => {
+    sessionStorage.setItem('mm_group_video_safety_seen', '1');
+    setShowSafetyNudge(false);
+  };
+
+  const handleRateConversation = (rating) => {
+    const rid = roomIdRef.current || roomId;
+    socket?.emit('rate-conversation', { rating, roomId: rid });
+    setRatingDone(true);
+    setShowRating(false);
+    setToast('Thanks for your feedback!');
+    finishLeaveRoom();
+  };
 
   useEffect(() => {
     if (socket && !hasJoinedRef.current) {
@@ -271,11 +378,20 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     } catch { /* ignore */ }
   };
 
-  const handleLeaveRoom = useCallback(() => {
+  const finishLeaveRoom = useCallback(() => {
     clearGroupRejoinStorage();
     roomIdRef.current = null;
     onLeave();
   }, [onLeave]);
+
+  const handleLeaveRoom = useCallback(() => {
+    const hadChat = messages.filter((m) => !m.system).length > 2;
+    if (hadChat && !ratingDone) {
+      setShowRating(true);
+      return;
+    }
+    finishLeaveRoom();
+  }, [messages, ratingDone, finishLeaveRoom]);
 
   useEffect(() => {
     const remote = peers.find((p) => p.socketId !== socket?.id);
@@ -327,6 +443,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     recorder.start();
     recorderRef.current = recorder;
     setIsRecording(true);
+    emitRecordingStatus(true);
     setToast('🎥 Group Recording Active');
   };
 
@@ -334,6 +451,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     if (recorderRef.current) {
       recorderRef.current.stop();
       setIsRecording(false);
+      emitRecordingStatus(false);
       setToast('🎥 Recording Offline');
     }
   };
@@ -693,8 +811,8 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     pendingCandidatesRef.current.set(remoteId, []);
   };
 
-  const sendMessage = () => {
-    const t = chatInput.trim();
+  const sendMessage = (overrideText) => {
+    const t = (overrideText ?? chatInput).trim();
     const rid = roomIdRef.current || roomId;
     if (!t || !socket || !rid) return;
     const payload = { roomId: rid, text: t };
@@ -798,7 +916,10 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           const rect = el.getBoundingClientRect();
           setSparks(prev => [...prev.slice(-20), { id: Date.now(), x: rect.left + rect.width / 2, y: rect.bottom - 100 }]);
         }
-        if (data.socketId !== socket.id) playMessageSound();
+        if (data.socketId !== socket.id) {
+          playMessageSound();
+          if (isMobile && (!showChat || chatCollapsed)) setChatUnread((n) => n + 1);
+        }
       }
     };
 
@@ -955,11 +1076,15 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         setLocalReactions(prev => [...prev, reaction]);
         setTimeout(() => setLocalReactions(prev => prev.filter(r => r.id !== id)), 4000);
       });
+      socket.on('peer-recording-status', ({ recording }) => setPeerRecording(!!recording));
+      socket.on('creator-tip-received', ({ fromNickname, amount }) => setToast(`💰 ${fromNickname} tipped you ${amount} coins!`));
       return () => {
         socket.off('3d-emoji');
         socket.off('media-message');
         socket.off('hand-raise');
         socket.off('room-reaction');
+        socket.off('peer-recording-status');
+        socket.off('creator-tip-received');
         socket.off('error');
         socket.off('room-full');
         socket.off('waiting-in-group-queue');
@@ -1164,6 +1289,28 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const gridClass = 'grid-cols-2 grid-rows-2';
 
   const localStream = localStreamRef.current;
+  const mobileShowLocalPip = isMobile && localStreamReady && (
+    viewMode === 'grid' || (viewMode === 'speaker' && activeSpeakerId && activeSpeakerId !== 'local')
+  );
+
+  const mobileLocalPip = mobileShowLocalPip ? (
+    <DraggableVideoPip
+      position={pipPos}
+      onPositionChange={setPipPos}
+      onCycleCorner={cyclePipCorner}
+      size={pipSize}
+      hidden={pipHidden}
+      label="Your camera — drag to a corner"
+    >
+      <video
+        ref={localVideoRef}
+        autoPlay
+        muted
+        playsInline
+        className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
+      />
+    </DraggableVideoPip>
+  ) : null;
 
   const submitGroupReport = ({ reason, block }) => {
     const rid = roomIdRef.current || roomId;
@@ -1174,7 +1321,10 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         reason: String(reason || 'unspecified'),
         ...(target ? { targetSocketId: target } : {}),
       });
-      if (block && target) socket.emit('block-user', { targetSocketId: target });
+      if (block && target) {
+        socket.emit('block-user', { targetSocketId: target });
+        setToast('User blocked');
+      }
     }
     mmDebug('group-report', reason, block);
   };
@@ -1252,9 +1402,13 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           <div className="w-9 h-9 sm:w-12 sm:h-12 shrink-0 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-black text-base sm:text-lg shadow-lg shadow-indigo-500/20">M</div>
           <div className="min-w-0">
             <h1 className="text-[10px] sm:text-sm font-black tracking-tighter text-white/90 truncate">POD: #{displayInterest}</h1>
-            <div className="hidden sm:flex items-center gap-2 mt-0.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-500/80">E2EE Secured</span>
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              <ConnectionQualityBadge quality={connectionQuality.get(peers[0]?.socketId) || 'good'} />
+              <span className="text-[9px] text-white/30 tabular-nums">{formatTimer(connectedSecs)}</span>
+              {PHASE_4_UNIQUE.trustScore && <TrustScoreChip trust={unique.trust} />}
+              {PHASE_4_UNIQUE.nvidiaCopilot && <AiStatusPill online={unique.aiOnline} />}
+              {PHASE_4_UNIQUE.coOpStreak && <CoOpStreakBadge minutes={unique.coOpMinutes} />}
+              {PHASE_4_UNIQUE.calmMode && <CalmModeToggle enabled={calmMode} onToggle={() => setCalmMode((c) => !c)} />}
             </div>
           </div>
         </div>
@@ -1291,14 +1445,28 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         <AdSlot slotKey="chat_banner" script={adScripts?.chat_banner} adsEnabled={adsEnabled} compact />
       </div>
 
+      <VideoSessionBanners
+        showSafetyNudge={showSafetyNudge}
+        onDismissSafety={dismissSafetyNudge}
+        peerRecording={peerRecording}
+        matchedInterests={[displayInterest].filter(Boolean)}
+      />
+
+      {PHASE_4_UNIQUE.structuredModes && unique.modePrompt && !isQueuing && (
+        <div className="shrink-0 px-4 py-2 bg-[#76B900]/5 border-b border-[#76B900]/20 text-center">
+          <p className="text-[11px] text-white/70 italic">&ldquo;{unique.modePrompt}&rdquo;</p>
+        </div>
+      )}
+
       {/* MAIN VIEWPORT */}
       <main className={`flex-1 flex min-h-0 relative p-1.5 sm:p-2 gap-2 ${showChat ? 'max-sm:flex-col' : ''}`}>
-        <div className={`video-grid-container mm-design-panel flex-1 min-h-0 min-w-0 bg-black p-1.5 sm:p-4 pb-[calc(6.25rem+env(safe-area-inset-bottom))] sm:pb-4 relative overflow-hidden ${viewMode === 'grid' ? 'grid gap-2 sm:gap-4 grid-cols-2 grid-rows-2' : 'flex flex-col'}`}>
+        <div className={`video-grid-container mm-design-panel mm-video-stage-mobile flex-1 min-h-0 min-w-0 bg-black p-1.5 sm:p-4 relative overflow-hidden mm-group-video-grid-mobile ${showChat && !chatCollapsed ? 'mm-group-video-grid-mobile--chat-open max-sm:flex-[1_1_0]' : ''} ${viewMode === 'grid' ? 'grid gap-2 sm:gap-4 grid-cols-2 grid-rows-2 sm:pb-4' : 'flex flex-col sm:pb-4'}`}>
           <SecurityShield />
           {isRecording && <RecordingIndicator />}
+          <FloatingVideoReactions reactions={localReactions.map((r) => ({ id: r.id, emoji: r.emoji, x: r.x, y: r.y }))} />
 
           {viewMode === 'speaker' ? (
-            <div className="flex-1 flex flex-col sm:flex-row gap-4 h-full">
+            <div className="flex-1 flex flex-col sm:flex-row gap-4 h-full min-h-0">
               {/* LARGE SPEAKER */}
               <div className="flex-[3] relative h-full min-h-0">
                 {activeSpeakerId === 'local' ? (
@@ -1316,10 +1484,11 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                     <VideoTile isMe stream={localStreamRef.current} label={nickname || 'Anonymous'} flag={countryToFlag(myCountry)} isCreator={isCreator} isActiveSpeaker handRaised={handRaised} />
                   )
                 )}
+                {mobileLocalPip}
               </div>
               {/* SMALL PEERS LIST */}
               <div className="flex-1 flex flex-row sm:flex-col gap-2 overflow-x-auto sm:overflow-y-auto custom-scrollbar pr-1 min-h-0 pb-2">
-                {activeSpeakerId !== 'local' && (
+                {activeSpeakerId !== 'local' && !isMobile && (
                   <div className="w-40 sm:w-full aspect-video shrink-0">
                     <VideoTile isMe stream={localStreamRef.current} label={nickname || 'Anonymous'} flag={countryToFlag(myCountry)} isCreator={isCreator} handRaised={handRaised} />
                   </div>
@@ -1338,13 +1507,16 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
             </div>
           ) : (
             <>
-              <VideoTile isMe stream={localStreamRef.current} label={nickname || 'Anonymous'} flag={countryToFlag(myCountry)} isCreator={isCreator} isActiveSpeaker={activeSpeakerId === 'local'} handRaised={handRaised} />
-              {peers.slice(0, 3).map((p) => (
+              {!isMobile && (
+                <VideoTile isMe stream={localStreamRef.current} label={nickname || 'Anonymous'} flag={countryToFlag(myCountry)} isCreator={isCreator} isActiveSpeaker={activeSpeakerId === 'local'} handRaised={handRaised} />
+              )}
+              {peers.slice(0, isMobile ? 4 : 3).map((p) => (
                 <VideoTile key={p.socketId} stream={p.stream} label={p.nickname} flag={countryToFlag(p.country)} isCreator={p.isCreator} isActiveSpeaker={activeSpeakerId === p.socketId} quality={connectionQuality.get(p.socketId) || 'good'} handRaised={remoteRaisedHands.has(p.socketId)} />
               ))}
-              {Array.from({ length: Math.max(0, 3 - peers.length) }).map((_, i) => (
+              {Array.from({ length: Math.max(0, (isMobile ? 4 : 3) - peers.length) }).map((_, i) => (
                 <VideoTile key={`empty-${i}`} isEmpty />
               ))}
+              {mobileLocalPip}
             </>
           )}
         </div>
@@ -1354,11 +1526,20 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         </div>
 
         {/* CHAT PANEL */}
-        {showChat && (
-          <aside className="mm-design-panel z-[60] max-sm:z-[160] max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:top-[32%] max-sm:max-h-[52vh] max-sm:rounded-t-2xl w-full sm:w-80 sm:max-w-[85vw] sm:h-full bg-[#0a0c16]/95 backdrop-blur-3xl flex flex-col animate-slide-left max-sm:pb-[env(safe-area-inset-bottom)]">
+        {showChat && isMobile && chatCollapsed && (
+          <CollapsibleMobileChatHeader collapsed onToggle={() => setChatCollapsed(false)} unread={chatUnread} title="Pod Chat" />
+        )}
+        {showChat && !chatCollapsed && (
+          <aside ref={chatPanelRef} className="mm-design-panel chat-panel shrink-0 z-[60] w-full sm:w-80 sm:max-w-[85vw] sm:h-full bg-[#0a0c16]/95 backdrop-blur-3xl flex flex-col animate-slide-left max-sm:relative max-sm:h-[40vh] max-sm:max-h-[42vh] max-sm:border-t max-sm:border-white/10 max-sm:pb-[env(safe-area-inset-bottom)]">
+            {isMobile && (
+              <CollapsibleMobileChatHeader collapsed={chatCollapsed} onToggle={() => setChatCollapsed((c) => !c)} unread={chatUnread} title="Pod Chat" />
+            )}
             <div className="p-4 border-b border-white/5 flex items-center justify-between">
-              <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Pod Chat</span>
-              <button onClick={() => setShowChat(false)} className="text-white/20 hover:text-white">✕</button>
+              <span className="text-[10px] font-black uppercase tracking-widest text-white/40 hidden sm:block">Pod Chat</span>
+              <div className="flex items-center gap-2 ml-auto">
+                <button type="button" onClick={generateAiSpark} disabled={isAiGenerating} className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">✨ Spark</button>
+                <button onClick={() => setShowChat(false)} className="text-white/20 hover:text-white">✕</button>
+              </div>
             </div>
             <div id="group-video-chat-messages" className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
               {messages.map((m, i) => (
@@ -1375,6 +1556,11 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               ))}
               <div ref={chatEndRef} />
             </div>
+            {PHASE_3_PRO.miniChatGames && (roomIdRef.current || roomId) && (
+              <div className="px-4 pb-2">
+                <MiniChatGamePanel onSendPrompt={(text) => { setChatInput(text); sendMessage(text); }} />
+              </div>
+            )}
             <div className="p-4 bg-black/40 border-t border-white/5 flex gap-2">
               <input
                 type="text"
@@ -1461,11 +1647,20 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       </button>
     )}
     <button
-      onClick={() => setShowChat(!showChat)}
-      className={`min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full transition-all ${showChat ? 'bg-indigo-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}
+      onClick={() => {
+        if (chatCollapsed) { setChatCollapsed(false); setShowChat(true); }
+        else setShowChat(!showChat);
+      }}
+      className={`relative min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full transition-all ${showChat && !chatCollapsed ? 'bg-indigo-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}
     >
       💬
+      {chatUnread > 0 && (
+        <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-rose-500 text-[8px] font-black text-white flex items-center justify-center">{chatUnread > 9 ? '9+' : chatUnread}</span>
+      )}
     </button>
+    <button type="button" onClick={toggleHandRaise} className={`min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full transition-all ${handRaised ? 'bg-amber-500 text-black' : 'bg-white/10 text-white hover:bg-white/20'}`} title="Raise hand">✋</button>
+    <div className="hidden sm:flex"><VideoReactionBar onReact={sendReaction} /></div>
+    <button type="button" onClick={() => setShowMoreMenu(true)} className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20" title="More">⋯</button>
   </footer>
 
   {/* MINIMAL RENAME OVERLAY — Inline focus */ }
@@ -1508,12 +1703,68 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     )
   }
 
+      <NvidiaCopilotToast
+        prompt={unique.copilotPrompt}
+        onUse={() => unique.applyCopilotToInput(setChatInput)}
+        onDismiss={unique.dismissCopilot}
+      />
+
       <ReportSafetyModal
         open={showReportModal}
         onClose={() => setShowReportModal(false)}
         onSubmit={submitGroupReport}
         prepend={reportParticipantPicker}
         title="Report (anonymous)"
+      />
+
+      <ConversationRatingModal open={showRating} onClose={() => { setShowRating(false); finishLeaveRoom(); }} onRate={handleRateConversation} title="Rate this pod?" />
+      <VideoMoreSheet
+        open={showMoreMenu}
+        onClose={() => setShowMoreMenu(false)}
+        isMobile={isMobile}
+        isTranslatorActive={isTranslatorActive}
+        onToggleTranslate={() => setIsTranslatorActive((v) => !v)}
+        isScreenSharing={isScreenSharing}
+        onToggleScreenShare={startScreenShare}
+        onFlipCamera={() => setFacingMode((p) => (p === 'user' ? 'environment' : 'user'))}
+        onOpenDevices={() => setShowDevicePicker(true)}
+        onIcebreaker={generateAiSpark}
+        onCopyLink={copyRoomLink}
+        onHandRaise={toggleHandRaise}
+        handRaised={handRaised}
+        onTip={() => setShowTipModal(true)}
+        onHidePip={() => setPipHidden((h) => !h)}
+        pipHidden={pipHidden}
+        onCyclePipSize={cyclePipSize}
+        pipSize={pipSize}
+        showGames
+        balance={balance}
+        onRoomBoost={() => {
+          if (balance < 25) return alert('Need 25 coins');
+          socket?.emit('spend-coins', { amount: 25, reason: 'room-boost' });
+          setToast('Pod boosted in public room browser!');
+        }}
+        peerOptions={peers.map((p) => ({ id: p.socketId, label: p.nickname || 'User' }))}
+        onPinPeer={(id) => setPinnedId(id)}
+        onPinLocal
+        pinnedId={pinnedId}
+      />
+      <DevicePickerSheet
+        open={showDevicePicker}
+        onClose={() => setShowDevicePicker(false)}
+        videoDevices={videoDevices}
+        audioDevices={audioDevices}
+        selectedVideoId=""
+        selectedAudioId=""
+        onSelectVideo={() => setToast('Switch camera in system settings or flip button')}
+        onSelectAudio={() => setToast('Audio device saved for next session')}
+      />
+      <TipCreatorModal
+        open={showTipModal}
+        onClose={() => setShowTipModal(false)}
+        onTip={(amount) => sendTip(amount, peers.find((p) => p.isCreator)?.socketId)}
+        balance={balance}
+        creatorName={peers.find((p) => p.isCreator)?.nickname}
       />
 
       {toast && (

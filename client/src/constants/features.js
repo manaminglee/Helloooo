@@ -20,6 +20,18 @@ export const PHASE_3_PRO = {
   miniChatGames: true,
 };
 
+export const PHASE_4_UNIQUE = {
+  mutualConsent: true,
+  nvidiaCopilot: true,
+  structuredModes: true,
+  trustScore: true,
+  liveCaptions: true,
+  dataSaverHud: true,
+  communityEvents: true,
+  coOpStreak: true,
+  calmMode: true,
+};
+
 export function isProUser(user) {
   return user?.isPro === true || user?.subscription === 'pro';
 }

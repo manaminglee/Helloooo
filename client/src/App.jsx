@@ -37,7 +37,14 @@ export default function App() {
   const [mode, setMode] = useState(null);
   const [interest, setInterest] = useState('general');
   const [roomId, setRoomId] = useState(null);
-  const [joinMeta, setJoinMeta] = useState({ language: '', region: '', displayNickname: 'Anonymous' });
+  const [joinMeta, setJoinMeta] = useState({
+    language: '',
+    region: '',
+    displayNickname: 'Anonymous',
+    conversationMode: 'free',
+    topicContract: 'chill',
+    calmMode: false,
+  });
   const [showUnblockPay, setShowUnblockPay] = useState(false);
   const [creatorHandle, setCreatorHandle] = useState(null);
   const [pendingJoinRoomId, setPendingJoinRoomId] = useState(null);
@@ -206,7 +213,15 @@ export default function App() {
     if (!socket) return;
     if (roomId) socket.emit('leave-room', { roomId });
     setRoomId(null);
-    socket.emit('find-partner', { mode, interest, nickname: nickname || 'Anonymous' });
+    socket.emit('find-partner', {
+      mode,
+      interest,
+      nickname: nickname || 'Anonymous',
+      conversationMode: joinMeta.conversationMode || 'free',
+      topicContract: joinMeta.topicContract || 'chill',
+      language: joinMeta.language,
+      region: joinMeta.region || country,
+    });
   };
 
   const handleFindNewPod = () => {
@@ -282,6 +297,9 @@ export default function App() {
             coinState={coinState}
             registered={registered}
             currentActiveSeconds={activeSeconds}
+            conversationMode={joinMeta.conversationMode}
+            topicContract={joinMeta.topicContract}
+            calmMode={joinMeta.calmMode}
           />
         </div>
       );
@@ -305,6 +323,9 @@ export default function App() {
             coinState={coinState}
             registered={registered}
             currentActiveSeconds={activeSeconds}
+            conversationMode={joinMeta.conversationMode}
+            topicContract={joinMeta.topicContract}
+            calmMode={joinMeta.calmMode}
           />
         </div>
       );
@@ -351,6 +372,9 @@ export default function App() {
             adScripts={adScripts}
             registered={registered}
             currentActiveSeconds={activeSeconds}
+            conversationMode={joinMeta.conversationMode}
+            topicContract={joinMeta.topicContract}
+            calmMode={joinMeta.calmMode}
           />
         </div>
       );

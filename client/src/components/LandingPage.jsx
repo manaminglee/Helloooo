@@ -11,6 +11,10 @@ import { AdSlot } from './AdSlot';
 import { RoomBrowser } from './RoomBrowser';
 import { useLowPower } from '../context/LowPowerContext';
 import { CREATOR_MIN_WITHDRAWAL_COINS } from '../utils/creatorAuth';
+import { EventsHubStrip, ConversationModePicker, AiStatusPill } from './unique/UniqueSessionUI';
+import { fetchPublicEvents, fetchAiStatus } from '../services/nvidiaAiClient';
+import { loadSessionPrefs, saveSessionPrefs } from '../constants/conversationModes';
+import { PHASE_4_UNIQUE } from '../constants/features';
 
 const BlueTick = () => (
   <span className="inline-flex items-center justify-center w-3 h-3 bg-violet-500 rounded-full ml-1.5 shadow-[0_0_14px_rgba(167,139,250,0.45)]">
@@ -117,6 +121,10 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const { creatorStatus, registerCreator, verifyReferral, requestWithdrawal, login, checkStatus, reRequestApproval, updateProfile, fetchMyActivity, fetchMyWithdrawals } = useCreators();
   const { lowPower, setLowPower } = useLowPower();
   const [languageFilter, setLanguageFilter] = useState(joinMeta.language || '');
+  const [sessionMode, setSessionMode] = useState(joinMeta.conversationMode || loadSessionPrefs().conversationMode || 'free');
+  const [sessionContract, setSessionContract] = useState(joinMeta.topicContract || loadSessionPrefs().topicContract || 'chill');
+  const [publicEvents, setPublicEvents] = useState([]);
+  const [aiOnline, setAiOnline] = useState(false);
   const startRef = useRef(null);
   const [interestPresets, setInterestPresets] = useState([]);
   const [dashboardActivity, setDashboardActivity] = useState([]);
@@ -130,6 +138,23 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
       /* ignore */
     }
   }, []);
+
+  useEffect(() => {
+    fetchPublicEvents().then((d) => setPublicEvents(d?.events || [])).catch(() => {});
+    fetchAiStatus().then((s) => setAiOnline(!!s?.online)).catch(() => {});
+  }, []);
+
+  const handleSessionMode = (mode) => {
+    setSessionMode(mode);
+    saveSessionPrefs({ conversationMode: mode, topicContract: sessionContract });
+    setJoinMeta?.((p) => ({ ...p, conversationMode: mode }));
+  };
+
+  const handleSessionContract = (contract) => {
+    setSessionContract(contract);
+    saveSessionPrefs({ conversationMode: sessionMode, topicContract: contract });
+    setJoinMeta?.((p) => ({ ...p, topicContract: contract }));
+  };
 
   // Helper to show an alert-dialog
   const showAlert = (title, body) => new Promise(resolve => {
@@ -289,7 +314,15 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
   const handleStartInteraction = (mode, policyBypass = false) => {
     const nick = (joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
-    const meta = { language: languageFilter, region: userCountry || country, displayNickname: nick };
+    const meta = {
+      language: languageFilter,
+      region: userCountry || country,
+      displayNickname: nick,
+      conversationMode: sessionMode,
+      topicContract: sessionContract,
+      calmMode: joinMeta.calmMode || false,
+    };
+    saveSessionPrefs({ conversationMode: sessionMode, topicContract: sessionContract });
     if (setJoinMeta) setJoinMeta((p) => ({ ...p, ...meta }));
     if (!policyBypass && (mode === 'video' || mode === 'group_video')) {
       try {
@@ -461,7 +494,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* HERO SECTION */}
       {!showDashboardModal && (
-        <main className="relative z-10 pt-[calc(8rem+env(safe-area-inset-top))] sm:pt-36 pb-16 sm:pb-20 px-4 sm:px-6 max-w-7xl mx-auto flex flex-col items-center">
+        <main className="relative z-10 pt-[calc(8rem+env(safe-area-inset-top))] sm:pt-36 pb-16 sm:pb-20 px-4 sm:px-6 max-w-7xl mx-auto flex flex-col items-center mm-landing-neural-mesh">
 
           <AdSlot slotKey="hero" script={adScripts?.hero} adsEnabled={adsEnabled} className="w-full max-w-4xl" />
 
@@ -480,6 +513,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
               <span className="mm-landing-stat-pill">🔒 No account needed</span>
               <span className="mm-landing-stat-pill">⚡ Instant matching</span>
               <span className="mm-landing-stat-pill">🛡️ AI safety monitoring</span>
+            </div>
+            <div className="mt-4 flex justify-center mm-landing-fade-in mm-landing-fade-in-delay-1">
+              <AiStatusPill online={aiOnline} />
             </div>
             <div className="mt-8 flex flex-col sm:flex-row gap-2 max-w-lg mx-auto mm-landing-fade-in mm-landing-fade-in-delay-1">
               <input
@@ -592,6 +628,24 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             </div>
           </section>
 
+          {PHASE_4_UNIQUE.communityEvents && publicEvents.length > 0 && (
+            <EventsHubStrip events={publicEvents} />
+          )}
+
+          {PHASE_4_UNIQUE.structuredModes && (
+            <section className="w-full max-w-2xl mx-auto mb-14 px-4 mm-landing-fade-in mm-landing-fade-in-delay-2">
+              <div className="mm-neural-panel p-6 sm:p-8">
+                <span className="mm-neural-badge mb-4 inline-block">NVIDIA AI · Session setup</span>
+                <ConversationModePicker
+                  mode={sessionMode}
+                  contract={sessionContract}
+                  onMode={handleSessionMode}
+                  onContract={handleSessionContract}
+                />
+              </div>
+            </section>
+          )}
+
           <AdSlot slotKey="sidebar" script={adScripts?.sidebar} adsEnabled={adsEnabled} className="w-full max-w-2xl" />
 
           <section className="w-full max-w-4xl mb-14 mm-landing-fade-in mm-landing-fade-in-delay-3" aria-label="Chat modes">
@@ -631,7 +685,13 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
               connected={connected}
               onJoinRoom={(room) => {
                 const nick = (joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
-                onJoin(room.interest || 'general', nick, room.mode, room.id, { language: languageFilter, region: userCountry || country, displayNickname: nick });
+                onJoin(room.interest || 'general', nick, room.mode, room.id, {
+                  language: languageFilter,
+                  region: userCountry || country,
+                  displayNickname: nick,
+                  conversationMode: sessionMode,
+                  topicContract: sessionContract,
+                });
               }}
             />
           </section>

@@ -17,6 +17,8 @@ const crypto = require('crypto');
 const geoip = require('geoip-lite');
 const { createClient } = require('@supabase/supabase-js');
 const { registerEnhancements } = require('./enhancements');
+const nvidiaAi = require('./nvidiaAi');
+const { registerUniqueFeatures } = require('./uniqueFeatures');
 
 // Persistence Strategy: Supabase (Cloud) or Local JSON (Node)
 const supabaseUrl = (process.env.SUPABASE_URL || '').trim();
@@ -1501,35 +1503,10 @@ app.post('/api/user/spend', async (req, res) => {
 // NVIDIA AI PROXY
 app.post('/api/ai/spark', async (req, res) => {
   const { interest } = req.body || {};
-  const apiKey = process.env.NVIDIA_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: 'AI Service Offline' });
-
+  if (!nvidiaAi.isConfigured()) return res.status(503).json({ error: 'AI Service Offline' });
   try {
-    const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'meta/llama3-70b-instruct',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a friendly ice-breaker for an anonymous chat app. Provide one short, intriguing question or prompt to start a conversation based on the user interest. Maximum 15 words. No hashtags.'
-          },
-          {
-            role: 'user',
-            content: `Interest: ${interest || 'general'}`
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 50,
-      }),
-    });
-    const data = await response.json();
-    const message = data.choices?.[0]?.message?.content?.replace(/["']/g, '');
-    res.json({ spark: message || 'Hello! What is on your mind today?' });
+    const spark = await nvidiaAi.spark(interest);
+    res.json({ spark: spark || 'Hello! What is on your mind today?' });
   } catch (err) {
     res.status(500).json({ error: 'AI generation failed' });
   }
@@ -1537,64 +1514,19 @@ app.post('/api/ai/spark', async (req, res) => {
 
 app.post('/api/ai/reply', async (req, res) => {
   const { lastMessage } = req.body || {};
-  const apiKey = process.env.NVIDIA_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: 'AI Service Offline' });
-
+  if (!nvidiaAi.isConfigured()) return res.status(503).json({ error: 'AI Service Offline' });
   try {
-    const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'meta/llama3-70b-instruct',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an AI generating 3 short, natural, modern quick-reply options for a chat application. Based on the stranger\'s last message, suggest 3 highly distinct responses (maximum 4 words each). Output them separated by commas like: Haha exactly, No way!, Tell me more. Do not include quotes or numbers.'
-          },
-          {
-            role: 'user',
-            content: `Stranger: ${lastMessage || 'Hi'}`
-          }
-        ],
-        temperature: 0.8,
-        max_tokens: 30,
-      }),
-    });
-    const data = await response.json();
-    const suggestions = data.choices?.[0]?.message?.content?.split(',').map(s => s.trim().replace(/['"]/g, '')) || ['Yes', 'No', 'Haha'];
-    res.json({ replies: suggestions.slice(0, 3) });
+    const replies = await nvidiaAi.quickReplies(lastMessage);
+    res.json({ replies });
   } catch (err) {
     res.status(500).json({ error: 'AI reply failed' });
   }
 });
 
 app.post('/api/ai/suggest', async (req, res) => {
-  const apiKey = process.env.NVIDIA_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: 'AI Offline' });
-
+  if (!nvidiaAi.isConfigured()) return res.status(503).json({ error: 'AI Offline' });
   try {
-    const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'meta/llama3-70b-instruct',
-        messages: [
-          {
-            role: 'system',
-            content: 'Suggest 5 trending or intriguing short interests/topics for a chat application. Format: Only the words separated by commas. Example: Gaming, Space, AI, Music, Books. No numbers, no extra text.'
-          }
-        ],
-        temperature: 0.9,
-      }),
-    });
-    const data = await response.json();
-    const suggestions = data.choices?.[0]?.message?.content?.split(',').map(s => s.trim().replace(/[.]/g, '')) || [];
+    const suggestions = await nvidiaAi.suggestTopics();
     res.json({ suggestions });
   } catch (err) {
     res.status(500).json({ error: 'AI failed' });
@@ -1603,35 +1535,10 @@ app.post('/api/ai/suggest', async (req, res) => {
 
 app.post('/api/ai/translate', async (req, res) => {
   const { text } = req.body || {};
-  const apiKey = process.env.NVIDIA_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: 'AI Service Offline' });
   if (!text) return res.json({ translated: '' });
-
+  if (!nvidiaAi.isConfigured()) return res.status(503).json({ error: 'AI Service Offline' });
   try {
-    const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'meta/llama3-70b-instruct',
-        messages: [
-          {
-            role: 'system',
-            content: 'Translate the following message to clear, natural English. Only return the translated text without quotes or preamble.'
-          },
-          {
-            role: 'user',
-            content: text
-          }
-        ],
-        temperature: 0.1,
-        max_tokens: 200,
-      }),
-    });
-    const data = await response.json();
-    const translated = data.choices?.[0]?.message?.content?.replace(/["']/g, '');
+    const translated = await nvidiaAi.translate(text);
     res.json({ translated: translated || text });
   } catch (err) {
     res.status(500).json({ error: 'AI translation failed' });
@@ -1640,8 +1547,7 @@ app.post('/api/ai/translate', async (req, res) => {
 
 // AI ADMIN SYSTEM SUMMARY
 app.get('/api/admin/ai/summary', requireAdmin, async (req, res) => {
-  const apiKey = process.env.NVIDIA_API_KEY;
-  if (!apiKey) return res.json({ summary: 'NVIDIA API Key not configured. AI diagnostics offline.' });
+  if (!nvidiaAi.isConfigured()) return res.json({ summary: 'NVIDIA API Key not configured. AI diagnostics offline.' });
 
   try {
     const errorSummaries = errorLogs.map(l => `[${l.module}] ${l.message}`).join('\n');
@@ -1659,33 +1565,8 @@ Current Users: ${users.size}
 Server Uptime: ${process.uptime()}s 
 `;
 
-    const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'mistralai/mistral-7b-instruct-v0.1',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are the ManaMingle Admin AI. Analyze the system state and recent errors. Provide a concise (under 100 words), high-impact summary for the administrator. Highlight critical failures or patterns. Use professional yet assertive tone.'
-          },
-          {
-            role: 'user',
-            content: context
-          }
-        ],
-        temperature: 0.2,
-        max_tokens: 250,
-      }),
-    });
-    const data = await response.json();
-    res.json({
-      summary: data.choices?.[0]?.message?.content || 'AI analysis complete. No critical patterns identified.',
-      rawLogs: errorLogs
-    });
+    const summary = await nvidiaAi.adminSummary(context);
+    res.json({ summary, rawLogs: errorLogs });
   } catch (err) {
     logSystemError('ADMIN_AI', err);
     res.status(500).json({ error: 'AI summary failed' });
@@ -1695,41 +1576,17 @@ Server Uptime: ${process.uptime()}s
 // AI Moderation Proxy
 app.post('/api/ai/moderate', async (req, res) => {
   const { text } = req.body || {};
-  const apiKey = process.env.NVIDIA_API_KEY;
-  if (!apiKey) {
-    // Fallback: simple keyword check if AI is offline
+  if (!text) return res.json({ safe: true, warning: null });
+
+  if (!nvidiaAi.isConfigured()) {
     const badWords = ['hate', 'kill', 'suicide', 'die', 'murder', 'racist', 'nazi'];
     const isBad = badWords.some(w => text.toLowerCase().includes(w));
     return res.json({ safe: !isBad, warning: isBad ? 'Your message contains protected or harmful speech. Please follow our community guidelines.' : null });
   }
 
   try {
-    const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'mistralai/mistral-7b-instruct-v0.1',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a chat moderator. Analyze the input text for hate speech, harassment, or severe toxicity. Respond with "SAFE" or "UNSAFE: [reason for flagging]". Keep reasons very brief (max 5 words).'
-          },
-          {
-            role: 'user',
-            content: text
-          }
-        ],
-        temperature: 0.1,
-        max_tokens: 20,
-      }),
-    });
-    const data = await response.json();
-    const result = data.choices?.[0]?.message?.content || 'SAFE';
-    const isSafe = result.trim().toUpperCase().startsWith('SAFE');
-    res.json({ safe: isSafe, warning: isSafe ? null : result.split('UNSAFE:')[1]?.trim() || 'Potential hate speech detected.' });
+    const result = await nvidiaAi.moderate(text);
+    res.json(result);
   } catch (err) {
     res.json({ safe: true });
   }
@@ -1784,6 +1641,14 @@ const enhancements = registerEnhancements(app, io, {
   countryFromIP,
   addUserToRoom,
   removeUserFromRoom,
+});
+
+const uniqueFeatures = registerUniqueFeatures(app, io, {
+  rooms,
+  users,
+  reports,
+  sanitize,
+  countryFromIP,
 });
 
 // API 404 fallback — must be after registerEnhancements (rooms/public, creators, etc.)
@@ -1849,6 +1714,7 @@ io.on('connection', (socket) => {
   });
 
   enhancements.attachSocketHandlers(socket, ip);
+  uniqueFeatures.attachSocketHandlers(socket, ip);
 
   (async () => {
     let finalNick = 'Anonymous';
@@ -1979,6 +1845,8 @@ io.on('connection', (socket) => {
     const nickname = sanitize(data?.nickname || 'Anonymous', 30);
     const region = sanitize(String(data?.region || userData.country || ''), 10);
     const language = sanitize(String(data?.language || ''), 20);
+    const conversationMode = sanitize(String(data?.conversationMode || 'free'), 30);
+    const topicContract = sanitize(String(data?.topicContract || ''), 40);
     userData.nickname = nickname;
     userData.region = region;
     userData.language = language;
@@ -2001,6 +1869,7 @@ io.on('connection', (socket) => {
       const otherData = users.get(match.socketId);
       if (!otherData || !io.sockets.sockets.get(match.socketId)) return;
       const room = createRoom(interest, mode, socket.id, { id: userData.id, nickname: userData.nickname, country: userData.country }, PAIR_MAX);
+      uniqueFeatures.enrichPartnerMatch(room, socket.id, data);
       addUserToRoom(room, match.socketId, { id: otherData.id, nickname: otherData.nickname, country: otherData.country });
       userData.rooms.add(room.id);
       otherData.rooms.add(room.id);
@@ -2010,8 +1879,9 @@ io.on('connection', (socket) => {
       const myPeer = { socketId: socket.id, userId: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator };
       const otherPeer = { socketId: match.socketId, userId: otherData.id, nickname: otherData.nickname, country: otherData.country, isCreator: otherData.isCreator };
 
-      socket.emit('partner-found', { roomId: room.id, peer: otherPeer, country: userData.country });
-      io.sockets.sockets.get(match.socketId).emit('partner-found', { roomId: room.id, peer: myPeer, country: otherData.country });
+      const sessionConfig = uniqueFeatures.emitSessionConfig(room.id);
+      socket.emit('partner-found', { roomId: room.id, peer: otherPeer, country: userData.country, sessionConfig });
+      io.sockets.sockets.get(match.socketId).emit('partner-found', { roomId: room.id, peer: myPeer, country: otherData.country, sessionConfig });
 
       const reconnectToken = enhancements.issueReconnectToken(socket.id, { roomId: room.id, nickname: userData.nickname, mode });
       socket.emit('reconnect-token', { token: reconnectToken });
@@ -2045,7 +1915,7 @@ io.on('connection', (socket) => {
       socket.emit('chat-history', { roomId: room.id, messages: [] });
       io.sockets.sockets.get(match.socketId).emit('chat-history', { roomId: room.id, messages: [] });
     } else {
-      const entry = { socketId: socket.id, userData, interest, region, language };
+      const entry = { socketId: socket.id, userData, interest, region, language, conversationMode, topicContract };
       if (userData.isCreator) queue.unshift(entry);
       else queue.push(entry);
       socket.emit('waiting-for-partner', { mode, interest });
@@ -2398,6 +2268,24 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     if (!room || !room.users.has(socket.id)) return;
     socket.to(roomId).emit('room-reaction', { socketId: socket.id, emoji });
+  });
+
+  socket.on('peer-recording-status', (data) => {
+    const { roomId, recording } = data || {};
+    const room = rooms.get(roomId);
+    if (!room || !room.users.has(socket.id)) return;
+    socket.to(roomId).emit('peer-recording-status', { socketId: socket.id, recording: !!recording });
+  });
+
+  socket.on('tip-creator', (data) => {
+    const { roomId, targetSocketId, amount } = data || {};
+    const room = rooms.get(roomId);
+    if (!room || !room.users.has(socket.id) || !targetSocketId) return;
+    const sender = users.get(socket.id);
+    io.to(targetSocketId).emit('creator-tip-received', {
+      fromNickname: sender?.nickname || 'Someone',
+      amount: Math.min(Math.max(Number(amount) || 0, 0), 500),
+    });
   });
 
   socket.on('video-style', (data) => {

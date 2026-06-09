@@ -23,7 +23,34 @@ import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNoti
 import { playConnectSound, playMessageSound, playDisconnectSound, playWaveSound } from '../utils/sounds';
 import { mmDebug } from '../utils/mmDebug';
 import { ChatInputWithEmoji } from './ChatInputWithEmoji';
-import { PHASE_2 } from '../constants/features';
+import { DraggableVideoPip } from './DraggableVideoPip';
+import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
+import { useUniqueSession } from '../hooks/useUniqueSession';
+import {
+  AiStatusPill,
+  CalmModeToggle,
+  CoOpStreakBadge,
+  ConsentSessionGate,
+  DataSaverHud,
+  LiveCaptionsBar,
+  NvidiaCopilotToast,
+  TrustScoreChip,
+} from './unique/UniqueSessionUI';
+import { MiniChatGamePanel } from './MiniChatGamePanel';
+import {
+  AudioOnlyFallback,
+  CollapsibleMobileChatHeader,
+  ConnectionQualityBadge,
+  ConversationRatingModal,
+  DevicePickerSheet,
+  FloatingVideoReactions,
+  StrangerRevealOverlay,
+  TipCreatorModal,
+  useChatSwipeCollapse,
+  VideoMoreSheet,
+  VideoReactionBar,
+  VideoSessionBanners,
+} from './VideoSessionUI';
 
 function MessageSpark({ x, y }) {
   const [active, setActive] = useState(true);
@@ -226,7 +253,7 @@ function RecordingIndicator() {
   );
 }
 
-export default function VideoChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', isCreator = false, adsEnabled = false, adScripts = {}, onBack, onJoined, onFindNewPartner, coinState, registered = false, currentActiveSeconds = 0 }) {
+export default function VideoChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', isCreator = false, adsEnabled = false, adScripts = {}, onBack, onJoined, onFindNewPartner, coinState, registered = false, currentActiveSeconds = 0, conversationMode = 'free', topicContract = 'chill', calmMode: calmModeProp = false }) {
   const [coins, setCoins] = useState(coinState?.balance || 0);
   const [showProfileHandle, setShowProfileHandle] = useState(null);
 
@@ -307,7 +334,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const connTimerRef = useRef(null);
   const typingTimerRef = useRef(null);
   const toastTimerRef = useRef(null);
-  const pipDragRef = useRef(null);
+  const remoteStageRef = useRef(null);
   const pcRef = useRef(null);
   const roomIdRef = useRef(null);
   const firstSocketConnectRef = useRef(true);
@@ -353,15 +380,173 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         ? 'ok'
         : 'poor';
 
+  useChatSwipeCollapse(chatPanelRef, () => isMobile && setChatCollapsed(true));
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const [pipPos, setPipPos] = useState('br');
-  const togglePip = () => {
+  useEffect(() => {
+    if (showChat && !chatCollapsed) setChatUnread(0);
+  }, [showChat, chatCollapsed]);
+
+  const cyclePipCorner = () => {
     const pos = ['tr', 'tl', 'bl', 'br'];
     setPipPos(pos[(pos.indexOf(pipPos) + 1) % pos.length]);
   };
+
+  const cyclePipSize = () => {
+    setPipSize((s) => (s === 'sm' ? 'md' : s === 'md' ? 'lg' : 'sm'));
+  };
+
+  const cycleBandwidth = () => {
+    if (autoBandwidth) {
+      setAutoBandwidth(false);
+      setLowBandwidth(true);
+    } else if (lowBandwidth) {
+      setLowBandwidth(false);
+    } else {
+      setAutoBandwidth(true);
+    }
+  };
+
+  const maybeShowRating = useCallback(() => {
+    const hadChat = messages.filter((m) => !m.system).length > 0;
+    if ((hadChat || connectedSecsRef.current > 15) && !ratingDone) setShowRating(true);
+  }, [messages, ratingDone]);
+
+  const handleRateConversation = (rating) => {
+    socket?.emit('rate-conversation', { rating, roomId: roomIdRef.current });
+    submitRating(rating);
+  };
+
+  const generateAiSpark = async (presetText, sendNow) => {
+    if (isAiGenerating) return;
+    setIsAiGenerating(true);
+    try {
+      if (presetText) {
+        setInput(presetText);
+        if (sendNow) {
+          const t = presetText.trim();
+          if (t && socket && roomIdRef.current) {
+            socket.emit('send-message', { roomId: roomIdRef.current, text: t });
+          }
+        }
+        return;
+      }
+      const res = await fetch(`${API_BASE}/api/ai/spark`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interest: selectedInterests.join(',') || interest || 'general' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setInput(data.spark || '');
+      }
+    } catch { /* ignore */ } finally {
+      setIsAiGenerating(false);
+    }
+  };
+
+  const sendVideoReaction = (emoji) => {
+    if (!socket || !roomIdRef.current) return;
+    socket.emit('room-reaction', { roomId: roomIdRef.current, emoji });
+    const id = Math.random().toString(36).slice(2, 9);
+    setLocalReactions((prev) => [...prev.slice(-12), { id, emoji, x: 15 + Math.random() * 70, y: 55 + Math.random() * 25 }]);
+    setTimeout(() => setLocalReactions((prev) => prev.filter((r) => r.id !== id)), 3500);
+  };
+
+  const startScreenShare = async () => {
+    if (isScreenSharing) {
+      setIsScreenSharing(false);
+      await retryMediaLocal();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const track = stream.getVideoTracks()[0];
+      peerConnectionsRef.current.forEach((pc) => {
+        const sender = pc.getSenders().find((s) => s.track?.kind === 'video');
+        if (sender) sender.replaceTrack(track);
+      });
+      setIsScreenSharing(true);
+      track.onended = () => {
+        setIsScreenSharing(false);
+        retryMediaLocal();
+      };
+      setToast('Screen sharing active');
+    } catch {
+      setToast('Could not share screen');
+    }
+  };
+
+  const sendTip = (amount) => {
+    if (!socket || !roomIdRef.current || !peer?.socketId || balance < amount) return;
+    socket.emit('spend-coins', { amount, reason: 'creator-tip' });
+    socket.emit('tip-creator', { roomId: roomIdRef.current, targetSocketId: peer.socketId, amount });
+    setToast(`Sent ${amount} coins to ${peer.nickname || 'creator'}!`);
+  };
+
+  const dismissSafetyNudge = () => {
+    sessionStorage.setItem('mm_video_safety_seen', '1');
+    setShowSafetyNudge(false);
+  };
+
+  const revealStranger = () => {
+    setStrangerBlur(false);
+    setShowStrangerReveal(false);
+  };
+
+  const emitRecordingStatus = (recording) => {
+    if (socket && roomIdRef.current) {
+      socket.emit('peer-recording-status', { roomId: roomIdRef.current, recording });
+    }
+  };
+
+  const saveHighlightClip = () => {
+    if (!localStream || !peer?.stream) return;
+    setToast('Recording 30s highlight…');
+    startRecording();
+    setTimeout(() => stopRecording(), 30000);
+  };
+
+  const [pipPos, setPipPos] = useState('br');
+  const [pipSize, setPipSize] = useState('md');
+  const [pipHidden, setPipHidden] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [showDevicePicker, setShowDevicePicker] = useState(false);
+  const [showTipModal, setShowTipModal] = useState(false);
+  const [showStayConnected, setShowStayConnected] = useState(false);
+  const [localReactions, setLocalReactions] = useState([]);
+  const [peerRecording, setPeerRecording] = useState(false);
+  const [autoStrangerBlur, setAutoStrangerBlur] = useState(() => localStorage.getItem('mm_auto_stranger_blur') !== '0');
+  const [showStrangerReveal, setShowStrangerReveal] = useState(false);
+  const [showSafetyNudge, setShowSafetyNudge] = useState(() => !sessionStorage.getItem('mm_video_safety_seen'));
+  const [chatCollapsed, setChatCollapsed] = useState(false);
+  const [chatUnread, setChatUnread] = useState(0);
+  const chatPanelRef = useRef(null);
+  const [ultraLow, setUltraLow] = useState(false);
+  const [calmMode, setCalmMode] = useState(calmModeProp);
+
+  const unique = useUniqueSession({
+    socket,
+    roomId,
+    status,
+    messages,
+    interest,
+    conversationMode,
+    topicContract,
+    calmMode,
+  });
+
+  useEffect(() => {
+    if (unique.consentComplete) {
+      setStrangerBlur(false);
+      setShowStrangerReveal(false);
+    }
+  }, [unique.consentComplete]);
+
+  const mobilePipMode = isMobile && status === 'connected';
 
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -426,7 +611,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   useEffect(() => {
     if (!socket) return;
     const onWave = () => { setShowWave(true); setTimeout(() => setShowWave(false), 2800); playWaveSound(); };
-    const onGoodVibesMatch = () => { setGoodVibesMatch(true); setToast('🤝 Both of you gave Good Vibes! Great conversation!'); playConnectSound(); };
+    const onGoodVibesMatch = () => {
+      setGoodVibesMatch(true);
+      setShowStayConnected(true);
+      setToast('🤝 Both of you gave Good Vibes! Great conversation!');
+      playConnectSound();
+    };
     const onContentFlagged = (data) => setToast(`⚠️ ${data.message}`);
     const onTyping = ({ isTyping }) => {
       setStrangerTyping(isTyping);
@@ -609,10 +799,17 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     void ensureNotifyPermission();
     clearRoom();
     setStatus('searching');
-    socket.emit('find-partner', { mode: 'video', interest: interest || 'general', nickname: nickname || 'Anonymous' });
+    socket.emit('find-partner', {
+      mode: 'video',
+      interest: interest || 'general',
+      nickname: nickname || 'Anonymous',
+      conversationMode,
+      topicContract,
+    });
   };
 
   const handleSkip = useCallback(() => {
+    maybeShowRating();
     if (statusRef.current === 'connected' && connectedSecsRef.current >= 3 && selectedInterests.length > 0) {
       setToast(`Anonymous session ended (~${connectedSecsRef.current}s). Topics: ${selectedInterests.join(', ')} — not stored on our servers.`);
     }
@@ -630,9 +827,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         onFindNewPartner?.();
       }
     }, 100);
-  }, [socket, interest, status, onFindNewPartner, clearRoom, selectedInterests]);
+  }, [socket, interest, status, onFindNewPartner, clearRoom, selectedInterests, maybeShowRating]);
 
   const handleStop = useCallback(() => {
+    maybeShowRating();
     if (statusRef.current === 'connected' && connectedSecsRef.current >= 3 && selectedInterests.length > 0) {
       setToast(`Anonymous session ended (~${connectedSecsRef.current}s). Topics: ${selectedInterests.join(', ')} — not stored on our servers.`);
     }
@@ -647,7 +845,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     setStatus('idle');
     setGoodVibesSent(false); setGoodVibesMatch(false); setCameraBlur(false);
     setStrangerFilter('none'); setStrangerBlur(false);
-  }, [socket, clearRoom, selectedInterests]);
+  }, [socket, clearRoom, selectedInterests, maybeShowRating]);
 
   const handleBack = () => { handleStop(); onBack?.(); };
 
@@ -659,7 +857,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         reason: String(reason || 'unspecified'),
         ...(targetId ? { targetSocketId: targetId } : {}),
       });
-      if (block && targetId) socket.emit('block-user', { targetSocketId: targetId });
+      if (block && targetId) {
+        socket.emit('block-user', { targetSocketId: targetId });
+        setToast('User blocked — skipping to next match');
+        setTimeout(() => handleSkip(), 400);
+      }
     }
     mmDebug('report', reason, block);
   };
@@ -1122,6 +1324,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       }
       setStatus('connected');
       setP2pHealth('good');
+      setGoodVibesSent(false);
+      setGoodVibesMatch(false);
+      if (autoStrangerBlur && !unique.consentComplete) {
+        setStrangerBlur(true);
+        setShowStrangerReveal(true);
+      }
       onJoined?.(data.roomId);
       notifyIfBackground('Match found', 'Someone joined your Mana Mingle video chat.');
 
@@ -1144,7 +1352,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     const onMsg = (data) => {
       if (data.roomId === roomIdRef.current) {
         setMessages((m) => [...m.slice(-100), data]);
-        if (data.socketId !== socket.id) playMessageSound();
+        if (data.socketId !== socket.id) {
+          playMessageSound();
+          if (isMobile && (!showChat || chatCollapsed)) setChatUnread((n) => n + 1);
+        }
       }
     };
 
@@ -1236,7 +1447,17 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       setToast(typeof msg === 'string' ? `⏱️ ${msg}` : '⏱️ Rate limited — slow down for a few seconds.');
     };
 
-    socket.on('signal-rate-limited', onSignalRateLimited);
+    const onRoomReaction = ({ emoji }) => {
+      const id = Math.random().toString(36).slice(2, 9);
+      setLocalReactions((prev) => [...prev.slice(-12), { id, emoji, x: 20 + Math.random() * 60, y: 45 + Math.random() * 35 }]);
+      setTimeout(() => setLocalReactions((prev) => prev.filter((r) => r.id !== id)), 3500);
+    };
+    const onPeerRecording = ({ recording }) => setPeerRecording(!!recording);
+    const onTipReceived = ({ fromNickname, amount }) => setToast(`💰 ${fromNickname} tipped you ${amount} coins!`);
+
+    socket.on('room-reaction', onRoomReaction);
+    socket.on('peer-recording-status', onPeerRecording);
+    socket.on('creator-tip-received', onTipReceived);
     socket.on('connect', () => {
       console.log('Socket connected:', socket.id);
       if (firstSocketConnectRef.current) {
@@ -1270,10 +1491,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       socket.off('content-flagged');
       socket.off('error');
       socket.off('signal-rate-limited', onSignalRateLimited);
+      socket.off('room-reaction', onRoomReaction);
+      socket.off('peer-recording-status', onPeerRecording);
+      socket.off('creator-tip-received', onTipReceived);
       socket.off('connect');
       socket.off('disconnect');
     };
-  }, [socket, interest, onJoined, onFindNewPartner, doOffer, doAnswer, addIce, handleBack]);
+  }, [socket, interest, onJoined, onFindNewPartner, doOffer, doAnswer, addIce, handleBack, handleSkip, autoStrangerBlur, isMobile, showChat, chatCollapsed]);
 
   useEffect(() => {
     if (!isTranslatorActive) return;
@@ -1333,6 +1557,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     };
 
     setIsRecording(true);
+    emitRecordingStatus(true);
     draw();
 
     const captureStream = canvas.captureStream(30);
@@ -1348,6 +1573,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       a.download = `ManaMingle_CreatorCapture_${Date.now()}.webm`;
       a.click();
       setIsRecording(false);
+      emitRecordingStatus(false);
     };
 
     recorder.start(1000);
@@ -1358,6 +1584,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const stopRecording = () => {
     if (recorderRef.current) {
       recorderRef.current.stop();
+      emitRecordingStatus(false);
       setToast('🎥 REC SAVED');
     }
   };
@@ -1460,8 +1687,16 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         <button type="button" onClick={handleBack} className="p-1.5 -ml-0.5 sm:-ml-1 rounded-lg hover:bg-white/5 transition-colors shrink-0" aria-label="Back">
           <svg className="w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </button>
-        <span className="flex-1 min-w-0 text-center text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-white/40 truncate px-1">Mana Mingle Video</span>
+        <span className="flex-1 min-w-0 text-center text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-white/40 truncate px-1">
+          {status === 'connected' ? `Live · ${formatTimer(connectedSecs)}` : 'Mana Mingle Video'}
+        </span>
         <div className="flex items-center justify-end gap-1 sm:gap-2 min-w-0 max-w-[min(52%,11rem)] sm:max-w-none shrink">
+          {status === 'connected' && (
+            <ConnectionQualityBadge quality={connectionQuality} latency={latency} />
+          )}
+          {PHASE_4_UNIQUE.trustScore && <TrustScoreChip trust={unique.trust} />}
+          {PHASE_4_UNIQUE.nvidiaCopilot && <AiStatusPill online={unique.aiOnline} />}
+          {PHASE_4_UNIQUE.coOpStreak && <CoOpStreakBadge minutes={unique.coOpMinutes} />}
           {isCreator && (
             <button type="button" onClick={() => setShowFilterMenu(true)} className="relative group px-1.5 sm:px-2 py-1 rounded-lg text-[8px] sm:text-[9px] font-black uppercase tracking-widest bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 transition-all border border-violet-500/20 flex flex-col items-center shrink-0">
               <span>Filters</span>
@@ -1506,17 +1741,23 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         <AdSlot slotKey="chat_banner" script={adScripts?.chat_banner} adsEnabled={adsEnabled} compact />
       </div>
 
-      <main className={`flex-1 flex min-h-0 relative p-1.5 sm:p-2 gap-1.5 sm:gap-2 ${isMobile && showChat ? 'flex-col' : ''}`}>
+      <VideoSessionBanners
+        showSafetyNudge={showSafetyNudge}
+        onDismissSafety={dismissSafetyNudge}
+        peerRecording={peerRecording}
+        showStayConnected={showStayConnected && goodVibesMatch && peer?.isCreator}
+        onStayConnected={() => { if (peer?.nickname) window.open(`/creator/${peer.nickname}`, '_blank'); setShowStayConnected(false); }}
+        onDismissStayConnected={() => setShowStayConnected(false)}
+        matchedInterests={status === 'connected' ? selectedInterests : []}
+      />
+
+      <main className={`flex-1 flex min-h-0 relative p-1.5 sm:p-2 gap-1.5 sm:gap-2 mm-video-landscape-stage ${isMobile && showChat && status === 'connected' && !chatCollapsed ? 'flex-col' : ''}`}>
         <div
-          className={`mm-design-panel flex-1 flex min-h-0 min-w-0 relative overflow-hidden ${isMobile
-            ? showChat
-              ? 'h-[55%] flex-col'
-              : 'flex-col'
-            : 'flex-row'
-            }`}
+          className={`mm-design-panel mm-video-chat-split flex-1 flex min-h-0 min-w-0 relative overflow-hidden ${isMobile && showChat && status === 'connected' ? 'mm-video-chat-split--with-chat' : ''} ${isMobile ? 'flex-col' : 'flex-row'}`}
         >
-          {/* PANEL 1: LOCAL */}
-          <div className={`relative bg-black overflow-hidden transition-all duration-500 ${isMobile ? 'w-full flex-[0_0_42%] min-h-[168px] shrink-0 border-b border-violet-500/15' : 'flex-1 border-r border-violet-500/15'}`}>
+          {/* PANEL 1: LOCAL — full panel on desktop / pre-connect mobile; PIP when connected on mobile */}
+          {!mobilePipMode && (
+          <div className={`relative bg-black overflow-hidden transition-all duration-500 ${isMobile ? 'w-full flex-1 min-h-0 shrink-0 border-b border-violet-500/15' : 'flex-1 border-r border-violet-500/15'}`}>
             {status === 'idle' && (
               <div className="absolute inset-0 flex flex-col items-center justify-center p-6 z-20 bg-black/60 backdrop-blur-md">
                 {cameraError && (
@@ -1533,6 +1774,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 <button onClick={handleStart} disabled={!connected} className="px-12 py-4 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-black uppercase tracking-widest text-xs transition-all shadow-2xl active:scale-95 shadow-violet-600/30">Start Connecting</button>
               </div>
             )}
+            {cameraError && !localStream && (
+              <AudioOnlyFallback nickname={nickname} onRetryCamera={retryMediaLocal} />
+            )}
             <video ref={localVideoRef} autoPlay muted playsInline className={`w-full h-full object-cover transition-opacity duration-300 ${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`} style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }} />
             <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none" />
             <div className="absolute bottom-4 left-4 flex items-center gap-2">
@@ -1541,9 +1785,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             </div>
             {isCreator && filterTimer > 0 && <div className="absolute top-4 left-4 px-2 py-1 rounded bg-amber-500 text-black text-[8px] font-black animate-pulse shadow-2xl uppercase">Premium: {filterTimer}s</div>}
           </div>
+          )}
 
-          {/* PANEL 2: REMOTE / SEARCHING */}
-          <div className={`relative bg-realm-surface overflow-hidden ${isMobile ? 'flex-1 min-h-0 w-full border-t border-violet-500/15 sm:border-l' : 'flex-1 border-l border-violet-500/15'}`}>
+          {/* PANEL 2: REMOTE / SEARCHING — full stage on mobile when connected */}
+          <div
+            ref={remoteStageRef}
+            className={`relative bg-realm-surface overflow-hidden mm-video-stage-mobile ${isMobile ? `flex-1 min-h-0 w-full ${mobilePipMode ? '' : 'border-t border-violet-500/15'}` : 'flex-1 border-l border-violet-500/15'}`}
+          >
             {status === 'searching' && (
               <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-realm-void/95 backdrop-blur-[2px] z-50 animate-fade-in">
                 <div className="absolute top-10 flex items-center gap-3 px-4 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-400 text-[10px] font-black uppercase tracking-[0.4em] animate-pulse">
@@ -1579,7 +1827,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   className={`h-full relative overflow-hidden ${peer?.isCreator ? 'cursor-pointer group' : 'cursor-default'}`}
                   onClick={() => peer?.isCreator && setShowProfileHandle(peer.nickname)}
                 >
-                  <RemoteVideoComponent stream={peer?.stream} muted={mutedStranger} strangerFilter={strangerFilter} strangerBlur={strangerBlur} />
+                  <RemoteVideoComponent stream={peer?.stream} muted={mutedStranger} strangerFilter={strangerFilter} strangerBlur={strangerBlur || (!unique.consentComplete && autoStrangerBlur)} />
+                  <FloatingVideoReactions reactions={localReactions} />
+                  <StrangerRevealOverlay show={showStrangerReveal && (strangerBlur || !unique.consentComplete) && !unique.consentComplete} onReveal={() => { revealStranger(); unique.markReady(); }} />
+                  {PHASE_4_UNIQUE.liveCaptions && (
+                    <LiveCaptionsBar caption={unique.caption} enabled={unique.captionsOn} onToggle={() => unique.setCaptionsOn((v) => !v)} />
+                  )}
 
                   {/* WATERMARKS & AI STATUS */}
                   <div className="absolute top-4 left-4 z-50 flex items-center gap-3 pointer-events-none">
@@ -1602,12 +1855,39 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   </div>
                 )}
 
-                <div className={`absolute bottom-4 px-3 py-1.5 rounded-xl bg-black/60 text-[10px] font-black uppercase tracking-widest border border-white/10 flex items-center gap-2 z-40 backdrop-blur-md left-4`}>
+                <div className={`absolute bottom-4 px-3 py-1.5 rounded-xl bg-black/60 text-[10px] font-black uppercase tracking-widest border border-white/10 flex items-center gap-2 z-40 backdrop-blur-md left-4 max-sm:bottom-3 max-sm:left-3`}>
                   {countryToFlag(peer?.country)}
                   <span className={peer?.isCreator ? 'text-violet-400 flex items-center gap-1.5' : 'text-white'}>
                     {peer?.nickname || 'Someone'}
                     {peer?.isCreator && <BlueTick />}
                   </span>
+                </div>
+
+                {mobilePipMode && (
+                  <DraggableVideoPip
+                    position={pipPos}
+                    onPositionChange={setPipPos}
+                    onCycleCorner={cyclePipCorner}
+                    size={pipSize}
+                    hidden={pipHidden}
+                    label="Your camera — drag to a corner, double-tap to move"
+                  >
+                    <video
+                      ref={localVideoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
+                      style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent pointer-events-none" />
+                    {isCreator && filterTimer > 0 && (
+                      <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-amber-500 text-black text-[7px] font-black uppercase">Premium</div>
+                    )}
+                  </DraggableVideoPip>
+                )}
+                <div className="absolute top-3 right-3 z-[55] hidden sm:block">
+                  <VideoReactionBar onReact={sendVideoReaction} />
                 </div>
               </div>
             ) : (
@@ -1621,8 +1901,19 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           </div>
         </div>
 
-        {showChat && status === 'connected' && (
-          <div className={`transition-all duration-300 mm-design-panel flex flex-col min-h-0 min-w-0 bg-realm-surface ${isMobile ? 'h-[45%] max-h-[50vh] w-full z-[150]' : 'static w-80 animate-slide-left'}`}>
+        {showChat && status === 'connected' && isMobile && chatCollapsed && (
+          <CollapsibleMobileChatHeader collapsed onToggle={() => setChatCollapsed(false)} unread={chatUnread} />
+        )}
+        {showChat && status === 'connected' && !chatCollapsed && (
+          <div ref={chatPanelRef} className={`transition-all duration-300 mm-design-panel chat-panel mm-video-landscape-chat flex flex-col min-h-0 min-w-0 bg-realm-surface shrink-0 ${isMobile ? 'w-full h-[40vh] max-h-[42vh] border-t border-violet-500/15' : 'static w-80 animate-slide-left'}`}>
+            {!isMobile && null}
+            {isMobile && (
+              <CollapsibleMobileChatHeader
+                collapsed={chatCollapsed}
+                onToggle={() => setChatCollapsed((c) => !c)}
+                unread={chatUnread}
+              />
+            )}
             <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar" id="video-chat-messages">
               {messages.map((m, i) => (
                 <div key={m.id || i} className={`flex flex-col group ${m.socketId === socket.id ? 'items-end' : 'items-start'}`}>
@@ -1631,7 +1922,18 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               ))}
               <div ref={chatEndRef} />
             </div>
+            {PHASE_3_PRO.miniChatGames && roomIdRef.current && (
+              <div className="px-3 pb-1">
+                <MiniChatGamePanel onSendPrompt={(text) => generateAiSpark(text, true)} />
+              </div>
+            )}
             <div className="p-3 bg-white/[0.02] border-t border-violet-500/10">
+              <div className="flex gap-2 mb-2">
+                <button type="button" onClick={() => generateAiSpark()} disabled={isAiGenerating} className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-violet-500/15 text-violet-300 border border-violet-500/20 hover:bg-violet-500/25 disabled:opacity-40">
+                  {isAiGenerating ? '…' : '✨ Icebreaker'}
+                </button>
+                {isTranslatorActive && <span className="text-[9px] text-emerald-400/80 self-center uppercase font-bold tracking-widest">Translating</span>}
+              </div>
               <ChatInputWithEmoji
                 value={input}
                 onChange={handleInputChange}
@@ -1684,10 +1986,29 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             {status === 'connected' && (
               <>
                 <div className="flex flex-col items-center gap-0.5">
-                  <button type="button" onClick={() => setShowChat(!showChat)} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${showChat ? 'bg-violet-500/30 text-violet-400' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title="Chat">
+                  <button type="button" onClick={() => {
+                      if (!showChat) { setShowChat(true); setChatCollapsed(false); }
+                      else if (chatCollapsed) setChatCollapsed(false);
+                      else { setShowChat(false); setChatCollapsed(false); }
+                    }} className={`relative w-8 h-8 rounded-full flex items-center justify-center transition-all ${showChat && !chatCollapsed ? 'bg-violet-500/30 text-violet-400' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title="Chat">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                    {chatUnread > 0 && (
+                      <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-rose-500 text-[8px] font-black text-white flex items-center justify-center">{chatUnread > 9 ? '9+' : chatUnread}</span>
+                    )}
                   </button>
                   <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">C</span>
+                </div>
+                {isMobile && (
+                  <div className="flex flex-col items-center gap-0.5 sm:hidden">
+                    <button type="button" onClick={toggleFacingMode} className="w-8 h-8 rounded-full bg-white/5 text-white/60 hover:bg-white/10 flex items-center justify-center" title="Flip camera">🔄</button>
+                  </div>
+                )}
+                <div className="flex flex-col items-center gap-0.5 sm:hidden">
+                  <VideoReactionBar onReact={sendVideoReaction} disabled={!roomIdRef.current} />
+                </div>
+                <div className="flex flex-col items-center gap-0.5">
+                  <button type="button" onClick={() => setShowMoreMenu(true)} className="w-8 h-8 rounded-full bg-white/5 text-white/60 hover:bg-white/10 flex items-center justify-center" title="More options">⋯</button>
+                  <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">+</span>
                 </div>
                 <div className="flex flex-col items-center gap-0.5">
                   <button type="button" onClick={sendWave} className="w-8 h-8 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center hover:bg-amber-500/20 transition-all" title="Wave">👋</button>
@@ -1716,6 +2037,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         {/* Right Side: New/Skip */}
         <div className="flex items-center gap-1 sm:gap-3 shrink-0">
           {isCreator && status === 'connected' && (
+            <>
             <button
               type="button"
               onClick={isRecording ? stopRecording : startRecording}
@@ -1724,6 +2046,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             >
               <div className={`w-3 h-3 rounded-full ${isRecording ? 'bg-white' : 'bg-rose-500'}`} />
             </button>
+            <button type="button" onClick={saveHighlightClip} className="hidden sm:flex w-9 h-9 rounded-full bg-amber-500/15 border border-amber-500/25 text-amber-400 items-center justify-center text-[9px] font-black" title="30s highlight clip">30s</button>
+            </>
           )}
           <div className="flex flex-col items-center gap-0.5">
             <button type="button" onClick={handleSkip} className="relative px-3 sm:px-6 py-1.5 sm:py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black uppercase tracking-widest text-[9px] sm:text-[10px] transition-all active:scale-95 shadow-xl shadow-violet-500/20 whitespace-nowrap" aria-label="Skip">
@@ -1846,6 +2170,70 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           </div>
         </div>
       )}
+
+      <ConsentSessionGate
+        visible={status === 'connected' && PHASE_4_UNIQUE.mutualConsent && !unique.consentComplete}
+        partnerReady={unique.partnerReady}
+        totalPartners={unique.totalPartners}
+        topicContract={topicContract}
+        conversationMode={conversationMode}
+        modePrompt={unique.modePrompt}
+        onReady={unique.markReady}
+        onAudioReady={unique.markAudioIntroReady}
+        audioIntroDone={unique.audioIntroComplete}
+        aiOnline={unique.aiOnline}
+      />
+      <NvidiaCopilotToast
+        prompt={unique.copilotPrompt}
+        onUse={() => unique.applyCopilotToInput(setInput)}
+        onDismiss={unique.dismissCopilot}
+      />
+      {PHASE_4_UNIQUE.dataSaverHud && status === 'connected' && (
+        <div className="shrink-0 px-3 py-1 flex justify-between items-center border-b border-white/5 bg-black/20">
+          <DataSaverHud bytesEstimate={unique.bytesEstimate} ultraLow={ultraLow} onToggleUltra={() => { setUltraLow((u) => !u); setLowBandwidth((b) => !b); setAutoBandwidth(false); }} />
+          {PHASE_4_UNIQUE.calmMode && <CalmModeToggle enabled={calmMode} onToggle={() => setCalmMode((c) => !c)} />}
+        </div>
+      )}
+      <ConversationRatingModal open={showRating} onClose={() => setShowRating(false)} onRate={handleRateConversation} />
+      <VideoMoreSheet
+        open={showMoreMenu}
+        onClose={() => setShowMoreMenu(false)}
+        isMobile={isMobile}
+        isTranslatorActive={isTranslatorActive}
+        onToggleTranslate={() => setIsTranslatorActive((v) => !v)}
+        isScreenSharing={isScreenSharing}
+        onToggleScreenShare={startScreenShare}
+        onFlipCamera={toggleFacingMode}
+        onOpenDevices={() => setShowDevicePicker(true)}
+        onIcebreaker={() => generateAiSpark()}
+        onTip={peer?.isCreator ? () => setShowTipModal(true) : undefined}
+        onToggleBandwidth={cycleBandwidth}
+        autoBandwidth={autoBandwidth}
+        lowBandwidth={lowBandwidth}
+        onToggleAutoBlur={() => {
+          const next = !autoStrangerBlur;
+          setAutoStrangerBlur(next);
+          localStorage.setItem('mm_auto_stranger_blur', next ? '1' : '0');
+        }}
+        autoStrangerBlur={autoStrangerBlur}
+        onHidePip={() => setPipHidden((h) => !h)}
+        pipHidden={pipHidden}
+        onCyclePipSize={cyclePipSize}
+        pipSize={pipSize}
+        showGames
+        balance={balance}
+      />
+      <DevicePickerSheet
+        open={showDevicePicker}
+        onClose={() => setShowDevicePicker(false)}
+        videoDevices={videoDevices}
+        audioDevices={audioDevices}
+        selectedVideoId={selectedVideoDeviceId}
+        selectedAudioId={selectedAudioDeviceId}
+        onSelectVideo={(id) => { setSelectedVideoDeviceId(id); localStorage.setItem('mm_videoDeviceId', id); }}
+        onSelectAudio={(id) => { setSelectedAudioDeviceId(id); localStorage.setItem('mm_audioDeviceId', id); }}
+      />
+      <TipCreatorModal open={showTipModal} onClose={() => setShowTipModal(false)} onTip={sendTip} balance={balance} creatorName={peer?.nickname} />
     </div>
   );
 }
