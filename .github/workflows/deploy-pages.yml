@@ -33,7 +33,9 @@ jobs:
         working-directory: client
 
       - name: Build app
-        run: npm run build
+        run: |
+          if [ -z "$VITE_SOCKET_URL" ]; then export VITE_SOCKET_URL="https://manamingle-73gd.onrender.com"; fi
+          npm run build
         working-directory: client
         env:
           VITE_BASE_PATH: /

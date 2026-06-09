@@ -1,183 +1,167 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useSyncExternalStore } from 'react';
+import { API_BASE } from '../config/apiBase';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || '';
+const BASE_URL = API_BASE;
 
-// Fix #4 + minor: Single base URL — trim to avoid space-only env vars
-const BASE_URL = SOCKET_URL?.trim() || (typeof window !== 'undefined' ? window.location.origin : '');
-
-export function useSocket() {
-  const [socket, setSocket] = useState(null);
-  const [connected, setConnected] = useState(false);
-  const [country, setCountry] = useState(null);
-  const [onlineCount, setOnlineCount] = useState({ count: 0, regions: { in: 0, us: 0, eu: 0, ot: 0 } });
-  const [adsEnabled, setAdsEnabled] = useState(false);
-  const [adScripts, setAdScripts] = useState({
+let socket = null;
+let socketInitPromise = null;
+let state = {
+  socket: null,
+  connected: false,
+  country: null,
+  onlineCount: { count: 0, regions: { in: 0, us: 0, eu: 0, ot: 0 } },
+  adsEnabled: false,
+  adScripts: {
     hero: '',
     sidebar: '',
     footer: '',
     chat_banner: '',
     chat_sidebar: '',
-  });
-  const [allowDevTools, setAllowDevTools] = useState(true);
-  const [nickname, setNickname] = useState('Anonymous');
-  const [isCreator, setIsCreator] = useState(false);
-  const [contentFlagged, setContentFlagged] = useState(null);
-  const [isBlocked, setIsBlocked] = useState(false);
-  const [registered, setRegistered] = useState(false);
-  const [activeSeconds, setActiveSeconds] = useState(0);
+  },
+  allowDevTools: true,
+  nickname: 'Anonymous',
+  isCreator: false,
+  contentFlagged: null,
+  isBlocked: false,
+  registered: false,
+  activeSeconds: 0,
+};
 
-  // Fix #6: Ref to track contentFlagged timeout for proper cleanup
-  const flaggedTimeoutRef = useRef(null);
+const listeners = new Set();
+let flaggedTimeout = null;
 
-  useEffect(() => {
-    let mounted = true;
-    let s = null;
+function emit() {
+  listeners.forEach((fn) => fn());
+}
 
-    (async () => {
-      const { io } = await import('socket.io-client');
-      // Fix #3: Guard — if unmounted before import resolved, don't connect
-      if (!mounted) return;
+function patchState(next) {
+  state = { ...state, ...next };
+  emit();
+}
 
-      s = io(BASE_URL, {
-        path: '/socket.io',
-        transports: ['websocket', 'polling'],
-        withCredentials: true,
-        reconnection: true,
-        reconnectionAttempts: Infinity,
-        reconnectionDelay: 2000,
-        reconnectionDelayMax: 10000,
-        timeout: 20000,
+async function ensureSocket() {
+  if (socket) return socket;
+  if (socketInitPromise) return socketInitPromise;
+
+  socketInitPromise = (async () => {
+    const { io } = await import('socket.io-client');
+    const s = io(BASE_URL, {
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 10000,
+      timeout: 20000,
+    });
+
+    socket = s;
+    patchState({ socket: s });
+    window.socket = s;
+
+    s.on('connect', () => patchState({ connected: true, isBlocked: false }));
+    s.on('disconnect', () => patchState({ connected: false }));
+    s.on('connect_error', (err) => {
+      console.error('[Socket] Connection error:', err.message);
+      patchState({ connected: false });
+    });
+
+    s.on('connected', (data) => {
+      patchState({
+        country: data?.country || null,
+        nickname: data?.nickname || 'Anonymous',
+        isCreator: !!data?.isCreator,
+        registered: !!data?.registered,
+        activeSeconds: data?.activeSeconds || 0,
       });
-
-      setSocket(s);
-      window.socket = s;
-
-      s.on('connect', () => {
-        if (!mounted) return;
-        setConnected(true);
-        setIsBlocked(false);
-      });
-
-      s.on('disconnect', () => {
-        if (!mounted) return;
-        setConnected(false);
-      });
-
-      // Fix #5: Handle connection errors so user isn't left with no feedback
-      s.on('connect_error', (err) => {
-        console.error('[Socket] Connection error:', err.message);
-        if (!mounted) return;
-        setConnected(false);
-      });
-
-      // Minor: Reconnect attempt feedback
-      s.io.on('reconnect_attempt', (attempt) => {
-        console.log(`[Socket] Reconnect attempt #${attempt}...`);
-      });
-
-      s.on('connected', (data) => {
-        if (!mounted) return;
-        setCountry(data?.country || null);
-        setNickname(data?.nickname || 'Anonymous');
-        setIsCreator(!!data?.isCreator);
-        setRegistered(!!data?.registered);
-        setActiveSeconds(data?.activeSeconds || 0);
-        if (data?.settings) {
-          setAdsEnabled(!!data.settings.adsEnabled);
-          setAllowDevTools(!!data.settings.allowDevTools);
-          if (data.settings.adScripts && typeof data.settings.adScripts === 'object') {
-            setAdScripts((prev) => ({ ...prev, ...data.settings.adScripts }));
-          }
-        }
-      });
-
-      // Minor: Prevent unnecessary re-renders by comparing serialized value
-      s.on('online_count', (data) => {
-        if (!mounted) return;
-        setOnlineCount(prev =>
-          JSON.stringify(prev) === JSON.stringify(data) ? prev : data
-        );
-      });
-
-      // Minor: Log reason for block
-      s.on('blocked-ip', (data) => {
-        if (!mounted) return;
-        console.warn('[Socket] Blocked by server:', data?.reason || 'No reason provided');
-        setIsBlocked(true);
-      });
-
-      s.on('content-flagged', (data) => {
-        if (!mounted) return;
-        setContentFlagged(data?.message || 'Your content was flagged for review. Please follow community guidelines.');
-        // Fix #6: Clear previous timeout before setting a new one
-        clearTimeout(flaggedTimeoutRef.current);
-        flaggedTimeoutRef.current = setTimeout(() => {
-          if (mounted) setContentFlagged(null);
-        }, 6000);
-      });
-
-      s.on('settings_updated', (data) => {
-        if (!mounted) return;
-        if (data) {
-          if (typeof data.adsEnabled !== 'undefined') setAdsEnabled(!!data.adsEnabled);
-          if (typeof data.allowDevTools !== 'undefined') setAllowDevTools(!!data.allowDevTools);
-          if (data.adScripts && typeof data.adScripts === 'object') {
-            setAdScripts((prev) => ({ ...prev, ...data.adScripts }));
-          }
-        }
-      });
-
-      s.on('coins-updated', (data) => {
-        if (!mounted) return;
-        if (data?.registered !== undefined) setRegistered(!!data.registered);
-        if (data?.activeSeconds !== undefined) setActiveSeconds(data.activeSeconds);
-      });
-    })();
-
-    return () => {
-      mounted = false;
-      // Fix #1 + #2: Remove all listeners AND disconnect on unmount
-      clearTimeout(flaggedTimeoutRef.current);
-      if (s) {
-        s.off(); // removes ALL event listeners
-        s.disconnect();
+      if (data?.settings) {
+        patchState({
+          adsEnabled: !!data.settings.adsEnabled,
+          allowDevTools: !!data.settings.allowDevTools,
+          adScripts: data.settings.adScripts && typeof data.settings.adScripts === 'object'
+            ? { ...state.adScripts, ...data.settings.adScripts }
+            : state.adScripts,
+        });
       }
-    };
-  }, []);
+    });
 
-  // Fetch initial settings on mount
-  useEffect(() => {
-    let cancelled = false;
-    const fetchInitData = async () => {
-      try {
-        const settingsRes = await fetch(`${BASE_URL}/api/settings`);
-        if (!cancelled && settingsRes.ok) {
-          const data = await settingsRes.json();
-          if (typeof data.adsEnabled !== 'undefined') setAdsEnabled(!!data.adsEnabled);
-          if (typeof data.allowDevTools !== 'undefined') setAllowDevTools(!!data.allowDevTools);
-          if (data.adScripts && typeof data.adScripts === 'object') {
-            setAdScripts((prev) => ({ ...prev, ...data.adScripts }));
-          }
-        }
-      } catch { }
-    };
-    fetchInitData();
-    return () => { cancelled = true; };
-  }, []);
+    s.on('online_count', (data) => {
+      if (JSON.stringify(state.onlineCount) !== JSON.stringify(data)) {
+        patchState({ onlineCount: data });
+      }
+    });
 
-  return useMemo(() => ({
-    socket,
-    connected,
-    country,
-    onlineCount,
-    adsEnabled,
-    adScripts,
-    allowDevTools,
-    nickname,
-    isCreator,
-    isBlocked,
-    contentFlagged,
-    registered,
-    activeSeconds,
-  }), [socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds]);
+    s.on('blocked-ip', (data) => {
+      console.warn('[Socket] Blocked by server:', data?.reason || 'No reason provided');
+      patchState({ isBlocked: true });
+    });
+
+    s.on('content-flagged', (data) => {
+      patchState({ contentFlagged: data?.message || 'Your content was flagged for review. Please follow community guidelines.' });
+      clearTimeout(flaggedTimeout);
+      flaggedTimeout = setTimeout(() => patchState({ contentFlagged: null }), 6000);
+    });
+
+    s.on('settings_updated', (data) => {
+      if (!data) return;
+      patchState({
+        adsEnabled: typeof data.adsEnabled !== 'undefined' ? !!data.adsEnabled : state.adsEnabled,
+        allowDevTools: typeof data.allowDevTools !== 'undefined' ? !!data.allowDevTools : state.allowDevTools,
+        adScripts: data.adScripts && typeof data.adScripts === 'object'
+          ? { ...state.adScripts, ...data.adScripts }
+          : state.adScripts,
+      });
+    });
+
+    s.on('coins-updated', (data) => {
+      if (!data) return;
+      patchState({
+        registered: data.registered !== undefined ? !!data.registered : state.registered,
+        activeSeconds: data.activeSeconds !== undefined ? data.activeSeconds : state.activeSeconds,
+      });
+    });
+
+    return s;
+  })();
+
+  return socketInitPromise;
+}
+
+async function fetchInitialSettings() {
+  try {
+    const res = await fetch(`${BASE_URL}/api/settings`);
+    if (!res.ok) return;
+    const data = await res.json();
+    patchState({
+      adsEnabled: typeof data.adsEnabled !== 'undefined' ? !!data.adsEnabled : state.adsEnabled,
+      allowDevTools: typeof data.allowDevTools !== 'undefined' ? !!data.allowDevTools : state.allowDevTools,
+      adScripts: data.adScripts && typeof data.adScripts === 'object'
+        ? { ...state.adScripts, ...data.adScripts }
+        : state.adScripts,
+    });
+  } catch { /* offline */ }
+}
+
+let booted = false;
+function boot() {
+  if (booted) return;
+  booted = true;
+  ensureSocket();
+  fetchInitialSettings();
+}
+
+function subscribe(fn) {
+  boot();
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+function getSnapshot() {
+  return state;
+}
+
+export function useSocket() {
+  useEffect(() => { boot(); }, []);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

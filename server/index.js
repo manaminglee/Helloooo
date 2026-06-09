@@ -1755,7 +1755,7 @@ app.get(/^(?!\/api|\/socket\.io|\/health)/, (req, res, next) => {
       if (err) next();
     });
   }
-  const frontendUrl = process.env.FRONTEND_ORIGIN || 'https://manamingle.vercel.app';
+  const frontendUrl = process.env.FRONTEND_ORIGIN || 'https://manamingle.site';
   const url = frontendUrl.split(',')[0].trim();
   res.redirect(302, url);
 });

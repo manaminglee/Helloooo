@@ -9,6 +9,7 @@ import { LowPowerProvider } from './context/LowPowerContext';
 import { useSocket } from './hooks/useSocket';
 import { useCoins } from './hooks/useCoins';
 import { loadReconnectSession, clearReconnectSession, saveReconnectSession } from './utils/reconnectSession';
+import { API_BASE } from './config/apiBase';
 // Lazy load off-screen and secondary modules for extreme performance
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const TextChat = lazy(() => import('./components/TextChat'));
@@ -67,7 +68,7 @@ export default function App() {
   useEffect(() => {
     if (!socket || !connected || !pendingJoinRoomId) return;
     const rid = pendingJoinRoomId;
-    fetch(`${import.meta.env.VITE_SOCKET_URL || ''}/api/rooms/${rid}`)
+    fetch(`${API_BASE}/api/rooms/${rid}`)
       .then((r) => r.json())
       .then((room) => {
         if (room.joinable) {
@@ -360,7 +361,7 @@ export default function App() {
       {!preloadDone && (
         <PreloadSplash ready={connected} onReady={handlePreloadReady} />
       )}
-      <div className="relative flex min-h-0 w-full max-w-[100vw] flex-1 flex-col overflow-x-hidden mm-mobile-safe">
+      <div className="relative flex min-h-[100dvh] w-full max-w-[100vw] flex-1 flex-col overflow-x-hidden mm-mobile-safe">
         <Suspense fallback={<LoadingFallback />}>
           {renderContent()}
         </Suspense>

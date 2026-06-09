@@ -3,8 +3,8 @@
  */
 import { useEffect, useState, useRef } from 'react';
 
-const FALLBACK_MS = 2000;
-const SKIP_AFTER_MS = 1500;
+const FALLBACK_MS = 1200;
+const SKIP_AFTER_MS = 800;
 
 const PRELOAD_MESSAGES = [
   'Connecting to Secure Network',
@@ -58,7 +58,19 @@ export function PreloadSplash({ onReady, ready = false, onPreload }) {
     return () => clearInterval(interval);
   }, []);
 
-  // Fallback: let user through after FALLBACK_MS if socket never connects
+  // Always dismiss splash — never block the app if socket is slow
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (doneRef.current) return;
+      doneRef.current = true;
+      if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('splashShown', 'true');
+      setVisible(false);
+      onReady?.();
+    }, FALLBACK_MS + 400);
+    return () => clearTimeout(t);
+  }, [onReady]);
+
+  // Fallback progress bar
   useEffect(() => {
     const t = setTimeout(() => {
       if (doneRef.current) return;

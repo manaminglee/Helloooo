@@ -3,8 +3,9 @@
  */
 import { useState } from 'react';
 import { Turnstile } from 'react-turnstile';
+import { API_BASE } from '../config/apiBase';
 
-const apiBase = import.meta.env.VITE_SOCKET_URL || '';
+const apiBase = API_BASE;
 // Use env key or Cloudflare test key (always passes) for dev
 const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || '1x00000000000000000000AA';
 
