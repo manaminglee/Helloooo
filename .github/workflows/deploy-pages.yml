@@ -36,8 +36,13 @@ jobs:
         run: npm run build
         working-directory: client
         env:
+          VITE_BASE_PATH: /
           VITE_SOCKET_URL: ${{ secrets.VITE_SOCKET_URL }}
           VITE_TURNSTILE_SITE_KEY: ${{ secrets.VITE_TURNSTILE_SITE_KEY }}
+
+      - name: Prepare GitHub Pages SPA fallback
+        run: cp dist/index.html dist/404.html
+        working-directory: client
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

@@ -1,10 +1,9 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const isGitHubActions = process.env.GITHUB_ACTIONS === 'true';
-
 export default defineConfig({
-  base: isGitHubActions ? '/ManaMingle/' : '/',
+  // Custom domain (manamingle.site) serves from root — not /RepoName/
+  base: process.env.VITE_BASE_PATH || '/',
   plugins: [react()],
   server: {
     port: 5173,

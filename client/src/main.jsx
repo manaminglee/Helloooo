@@ -30,7 +30,9 @@ const path = window.location.pathname || '/';
 
 if ('serviceWorker' in navigator && !path.startsWith('/admin')) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).then((reg) => {
+      reg.update();
+    }).catch(() => {});
   });
 }
 
