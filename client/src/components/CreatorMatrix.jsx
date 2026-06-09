@@ -96,9 +96,31 @@ function CreatorLedgerStrip({ enabled }) {
   );
 }
 
-function CreatorMatrixInner({ creatorStatus, onOpenDashboard, onOpenApply, onOpenStatus, onOpenLogin, onEditProfile, onWithdraw, onLogout, showAlert }) {
+function CreatorMatrixInner({ embedded = false, creatorStatus, onOpenDashboard, onOpenApply, onOpenStatus, onOpenLogin, onEditProfile, onWithdraw, onLogout, showAlert }) {
   const hasAccount = !!(creatorStatus?.handle_name);
   const approved = creatorStatus?.status === 'approved';
+
+  if (embedded) {
+    return (
+      <div className="mb-6 pb-6 border-b border-white/10">
+        <p className="text-sm text-white/60 mb-4 text-center">
+          Verified creators get a badge, a referral link, and can earn from referrals.
+        </p>
+        <ul className="grid grid-cols-2 gap-2 mb-4">
+          {perks.map((p) => (
+            <li key={p.title} className="rounded-lg border border-white/10 bg-white/5 p-3 text-left">
+              <div className="text-xs font-medium text-white mb-1">{p.title}</div>
+              <p className="text-[11px] text-white/45 leading-snug">{p.desc}</p>
+            </li>
+          ))}
+        </ul>
+        <div className="flex flex-wrap gap-2 justify-center">
+          <button type="button" onClick={onOpenStatus} className="px-3 py-2 rounded-lg border border-white/15 text-xs text-white/80 hover:bg-white/10">Check status</button>
+          <button type="button" onClick={onOpenLogin} className="px-3 py-2 rounded-lg border border-white/15 text-xs text-white/80 hover:bg-white/10">Creator login</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <section className="w-full max-w-5xl mx-auto mb-20 sm:mb-24 px-4 sm:px-6 animate-fade-in-up" aria-labelledby="creator-hub-heading">

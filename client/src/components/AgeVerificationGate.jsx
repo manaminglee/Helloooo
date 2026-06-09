@@ -74,7 +74,7 @@ export function AgeVerificationGate({ onVerified }) {
         </div>
         <h2 className="text-2xl font-bold text-white mb-2 text-center">Age Verification</h2>
         <p className="text-sm mb-6 text-center" style={{ color: 'rgba(232,234,246,0.55)' }}>
-          Mana Mingle (SynKora) is an 18+ platform. You must confirm your age and complete the security check to continue.
+          Mana Mingle is an 18+ platform. Confirm your age and complete the security check to continue.
         </p>
 
         <div className="flex justify-center mb-6">

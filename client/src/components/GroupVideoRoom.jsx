@@ -482,14 +482,13 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   };
 
   useEffect(() => {
-    requestMediaAccess();
     return () => {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => { t.stop(); t.enabled = false; });
       }
       localStreamRef.current = null;
     };
-  }, [facingMode]);
+  }, []);
 
   // Sync local stream to video element when ref mounts (handles race)
   useEffect(() => {
@@ -1212,6 +1211,22 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               <span className="text-sm font-black uppercase tracking-[0.2em]">{active3dEmoji.nickname} sent {active3dEmoji.emoji.char}</span>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Lazy camera start — saves battery until user opts in */}
+      {!localStreamReady && !mediaError && (
+        <div className="absolute inset-0 z-[300] bg-[#0c0e1a]/95 flex flex-col items-center justify-center p-6 text-center">
+          <h2 className="text-xl font-bold text-white mb-2">Ready to join on video?</h2>
+          <p className="text-sm text-white/60 mb-6 max-w-sm">Camera starts only when you tap below — saves battery and reduces device heat.</p>
+          <button
+            type="button"
+            onClick={requestMediaAccess}
+            className="min-h-[48px] px-8 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm"
+          >
+            Start camera & microphone
+          </button>
+          <button type="button" onClick={handleLeaveRoom} className="mt-4 text-xs text-white/50 hover:text-white underline min-h-[44px]">Leave room</button>
         </div>
       )}
 

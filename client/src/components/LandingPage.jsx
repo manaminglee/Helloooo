@@ -1,15 +1,15 @@
 import { useState, useEffect, useRef, memo } from 'react';
 import { useSocket } from '../hooks/useSocket';
-import { useLatency } from '../hooks/useLatency';
 import { CoinBadge } from './CoinBadge';
 import { useCreators } from '../hooks/useCreators';
 import { MiniTrendChart } from './MiniTrendChart';
 
 import { countryToFlag } from '../utils/countryFlag';
-import { ParticleText } from './ParticleText';
 import { PresenceMap } from './PresenceMap';
 import { CreatorMatrix } from './CreatorMatrix';
 import { AdSlot } from './AdSlot';
+import { RoomBrowser } from './RoomBrowser';
+import { useLowPower } from '../context/LowPowerContext';
 import { CREATOR_MIN_WITHDRAWAL_COINS } from '../utils/creatorAuth';
 
 const BlueTick = () => (
@@ -58,20 +58,19 @@ const COMMUNITY_POLICY_KEY = 'mm_community_policy_video';
 const MM_INTEREST_PRESETS_KEY = 'mm_anon_interest_presets_v1';
 
 const INSIGHTS = [
-  "Trending now: Retro music enthusiasts in EU regions.",
-  "Trending Chat: Casual debates active in the US.",
-  "AI Analysis: Connection speed is at its peak.",
-  "System Status: 2,400+ active sessions verified in the last hour.",
-  "User Feedback: Telugu-based video feeds are trending today."
+  'Popular right now: music and gaming rooms.',
+  'Tip: add interests before starting a chat for better matches.',
+  'Group video rooms support up to 4 people.',
+  'Your session stays anonymous — no account required.',
+  'Report unsafe behavior from any chat screen.',
 ];
 
-export function LandingPage({ onJoin, coinState, isJoining = false, registered = false, currentActiveSeconds = 0 }) {
+export function LandingPage({ onJoin, coinState, isJoining = false, registered = false, currentActiveSeconds = 0, joinMeta = {}, setJoinMeta, country: userCountry = null }) {
   const { balance, streak, canClaim, nextClaim, claimCoins, adsEnabled, adScripts } = coinState || {};
   const [interests, setInterests] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const { socket, connected, country, onlineCount: socketOnlineCount, isCreator: socketIsCreator } = useSocket();
   const onlineCount = typeof socketOnlineCount === 'object' ? socketOnlineCount?.count : (socketOnlineCount || 0);
-  const latency = useLatency();
   const [modal, setModal] = useState(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -109,6 +108,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [showCommunityPolicy, setShowCommunityPolicy] = useState(false);
   const [pendingVideoMode, setPendingVideoMode] = useState(null);
   const { creatorStatus, registerCreator, verifyReferral, requestWithdrawal, login, checkStatus, reRequestApproval, updateProfile, fetchMyActivity, fetchMyWithdrawals } = useCreators();
+  const { lowPower, setLowPower } = useLowPower();
+  const [languageFilter, setLanguageFilter] = useState(joinMeta.language || '');
   const startRef = useRef(null);
   const [interestPresets, setInterestPresets] = useState([]);
   const [dashboardActivity, setDashboardActivity] = useState([]);
@@ -148,7 +149,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
     const interval = setInterval(() => {
       setInsightIndex(prev => (prev + 1) % INSIGHTS.length);
-    }, 4000);
+    }, 12000);
     return () => clearInterval(interval);
   }, [verifyReferral, refProcessed]);
 
@@ -172,7 +173,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             setWaitingForApproval(false);
           }
         }
-      }, 3000);
+      }, 10000);
     }
     return () => {
       clearInterval(timer);
@@ -261,6 +262,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
       const res = await fetch(`${apiBase}/api/ai/suggest`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
+        (data.suggestions || []).slice(0, 5).forEach((topic) => {
+          if (topic) addInterest(String(topic).trim());
+        });
       }
     } catch (e) { } finally { setIsSuggesting(false); }
   };
@@ -277,6 +281,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   };
 
   const handleStartInteraction = (mode, policyBypass = false) => {
+    const nick = (joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
+    const meta = { language: languageFilter, region: userCountry || country, displayNickname: nick };
+    if (setJoinMeta) setJoinMeta((p) => ({ ...p, ...meta }));
     if (!policyBypass && (mode === 'video' || mode === 'group_video')) {
       try {
         if (!sessionStorage.getItem(COMMUNITY_POLICY_KEY)) {
@@ -291,14 +298,14 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
     if (mode === 'group_video' || mode === 'group_text') {
       setScanning(true);
       setTimeout(() => {
-        onJoin(interests.length === 0 ? 'general' : interests.map(i => i.label || i).join(', '), 'Anonymous', mode);
+        onJoin(interests.length === 0 ? 'general' : interests.map(i => i.label || i).join(', '), nick, mode, null, meta);
         setScanning(false);
       }, 600);
       return;
     }
     setScanning(true);
     setTimeout(() => {
-      onJoin(interests.length === 0 ? 'general' : interests.map(i => i.label || i).join(', '), 'Anonymous', mode);
+      onJoin(interests.length === 0 ? 'general' : interests.map(i => i.label || i).join(', '), nick, mode, null, meta);
       setScanning(false);
     }, 1000);
   };
@@ -338,17 +345,10 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const scrollToStart = () => startRef.current?.scrollIntoView({ behavior: 'smooth' });
 
   return (
-    <div className="min-h-screen bg-realm-void text-white relative font-sans antialiased selection:bg-violet-500/30 selection:text-violet-100 overflow-x-hidden">
+    <div className="min-h-screen bg-[#0f1117] text-white relative font-sans antialiased overflow-x-hidden">
 
-      {/* VIBRANT BACKGROUND */}
-      <div className="fixed inset-0 z-0 pointer-events-none opacity-40">
-        <img
-          src="/luminous_neon_abstract_background_1774874445375.png"
-          alt="Abstract"
-          className="w-full h-full object-cover filter contrast-125 brightness-75"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-realm-void via-black/20 to-transparent mix-blend-multiply" />
-      </div>
+      {/* Simple background — no heavy image or blur layers */}
+      <div className="fixed inset-0 z-0 pointer-events-none bg-gradient-to-b from-[#151821] to-[#0a0c10]" />
 
       {/* COMMUNITY POLICY (first-time video / group video) */}
       {showCommunityPolicy && (
@@ -381,35 +381,39 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* SCANNING OVERLAY */}
       {scanning && (
-        <div className="fixed inset-0 z-[2000] flex flex-col items-center justify-center bg-black/90 backdrop-blur-3xl">
-          <div className="relative w-48 h-48 flex items-center justify-center">
-            <div className="absolute inset-0 border-t border-violet-400 rounded-full animate-spin shadow-[0_0_22px_rgba(167,139,250,0.25)]" />
-            <img src="/apple-touch-icon.png" alt="Logo" className="w-16 h-16 object-contain animate-pulse" />
-            <span className="absolute bottom-10 text-[10px] font-black uppercase tracking-widest text-violet-400 animate-pulse">Connecting...</span>
-          </div>
+        <div className="fixed inset-0 z-[2000] flex flex-col items-center justify-center bg-black/85">
+          <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
+          <span className="mt-4 text-sm text-white/70">Connecting...</span>
         </div>
       )}
 
       {/* HEADER */}
       {!showDashboardModal && (
-        <header className="fixed top-0 left-0 right-0 z-[150] pt-[env(safe-area-inset-top)] bg-black/30 backdrop-blur-3xl border-b border-white/[0.07]">
-          <div className="h-14 sm:h-16 px-3 sm:px-8 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 sm:gap-4 shrink-0 min-w-0">
-            <button type="button" onClick={scrollToStart} className="flex items-center gap-2 sm:gap-4 text-left rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/40">
-            <img src="/apple-touch-icon.png" alt="Mana Mingle" className="w-8 h-8 sm:w-10 sm:h-10 object-contain drop-shadow-[0_0_14px_rgba(167,139,250,0.45)] shrink-0" />
+        <header className="fixed top-0 left-0 right-0 z-[150] pt-[env(safe-area-inset-top)] bg-[#12151c]/95 border-b border-white/10">
+          <div className="h-14 sm:h-16 px-4 sm:px-8 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 shrink-0 min-w-0">
+            <button type="button" onClick={scrollToStart} className="flex items-center gap-3 text-left rounded-lg focus:outline-none focus:ring-2 focus:ring-white/30">
+            <img src="/apple-touch-icon.png" alt="Mana Mingle" className="w-9 h-9 object-contain shrink-0" />
             <div className="flex flex-col min-w-0">
-              <h1 className="text-[11px] sm:text-sm font-black uppercase tracking-[0.15em] sm:tracking-[0.35em] truncate">Mana Mingle</h1>
-              <span className="hidden sm:block text-[7px] font-black uppercase tracking-[0.2em] text-violet-400/40">by SynKora</span>
+              <h1 className="text-sm sm:text-base font-semibold text-white truncate">Mana Mingle</h1>
+              <span className="hidden sm:block text-xs text-white/45">Chat and video by interest</span>
             </div>
             </button>
           </div>
-          <div className="flex items-center gap-1.5 sm:gap-3 overflow-hidden shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 overflow-hidden shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowCreatorModal(true)}
+              className="hidden sm:inline-flex px-3 py-1.5 rounded-lg border border-white/15 text-xs font-medium text-white/80 hover:bg-white/10 transition-colors"
+            >
+              For Creators
+            </button>
             {connected && balance !== undefined && (
               <CoinBadge balance={balance} streak={streak} canClaim={canClaim} nextClaim={nextClaim ?? 0} claimCoins={claimCoins} registered={registered} currentActiveSeconds={currentActiveSeconds} isCreator={!!creatorStatus || socketIsCreator} />
             )}
-            <div className="px-2 sm:px-3 py-1 rounded-full bg-violet-500/10 border border-violet-500/20 text-[8px] sm:text-[10px] font-black text-white/40 uppercase tracking-widest flex items-center gap-1 shrink-0">
-              {country && <span className="opacity-100 grayscale hover:grayscale-0 transition-all cursor-help" title={`Localized to ${country}`}>{countryToFlag(country)}</span>}
-              <span>{(onlineCount ?? 0)} Live</span>
+            <div className="px-2 sm:px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs text-white/60 flex items-center gap-1 shrink-0">
+              {country && <span title={`Your region: ${country}`}>{countryToFlag(country)}</span>}
+              <span>{(onlineCount ?? 0)} online</span>
             </div>
             {creatorStatus && (
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
@@ -420,8 +424,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 <button
                   type="button"
                   onClick={() => setShowDashboardModal(true)}
-                  className="hidden sm:inline-flex px-2 py-1.5 bg-white/10 border border-white/15 text-white/90 rounded-lg text-[8px] font-black uppercase tracking-widest hover:bg-violet-500/20 transition-all"
-                >Hub</button>
+                  className="hidden sm:inline-flex px-2 py-1.5 bg-white/10 border border-white/15 text-white/90 rounded-lg text-xs font-medium hover:bg-white/15 transition-all"
+                >Dashboard</button>
                 <button
                   onClick={() => {
                     window.localStorage.setItem('mm_logout_flag', 'true');
@@ -435,15 +439,6 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             )}
           </div>
           </div>
-          {/* Creator shortcuts — always visible for discovery */}
-          {!creatorStatus && (
-            <div className="flex items-center justify-center gap-1 sm:gap-2 px-3 pb-2 border-t border-white/[0.04] overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-              <span className="text-[8px] font-black uppercase tracking-widest text-white/25 shrink-0 hidden sm:inline">Creators</span>
-              <button type="button" onClick={() => setShowCreatorModal(true)} className="shrink-0 px-3 py-1 rounded-full bg-violet-500/15 border border-violet-500/30 text-[9px] font-black uppercase tracking-wider text-violet-300 hover:bg-violet-500/25 transition-colors">Apply</button>
-              <button type="button" onClick={() => setShowStatusModal(true)} className="shrink-0 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[9px] font-black uppercase tracking-wider text-white/50 hover:text-white hover:border-white/25">Status</button>
-              <button type="button" onClick={() => setShowLoginModal(true)} className="shrink-0 px-3 py-1 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-[9px] font-black uppercase tracking-wider text-indigo-200/90 hover:bg-indigo-500/25">Login</button>
-            </div>
-          )}
         </header>
       )}
 
@@ -453,36 +448,56 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
           <AdSlot slotKey="hero" script={adScripts?.hero} adsEnabled={adsEnabled} className="w-full max-w-4xl" />
 
-          <div className="text-center mb-0 w-full">
-            <ParticleText text="MANA MINGLE" className="mb-0" />
-            <p className="text-[9px] font-black uppercase tracking-[0.8em] text-violet-400 mb-8 animate-pulse">Powered by SynKora</p>
-
-            <h2 className="font-display text-4xl md:text-7xl font-extrabold tracking-tight leading-none italic m-0 animate-in-zoom text-white">
-              Connect <span className="text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 via-violet-400 to-emerald-300">Instantly.</span>
+          <div className="text-center mb-10 w-full max-w-2xl">
+            <h2 className="text-3xl sm:text-5xl font-bold tracking-tight text-white mb-3">
+              Meet people who share your interests
             </h2>
-            <p className="text-[11px] text-white/30 max-w-lg mx-auto font-bold uppercase tracking-widest leading-relaxed mt-4">
-              Zero registration. Private P2P. Secure Global Hub.
+            <p className="text-sm sm:text-base text-white/60 leading-relaxed">
+              No sign-up required. Pick topics, choose a chat mode, and connect instantly.
             </p>
+            <div className="mt-5 flex flex-col sm:flex-row gap-2 max-w-md mx-auto">
+              <input
+                type="text"
+                value={joinMeta.displayNickname || ''}
+                onChange={(e) => setJoinMeta?.((p) => ({ ...p, displayNickname: e.target.value.slice(0, 30) }))}
+                placeholder="Display name (optional)"
+                className="flex-1 min-h-[48px] rounded-xl border border-white/10 bg-[#161a22] px-4 text-base text-white placeholder:text-white/30"
+              />
+              <select
+                value={languageFilter}
+                onChange={(e) => setLanguageFilter(e.target.value)}
+                className="min-h-[48px] rounded-xl border border-white/10 bg-[#161a22] px-3 text-sm text-white"
+                aria-label="Language preference"
+              >
+                <option value="">Any language</option>
+                <option value="en">English</option>
+                <option value="te">Telugu</option>
+                <option value="hi">Hindi</option>
+                <option value="es">Spanish</option>
+              </select>
+            </div>
+            <div className="mt-3 flex flex-wrap justify-center gap-2">
+              <button type="button" onClick={() => setShowCreatorModal(true)} className="sm:hidden inline-flex px-4 py-2 rounded-lg border border-white/15 text-sm text-white/80 hover:bg-white/10 min-h-[44px]">
+                For Creators
+              </button>
+              <button type="button" onClick={() => setLowPower(!lowPower)} className="inline-flex px-4 py-2 rounded-lg border border-white/15 text-sm text-white/80 hover:bg-white/10 min-h-[44px]">
+                {lowPower ? 'Low power: On' : 'Low power: Off'}
+              </button>
+            </div>
           </div>
 
           {/* INTEREST DOCK - REFINED COMPACT */}
-          <section ref={startRef} className="w-full max-w-2xl mx-auto mb-16 px-4 animate-fade-in scroll-mt-28" style={{ animationDelay: '200ms' }}>
-            <div className="mm-design-panel mm-design-panel--xl relative group p-6 sm:p-8 rounded-[40px] bg-white/[0.03] backdrop-blur-3xl overflow-hidden active:scale-[0.98] transition-all">
-              <div className="absolute inset-0 bg-gradient-to-br from-fuchsia-500/[0.05] to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="absolute -top-10 -right-10 w-40 h-40 bg-violet-500/20 rounded-full blur-[80px] pointer-events-none group-hover:bg-violet-500/30 transition-all" />
-
-              <div className="relative z-10 flex flex-col items-center">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse shadow-[0_0_12px_rgba(232,121,249,0.55)]" />
-                  <span className="text-[10px] font-black uppercase tracking-[0.4em] text-violet-400 italic">Select Interests</span>
-                </div>
+          <section ref={startRef} className="w-full max-w-2xl mx-auto mb-12 px-4 scroll-mt-28">
+            <div className="relative p-6 sm:p-8 rounded-2xl bg-[#161a22] border border-white/10">
+              <div className="flex flex-col items-center">
+                <span className="text-sm font-medium text-white/80 mb-4">Choose your interests</span>
 
                 <div className="flex flex-wrap justify-center gap-1.5 mb-8">
                   {INTERESTS.filter(r => !interests.find(i => i.id === r.id)).slice(0, 8).map((r) => (
                     <button
                       key={r.id}
                       onClick={() => addInterest(r.id)}
-                      className="px-3 py-1.5 rounded-full bg-white/[0.02] border border-white/5 hover:border-violet-500/40 hover:bg-violet-500/10 hover:text-violet-400 transition-all text-[9px] font-black uppercase tracking-widest text-white/40"
+                      className="px-3 py-1.5 rounded-full bg-white/5 border border-white/10 hover:border-white/25 hover:bg-white/10 transition-colors text-xs text-white/70"
                     >
                       #{r.label}
                     </button>
@@ -495,10 +510,10 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleInputKeyDown}
-                    placeholder="Add specific topics..."
-                    className="w-full h-12 bg-black/40 border border-white/10 focus:border-violet-500/40 rounded-2xl px-6 text-[12px] text-white outline-none transition-all placeholder:text-white/10 uppercase font-black tracking-widest text-center"
+                    placeholder="Add a topic..."
+                    className="w-full h-12 bg-[#0f1117] border border-white/10 focus:border-white/30 rounded-xl px-4 text-sm text-white outline-none transition-all placeholder:text-white/30 text-center"
                   />
-                  <button onClick={getAiSuggestions} className="absolute right-1 top-1/2 -translate-y-1/2 p-2.5 bg-violet-500/20 text-violet-400 rounded-xl hover:bg-violet-500 hover:text-black transition-all">
+                  <button onClick={getAiSuggestions} title="Suggest topics" className="absolute right-1 top-1/2 -translate-y-1/2 p-2.5 bg-white/10 text-white/70 rounded-lg hover:bg-white/20 transition-colors">
                     <svg className={`w-3.5 h-3.5 ${isSuggesting ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                   </button>
                 </div>
@@ -506,7 +521,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 {interests.length > 0 && (
                   <div className="flex flex-wrap justify-center gap-1.5 mt-5">
                     {interests.map(i => (
-                      <div key={i.id} className="flex items-center gap-2 bg-violet-400 text-black px-3 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest shadow-[0_0_18px_rgba(167,139,250,0.25)]">
+                      <div key={i.id} className="flex items-center gap-2 bg-white text-[#0f1117] px-3 py-1 rounded-lg text-xs font-medium">
                         {i.label}
                         <button type="button" onClick={() => removeInterest(i.id)} className="hover:scale-125 transition-transform">✕</button>
                       </div>
@@ -518,9 +533,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   <button
                     type="button"
                     onClick={saveAnonymousInterestBundle}
-                    className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/50 hover:text-violet-400 hover:border-violet-500/30 transition-colors"
+                    className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-white/60 hover:text-white hover:border-white/20 transition-colors"
                   >
-                    Save topic bundle (this device)
+                    Save topic list (this device)
                   </button>
                   {interestPresets.length > 0 && (
                     <label className="flex items-center gap-2 text-[9px] text-white/40 font-bold uppercase tracking-widest">
@@ -543,8 +558,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                     </label>
                   )}
                 </div>
-                <p className="text-[8px] text-white/20 mt-2 text-center max-w-md leading-relaxed">
-                  Bundles stay in your browser only — anonymous, no profile on our servers.
+                <p className="text-xs text-white/40 mt-2 text-center max-w-md">
+                  Saved topics stay in your browser only. No account required.
                 </p>
               </div>
             </div>
@@ -552,92 +567,48 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
           <AdSlot slotKey="sidebar" script={adScripts?.sidebar} adsEnabled={adsEnabled} className="w-full max-w-2xl" />
 
-          {/* UNIQUE COMPACT MODES */}
-          <section className="w-full max-w-6xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-16 sm:mb-20" aria-label="Chat modes">
+          <section className="w-full max-w-4xl grid grid-cols-1 sm:grid-cols-2 gap-4 mb-12" aria-label="Chat modes">
             {[
-              { id: 'video', icon: '📹', name: 'Start Video', color: 'from-fuchsia-400/20', accent: 'violet', hint: '1:1 video match' },
-              { id: 'text', icon: '💬', name: 'Start Text', color: 'from-indigo-500/20', accent: 'indigo', hint: 'Anonymous text' },
-              { id: 'group_video', icon: '🎥', name: 'Group Jam', color: 'from-purple-500/20', accent: 'purple', hint: 'Up to 4 on video' },
-              { id: 'group_text', icon: '👥', name: 'Group Out', color: 'from-emerald-500/20', accent: 'emerald', hint: 'Group text rooms' },
-            ].map((m, i) => (
+              { id: 'video', icon: '📹', name: 'Video Chat', hint: 'One-to-one video' },
+              { id: 'text', icon: '💬', name: 'Text Chat', hint: 'Anonymous messaging' },
+              { id: 'group_video', icon: '🎥', name: 'Group Video', hint: 'Up to 4 people on video' },
+              { id: 'group_text', icon: '👥', name: 'Group Text', hint: 'Group text rooms' },
+            ].map((m) => (
               <button
                 key={m.id}
                 type="button"
                 onClick={() => handleStartInteraction(m.id)}
                 disabled={!connected || isJoining}
                 aria-label={`${m.name}: ${m.hint}`}
-                className="mm-design-panel mm-design-panel--xl group relative min-h-[148px] sm:h-40 rounded-[28px] sm:rounded-[35px] bg-white/[0.02] hover:border-fuchsia-500/30 focus:outline-none focus:ring-2 focus:ring-violet-500/40 focus:ring-offset-2 focus:ring-offset-black transition-all animate-in-zoom p-[2px] overflow-hidden disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.99]"
-                style={{ animationDelay: `${i * 100}ms` }}
+                className="group relative min-h-[120px] rounded-xl bg-[#161a22] border border-white/10 hover:border-white/25 focus:outline-none focus:ring-2 focus:ring-white/30 transition-colors p-5 text-left disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <div className={`absolute inset-0 bg-gradient-to-br ${m.color} to-transparent opacity-40 group-hover:opacity-100 transition-opacity`} />
-                <div className="relative h-full bg-[#0a0a0a]/90 rounded-[33px] p-6 flex flex-col justify-between items-start text-left">
-                  <div className={`w-10 h-10 rounded-2xl bg-violet-500/10 border border-violet-500/40 flex items-center justify-center text-lg group-hover:scale-110 transition-transform group-hover:shadow-[0_0_20px_rgba(6,182,212,0.3)]`}>
-                    {m.icon}
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-black uppercase tracking-widest italic text-white group-hover:text-violet-400 transition-colors">{m.name}</h3>
-                    <p className="text-[8px] font-bold text-white/25 uppercase tracking-[0.15em] mt-1">{m.hint}</p>
-                  </div>
+                <div className="w-10 h-10 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-lg mb-4">
+                  {m.icon}
                 </div>
+                <h3 className="text-base font-semibold text-white">{m.name}</h3>
+                <p className="text-xs text-white/50 mt-1">{m.hint}</p>
               </button>
             ))}
           </section>
 
-          {/* AI GENERATED DISCOVERY CONTEXT */}
-          <section className="w-full max-w-3xl mb-24 px-6">
-            <div className="mm-design-panel mm-design-panel--xl p-8 rounded-[40px] bg-gradient-to-r from-fuchsia-500/5 via-violet-500/5 to-transparent relative overflow-hidden group">
-              <div className="absolute top-0 right-0 p-4 opacity-10 font-mono text-[80px] pointer-events-none italic font-black">AI</div>
-              <h4 className="text-[10px] font-black uppercase tracking-[0.4em] text-white/40 mb-4 flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-violet-400 animate-ping" />
-                Smart Matching Discovery
-              </h4>
-              <p className="text-sm font-medium text-white/70 italic leading-relaxed">
-                System is analyzing global connections... Our secure network ensures that every user is uniquely protected. Currently observing high activity in creative and tech communities. Target a specific interest to initiate a connection.
-              </p>
-            </div>
+          <section className="w-full max-w-3xl mx-auto mb-12 px-4">
+            <h3 className="text-lg font-semibold text-white mb-3 text-center">Active rooms</h3>
+            <RoomBrowser
+              connected={connected}
+              onJoinRoom={(room) => {
+                const nick = (joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
+                onJoin(room.interest || 'general', nick, room.mode, room.id, { language: languageFilter, region: userCountry || country, displayNickname: nick });
+              }}
+            />
           </section>
 
           <PresenceMap onlineCount={onlineCount} />
 
-          <CreatorMatrix
-            creatorStatus={creatorStatus}
-            onOpenDashboard={() => setShowDashboardModal(true)}
-            onOpenApply={() => setShowCreatorModal(true)}
-            onOpenStatus={() => setShowStatusModal(true)}
-            onOpenLogin={() => setShowLoginModal(true)}
-            onEditProfile={() => {
-              setProfileForm({
-                bio: creatorStatus?.bio || '',
-                avatar: creatorStatus?.avatar_url || ''
-              });
-              setShowProfileModal(true);
-            }}
-            onWithdraw={(upi) => requestWithdrawal(upi)}
-            onLogout={() => {
-              localStorage.setItem('mm_logout_flag', '1');
-              localStorage.removeItem('mm_creatorId');
-              window.location.reload();
-            }}
-            showAlert={showAlert}
-          />
-
-          {/* AI INSIGHT SECTION */}
-          <section className="w-full max-w-4xl mx-auto mb-16 animate-fade-in-up">
-            <div className="bg-gradient-to-r from-violet-500/8 via-fuchsia-500/8 to-violet-500/8 p-6 rounded-3xl border border-white/5 flex items-center gap-6">
-              <div className="w-12 h-12 rounded-2xl bg-violet-500/10 flex items-center justify-center text-violet-400 shadow-[0_0_24px_rgba(167,139,250,0.2)]">
-                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="11" width="18" height="10" rx="2" />
-                  <circle cx="12" cy="5" r="2" />
-                  <path d="M12 7v4" />
-                  <line x1="8" y1="16" x2="8" y2="16" />
-                  <line x1="16" y1="16" x2="16" y2="16" />
-                </svg>
+          <section className="w-full max-w-3xl mx-auto mb-12 px-4">
+            <div className="rounded-xl border border-white/10 bg-[#161a22] p-5 flex items-start gap-4">
+              <div className="text-sm text-white/70 leading-relaxed flex-1">
+                {INSIGHTS[insightIndex]}
               </div>
-              <div className="flex-1">
-                <div className="text-[10px] font-black text-violet-400 uppercase tracking-widest mb-1">AI System Insight</div>
-                <p className="text-sm font-bold text-white/60 italic transition-all duration-500">{INSIGHTS[insightIndex]}</p>
-              </div>
-              <div className="px-3 py-1 rounded-full border border-white/10 text-[9px] font-black uppercase text-white/20">Real-time Analysis</div>
             </div>
           </section>
 
@@ -646,68 +617,85 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
       )}
 
       {/* FOOTER */}
-      <footer className="relative z-10 py-20 px-8 bg-realm-void/95 border-t border-violet-500/10 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start gap-16">
-          <div className="max-w-xs space-y-6">
-            <img src="/apple-touch-icon.png" alt="Logo" className="w-12 h-12 border border-white/10 p-1 rounded-xl drop-shadow-[0_0_14px_rgba(167,139,250,0.45)]" />
-            <p className="text-[10px] font-black uppercase tracking-widest text-white/20 leading-relaxed">
-              The definitive platform for global interaction.
-              Optimized for privacy and security across the entire platform.
+      <footer className="relative z-10 py-12 px-6 bg-[#0a0c10] border-t border-white/10">
+        <div className="max-w-5xl mx-auto flex flex-col md:flex-row justify-between items-start gap-10">
+          <div className="max-w-sm space-y-3">
+            <img src="/apple-touch-icon.png" alt="Mana Mingle" className="w-10 h-10 rounded-lg border border-white/10" />
+            <p className="text-sm text-white/50 leading-relaxed">
+              Anonymous interest-based chat and video. Built for privacy and simple connections.
             </p>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-10 flex-1 w-full min-w-0">
-            <div className="space-y-4">
-              <h5 className="text-[10px] font-black uppercase tracking-[0.4em] text-violet-400">Legal Center</h5>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-8 flex-1 w-full min-w-0">
+            <div className="space-y-3">
+              <h5 className="text-sm font-semibold text-white">Legal</h5>
               <div className="flex flex-col gap-2">
                 {['Privacy', 'Integrity', 'Safety'].map(m => (
-                  <button key={m} onClick={() => setModal(m.toLowerCase())} className="text-[10px] font-bold text-left uppercase text-white/30 hover:text-violet-400 transition-colors">{m} Center</button>
+                  <button key={m} onClick={() => setModal(m.toLowerCase())} className="text-sm text-left text-white/50 hover:text-white transition-colors">{m}</button>
                 ))}
               </div>
             </div>
-            <div className="space-y-4">
-              <h5 className="text-[10px] font-black uppercase tracking-[0.4em] text-fuchsia-400/90">Help & Resources</h5>
+            <div className="space-y-3">
+              <h5 className="text-sm font-semibold text-white">Help</h5>
               <div className="flex flex-col gap-2">
                 {['Dev', 'Bug'].map(m => (
-                  <button key={m} onClick={() => setModal(m.toLowerCase())} className="text-[10px] font-bold text-left uppercase text-white/30 hover:text-fuchsia-300 transition-colors">{m === 'Dev' ? 'Technology' : 'Bug Bounty'} Hub</button>
+                  <button key={m} onClick={() => setModal(m.toLowerCase())} className="text-sm text-left text-white/50 hover:text-white transition-colors">{m === 'Dev' ? 'How it works' : 'Report a bug'}</button>
                 ))}
-                <button onClick={() => setModal('safety')} className="text-[10px] font-bold text-left uppercase text-white/30 hover:text-fuchsia-300 transition-colors">Security Overview</button>
+                <button onClick={() => setModal('safety')} className="text-sm text-left text-white/50 hover:text-white transition-colors">Safety overview</button>
               </div>
             </div>
-            <div className="space-y-4">
-              <h5 className="text-[10px] font-black uppercase tracking-[0.4em] text-violet-400/90">Creators</h5>
-              <div className="flex flex-col gap-2">
-                <button type="button" onClick={() => setShowCreatorModal(true)} className="text-[10px] font-bold text-left uppercase text-white/30 hover:text-violet-400 transition-colors">Apply</button>
-                <button type="button" onClick={() => setShowStatusModal(true)} className="text-[10px] font-bold text-left uppercase text-white/30 hover:text-violet-400 transition-colors">Application status</button>
-                <button type="button" onClick={() => setShowLoginModal(true)} className="text-[10px] font-bold text-left uppercase text-white/30 hover:text-violet-400 transition-colors">Creator login</button>
-              </div>
-            </div>
-            <div className="space-y-4">
-              <h5 className="text-[10px] font-black uppercase tracking-[0.4em] text-emerald-400">Support Center</h5>
-              <p className="text-[10px] font-bold text-white/20 leading-relaxed uppercase tracking-widest">Global load balancing active. Secure correspondence hub.</p>
-              <a href="mailto:manaminglee@gmail.com" className="text-[10px] font-black text-violet-400 underline uppercase hover:text-white">Email Support</a>
+            <div className="space-y-3">
+              <h5 className="text-sm font-semibold text-white">Creators</h5>
+              <button type="button" onClick={() => setShowCreatorModal(true)} className="text-sm text-left text-white/50 hover:text-white transition-colors">Open creator program</button>
             </div>
           </div>
         </div>
-        <div className="max-w-7xl mx-auto pt-20 mt-20 border-t border-white/[0.03] flex justify-between items-center text-white/5 text-[9px] font-black uppercase tracking-[0.6em]">
-          <span>© 2026 MANA MINGLE | POWERED BY <span className="text-white/20">SYNKORA</span></span>
-          <span className="hidden sm:inline">SECURE ANONYMOUS NETWORK</span>
+        <div className="max-w-5xl mx-auto pt-8 mt-8 border-t border-white/10 text-xs text-white/40">
+          © 2026 Mana Mingle
         </div>
       </footer>
 
       {/* CREATOR MODAL */}
       {showCreatorModal && (
-        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-6 bg-black/95 backdrop-blur-3xl animate-in-zoom" onClick={() => setShowCreatorModal(false)}>
-          <div className="relative w-full max-w-sm bg-black border border-white/10 rounded-[50px] p-10 overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4 sm:p-6 bg-black/80" onClick={() => setShowCreatorModal(false)}>
+          <div className="relative w-full max-w-lg bg-[#161a22] border border-white/10 rounded-2xl p-6 sm:p-8 overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
             <button
               onClick={() => setShowCreatorModal(false)}
-              className="absolute top-6 right-8 text-white/20 hover:text-white transition-colors"
+              className="absolute top-4 right-4 text-white/40 hover:text-white transition-colors"
             >✕</button>
 
-            <div className="text-center mb-8">
-              <div className="w-16 h-16 rounded-full bg-violet-500/10 border border-violet-500/20 flex items-center justify-center mx-auto mb-4 text-2xl shadow-[0_0_24px_rgba(167,139,250,0.2)]">⭐</div>
-              <h3 className="text-2xl font-black italic uppercase tracking-tighter text-white">Creator Hub</h3>
-              <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mt-2">{approvalData ? 'Approved Identity' : 'Monetization Dashboard'}</p>
+            <div className="text-center mb-6">
+              <h3 className="text-xl font-semibold text-white">Creator Program</h3>
+              <p className="text-sm text-white/50 mt-1">Apply, check status, or log in to manage your creator account.</p>
+            </div>
+
+            {!approvalData && !waitingForApproval && !creatorStatus && (
+              <CreatorMatrix
+                embedded
+                creatorStatus={creatorStatus}
+                onOpenDashboard={() => { setShowCreatorModal(false); setShowDashboardModal(true); }}
+                onOpenApply={() => {}}
+                onOpenStatus={() => { setShowCreatorModal(false); setShowStatusModal(true); }}
+                onOpenLogin={() => { setShowCreatorModal(false); setShowLoginModal(true); }}
+                onEditProfile={() => {
+                  setProfileForm({
+                    bio: creatorStatus?.bio || '',
+                    avatar: creatorStatus?.avatar_url || ''
+                  });
+                  setShowProfileModal(true);
+                }}
+                onWithdraw={(upi) => requestWithdrawal(upi)}
+                onLogout={() => {
+                  localStorage.setItem('mm_logout_flag', '1');
+                  localStorage.removeItem('mm_creatorId');
+                  window.location.reload();
+                }}
+                showAlert={showAlert}
+              />
+            )}
+
+            <div className="text-center mb-6">
+              <p className="text-xs text-white/40">{approvalData ? 'Approved account' : waitingForApproval ? 'Application in review' : creatorStatus ? 'Your creator account' : 'New application'}</p>
             </div>
 
             {approvalData ? (

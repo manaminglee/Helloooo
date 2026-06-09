@@ -16,6 +16,7 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const geoip = require('geoip-lite');
 const { createClient } = require('@supabase/supabase-js');
+const { registerEnhancements } = require('./enhancements');
 
 // Persistence Strategy: Supabase (Cloud) or Local JSON (Node)
 const supabaseUrl = (process.env.SUPABASE_URL || '').trim();
@@ -325,6 +326,7 @@ function createRoom(interest, mode, socketId, userData, maxSize = GROUP_MAX) {
     participants: [{ socketId, userId: userData.id, nickname: userData.nickname, country: userData.country, isCreator: !!u?.isCreator }],
     messages: [],
     createdAt: Date.now(),
+    hostId: socketId,
   };
   rooms.set(roomId, room);
   if (room.interestKey) interestToRoom.set(key, roomId);
@@ -1774,6 +1776,21 @@ const io = new Server(server, {
   allowEIO3: true
 });
 
+const enhancements = registerEnhancements(app, io, {
+  rooms,
+  users,
+  reports,
+  blockedIps,
+  sanitize,
+  generateId,
+  supabase,
+  localDb,
+  saveLocalDb,
+  countryFromIP,
+  addUserToRoom,
+  removeUserFromRoom,
+});
+
 // Per-socket rate limit for signaling (WebRTC offer/answer/ICE bursts)
 const signalCount = new Map();
 const rateLimitNotifyAt = new Map();
@@ -1823,11 +1840,15 @@ io.on('connection', (socket) => {
     id: userId,
     ip,
     country,
+    region: country,
+    language: null,
     nickname: 'Anonymous',
     rooms: new Set(),
     isCreator: false,
     creatorData: null
   });
+
+  enhancements.attachSocketHandlers(socket, ip);
 
   (async () => {
     let finalNick = 'Anonymous';
@@ -1956,7 +1977,11 @@ io.on('connection', (socket) => {
     const mode = data?.mode === 'video' ? 'video' : 'text';
     const interest = sanitize(String(data?.interest || 'general').toLowerCase(), 30) || 'general';
     const nickname = sanitize(data?.nickname || 'Anonymous', 30);
+    const region = sanitize(String(data?.region || userData.country || ''), 10);
+    const language = sanitize(String(data?.language || ''), 20);
     userData.nickname = nickname;
+    userData.region = region;
+    userData.language = language;
 
     const myBlocks = userBlocks.get(ip);
     const canMatch = (e) => {
@@ -1968,8 +1993,8 @@ io.on('connection', (socket) => {
       return true;
     };
     const queue = pairQueues[mode];
-    let match = queue.find((e) => e.interest === interest && canMatch(e));
-    if (!match) match = queue.find(canMatch);
+    let match = enhancements.pickSmartMatch(queue.filter((e) => e.interest === interest), interest, region, language, canMatch);
+    if (!match) match = enhancements.pickSmartMatch(queue, interest, region, language, canMatch);
     if (match) {
       const idx = queue.indexOf(match);
       queue.splice(idx, 1);
@@ -1987,6 +2012,11 @@ io.on('connection', (socket) => {
 
       socket.emit('partner-found', { roomId: room.id, peer: otherPeer, country: userData.country });
       io.sockets.sockets.get(match.socketId).emit('partner-found', { roomId: room.id, peer: myPeer, country: otherData.country });
+
+      const reconnectToken = enhancements.issueReconnectToken(socket.id, { roomId: room.id, nickname: userData.nickname, mode });
+      socket.emit('reconnect-token', { token: reconnectToken });
+      const otherToken = enhancements.issueReconnectToken(match.socketId, { roomId: room.id, nickname: otherData.nickname, mode });
+      io.sockets.sockets.get(match.socketId).emit('reconnect-token', { token: otherToken });
 
       // --- AUTOMATED CREATOR INTRO MESSAGE ---
       if (userData.isCreator) {
@@ -2015,7 +2045,7 @@ io.on('connection', (socket) => {
       socket.emit('chat-history', { roomId: room.id, messages: [] });
       io.sockets.sockets.get(match.socketId).emit('chat-history', { roomId: room.id, messages: [] });
     } else {
-      const entry = { socketId: socket.id, userData, interest };
+      const entry = { socketId: socket.id, userData, interest, region, language };
       if (userData.isCreator) queue.unshift(entry);
       else queue.push(entry);
       socket.emit('waiting-for-partner', { mode, interest });
@@ -2099,6 +2129,8 @@ io.on('connection', (socket) => {
       participantCount: room.users.size,
       country: userData.country,
     });
+    const groupReconnect = enhancements.issueReconnectToken(socket.id, { roomId: room.id, nickname: userData.nickname, mode });
+    socket.emit('reconnect-token', { token: groupReconnect });
     socket.emit('existing-peers', { roomId: room.id, peers, total: peers.length });
     socket.emit('chat-history', { roomId: room.id, messages: (room.messages || []).slice(-MESSAGE_HISTORY) });
 
@@ -2162,6 +2194,8 @@ io.on('connection', (socket) => {
       participantCount: room.users.size,
       country: userData.country,
     });
+    const joinReconnect = enhancements.issueReconnectToken(socket.id, { roomId: room.id, nickname: userData.nickname, mode: room.mode });
+    socket.emit('reconnect-token', { token: joinReconnect });
     socket.emit('existing-peers', { roomId: room.id, peers, total: peers.length });
     socket.emit('chat-history', { roomId: room.id, messages: (room.messages || []).slice(-MESSAGE_HISTORY) });
 
@@ -2232,11 +2266,19 @@ io.on('connection', (socket) => {
     if (!room) return socket.emit('error', { message: 'Chat room not found or closed.' });
     if (!room.users.has(socket.id)) return socket.emit('error', { message: 'You are no longer in this room.' });
     if (settings.maintenanceMode) return socket.emit('error', { message: 'Messaging disabled during maintenance.' });
+    if (!enhancements.beforeSendMessage(socket, roomId)) return;
 
-    const msg = sanitize(String(text || ''), 500);
-    if (!msg) return;
+    const msgType = data?.type === 'voice' ? 'voice' : 'text';
+    let msg = String(text || '');
+    if (msgType === 'voice') {
+      if (msg.length > 150000) return socket.emit('error', { message: 'Voice message too large.' });
+    } else {
+      msg = sanitize(msg, 500);
+      if (!msg) return;
+    }
 
-    // AI SAFETY MONITORING (ENHANCED MULTI-LANGUAGE & SLANG DETECTION)
+    // AI SAFETY MONITORING — text only
+    if (msgType !== 'voice') {
     const profanities = [
       // English Core
       'fuck', 'shit', 'asshole', 'bitch', 'bastard', 'cunt', 'dick', 'pussy', 'nigga', 'nigger', 'faggot',
@@ -2264,16 +2306,23 @@ io.on('connection', (socket) => {
       });
       return;
     }
+    }
 
     stats.totalMessages++;
     const entry = {
       id: generateId('msg'),
       nickname: u.nickname,
-      text: msg,
       ts: Date.now(),
       socketId: socket.id,
       isCreator: !!u.isCreator,
+      type: msgType,
     };
+    if (msgType === 'voice') {
+      entry.audio = msg;
+      entry.text = '🎤 Voice message';
+    } else {
+      entry.text = msg;
+    }
     // Add reply reference if provided
     if (replyTo && typeof replyTo === 'object') {
       entry.replyTo = {

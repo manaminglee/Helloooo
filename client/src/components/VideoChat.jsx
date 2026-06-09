@@ -22,6 +22,8 @@ import { ReportSafetyModal } from './ReportSafetyModal';
 import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNotify';
 import { playConnectSound, playMessageSound, playDisconnectSound, playWaveSound } from '../utils/sounds';
 import { mmDebug } from '../utils/mmDebug';
+import { ChatInputWithEmoji } from './ChatInputWithEmoji';
+import { PHASE_2 } from '../constants/features';
 
 function MessageSpark({ x, y }) {
   const [active, setActive] = useState(true);
@@ -166,7 +168,11 @@ function VanishingMessage({ m, isMe }) {
           </div>
         )}
         <div className="flex gap-2 items-end">
-          <p className="break-words leading-relaxed whitespace-pre-wrap">{m.text}</p>
+          {m.type === 'voice' ? (
+            <audio controls src={m.audio || m.text} className="max-w-[200px] w-full" />
+          ) : (
+            <p className="break-words leading-relaxed whitespace-pre-wrap">{m.text}</p>
+          )}
           <span className={`text-[9px] font-mono shrink-0 mb-0.5 ${timeLeft <= 10 ? 'text-amber-400 animate-pulse font-bold' : 'opacity-50'}`}>
             {mStr}:{sStr}
           </span>
@@ -1430,14 +1436,18 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     socket.emit('typing', { roomId: r, isTyping: false });
     setInput('');
     setReplyingTo(null);
-    setTimeout(() => inputRef.current?.focus(), 10);
   };
 
-  const handleInputChange = (e) => {
-    setInput(e.target.value);
+  const handleVoiceMessage = (audioDataUrl) => {
+    if (!socket || !roomIdRef.current) return;
+    socket.emit('send-message', { roomId: roomIdRef.current, text: audioDataUrl, type: 'voice' });
+  };
+
+  const handleInputChange = (value) => {
+    setInput(value);
     const r = roomIdRef.current;
     if (!socket || !r) return;
-    socket.emit('typing', { roomId: r, isTyping: e.target.value.length > 0 });
+    socket.emit('typing', { roomId: r, isTyping: value.length > 0 });
     clearTimeout(typingTimerRef.current);
     typingTimerRef.current = setTimeout(() => {
       socket.emit('typing', { roomId: r, isTyping: false });
@@ -1622,10 +1632,15 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               <div ref={chatEndRef} />
             </div>
             <div className="p-3 bg-white/[0.02] border-t border-violet-500/10">
-              <div className="flex gap-1.5 items-center">
-                <input ref={inputRef} value={input} onChange={handleInputChange} onKeyDown={(e) => e.key === 'Enter' && sendMsg()} className="flex-1 px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none focus:border-violet-500/50 transition-all font-medium" />
-                <button onClick={sendMsg} className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-[11px] font-black uppercase shadow-lg shadow-violet-600/20 active:scale-95 transition-all">Send</button>
-              </div>
+              <ChatInputWithEmoji
+                value={input}
+                onChange={handleInputChange}
+                onSend={sendMsg}
+                placeholder="Type a message..."
+                showVoice={PHASE_2.voiceMessages}
+                onVoiceMessage={handleVoiceMessage}
+                inputClassName="bg-white/5 border-white/10 focus:border-violet-500/50 text-sm font-medium"
+              />
             </div>
           </div>
         )}

@@ -2977,3 +2977,48 @@ select::-webkit-listbox {
     scroll-behavior: auto !important;
   }
 }
+
+/* Mobile-first responsive base */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+.mm-mobile-safe {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+button, a, input, select, textarea {
+  min-height: 44px;
+  touch-action: manipulation;
+}
+
+@media (max-width: 640px) {
+  .mm-hide-mobile { display: none !important; }
+}
+
+@media (min-width: 641px) {
+  .mm-hide-desktop { display: none !important; }
+}
+
+/* Low-power mode — reduce GPU/CPU load */
+.mm-low-power *,
+.mm-low-power *::before,
+.mm-low-power *::after {
+  animation: none !important;
+  transition: none !important;
+  backdrop-filter: none !important;
+  filter: none !important;
+}
+
+.mm-low-power .hero-glow,
+.mm-low-power [class*="blur-"],
+.mm-low-power [class*="animate-"] {
+  display: none !important;
+}

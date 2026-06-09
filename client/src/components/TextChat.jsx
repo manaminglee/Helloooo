@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { countryToFlag } from '../utils/countryFlag';
-import { AdSlot } from './AdSlot';
 import { useLatency } from '../hooks/useLatency';
 import { CoinBadge } from './CoinBadge';
 import { ReportSafetyModal } from './ReportSafetyModal';
+import { ChatInputWithEmoji } from './ChatInputWithEmoji';
+import { PHASE_2 } from '../constants/features';
 import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNotify';
 import { ProFeaturesMenu } from './ProFeaturesMenu';
 
@@ -159,6 +160,8 @@ function VanishingMessage({ m, isMe, onReply }) {
                             <img src={m.content} className="w-full h-auto" alt="media" />
                         )}
                     </div>
+                ) : m.type === 'voice' ? (
+                    <audio controls src={m.audio || m.text} className="max-w-[220px] w-full" />
                 ) : (
                     <p className="break-words leading-relaxed whitespace-pre-wrap">{m.text}</p>
                 )}
@@ -171,7 +174,7 @@ function VanishingMessage({ m, isMe, onReply }) {
   );
 }
 
-export default function TextChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', isCreator = false, onBack, onJoined, onFindNewPartner, adsEnabled = false, adScripts = {}, coinState, registered = false, currentActiveSeconds = 0 }) {
+export default function TextChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', language = '', region = '', isCreator = false, onBack, onJoined, onFindNewPartner, adsEnabled = false, adScripts = {}, coinState, registered = false, currentActiveSeconds = 0 }) {
   const { balance, streak, canClaim, nextClaim, claimCoins } = coinState;
   const [messages, setMessages] = useState([]);
   const [sparks, setSparks] = useState([]);
@@ -180,6 +183,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   const [peer, setPeer] = useState(null);
   // status: idle | searching | connected | disconnected
   const [status, setStatus] = useState('searching');
+  const [showRating, setShowRating] = useState(false);
+  const [lastRoomId, setLastRoomId] = useState(null);
   const latency = useLatency();
   const [isAiGenerating, setIsAiGenerating] = useState(false);
   const [isTranslatorActive, setIsTranslatorActive] = useState(false);
@@ -189,7 +194,6 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   const [strangerTyping, setStrangerTyping] = useState(false);
   const [searchStatusIndex, setSearchStatusIndex] = useState(0);
   const [connectedSecs, setConnectedSecs] = useState(0);
-  const [showRating, setShowRating] = useState(false);
   const [showSkipSuggestion, setShowSkipSuggestion] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null);
@@ -218,7 +222,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
   const emitFind = useCallback(() => {
     if (!socket || !connected) return;
-    socket.emit('find-partner', { mode: 'text', interest: interest || 'general', nickname: nickname || 'Anonymous' });
+    socket.emit('find-partner', { mode: 'text', interest: interest || 'general', nickname: nickname || 'Anonymous', language, region: region || country });
   }, [socket, connected, interest, nickname]);
 
   const clearRoom = useCallback(() => {
@@ -235,6 +239,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     const onPartnerFound = (data) => {
       console.log('[CHAT] Partner found, room:', data.roomId);
       roomIdRef.current = data.roomId;
+      setLastRoomId(data.roomId);
       setRoomId(data.roomId);
       setPeer(data.peer);
       setStatus('connected');
@@ -507,7 +512,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     setStatus('searching');
     setTimeout(() => {
       // Fix #2: Use nickname prop, not hardcoded 'Anonymous'
-      socket?.emit('find-partner', { mode: 'text', interest: interest || 'general', nickname: nickname || 'Anonymous' });
+      socket?.emit('find-partner', { mode: 'text', interest: interest || 'general', nickname: nickname || 'Anonymous', language, region: region || country });
       onFindNewPartner?.();
     }, 50);
   }, [socket, interest, onFindNewPartner]);
@@ -539,14 +544,18 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     socket.emit('send-message', payload);
     setInput('');
     setReplyingTo(null);
-    inputRef.current?.focus();
   };
 
-  const handleInputChange = (e) => {
-    setInput(e.target.value);
+  const handleVoiceMessage = (audioDataUrl) => {
+    if (!socket || !roomIdRef.current) return;
+    socket.emit('send-message', { roomId: roomIdRef.current, text: audioDataUrl, type: 'voice' });
+  };
+
+  const handleInputChange = (value) => {
+    setInput(value);
     const r = roomIdRef.current;
     if (socket && r) {
-      socket.emit('typing', { roomId: r, isTyping: e.target.value.length > 0 });
+      socket.emit('typing', { roomId: r, isTyping: value.length > 0 });
       clearTimeout(typingTimerRef.current);
       typingTimerRef.current = setTimeout(() => socket.emit('typing', { roomId: r, isTyping: false }), 2000);
     }
@@ -832,28 +841,17 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
               )}
 
               {status === 'connected' && (
-                <div className="flex-1 relative group">
-                  <div className="absolute inset-0 bg-violet-500/5 blur-xl group-focus-within:bg-violet-500/10 transition-all opacity-0 group-focus-within:opacity-100" />
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={input}
-                    onChange={handleInputChange}
-                    onKeyDown={(e) => e.key === 'Enter' && sendMsg()}
-                    placeholder={isAiGenerating ? 'AI Assistant is thinking...' : 'Type a message...'}
-                    disabled={isAiGenerating}
-                    className="w-full h-16 bg-white/[0.03] border border-white/10 focus:border-violet-500/40 rounded-3xl px-8 text-sm outline-none transition-all placeholder:text-white/10 uppercase font-black tracking-widest backdrop-blur-3xl italic"
-                  />
-                  <div className="absolute right-3 top-3 flex items-center gap-2">
-                     <button
-                        onClick={sendMsg}
-                        disabled={!input.trim() || !roomIdRef.current}
-                        className="w-10 h-10 rounded-2xl bg-violet-500 text-black flex items-center justify-center hover:bg-white transition-all shadow-[0_0_15px_rgba(167,139,250,0.3)] disabled:opacity-20"
-                     >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M14 5l7 7-7 7" /></svg>
-                     </button>
-                  </div>
-                </div>
+                <ChatInputWithEmoji
+                  value={input}
+                  onChange={handleInputChange}
+                  onSend={sendMsg}
+                  placeholder={isAiGenerating ? 'AI Assistant is thinking...' : 'Type a message...'}
+                  disabled={isAiGenerating}
+                  showVoice={PHASE_2.voiceMessages}
+                  onVoiceMessage={handleVoiceMessage}
+                  className="flex-1"
+                  inputClassName="min-h-[64px] rounded-3xl bg-white/[0.03] border-white/10 focus:border-violet-500/40 text-sm uppercase font-black tracking-widest italic backdrop-blur-3xl placeholder:text-white/10"
+                />
               )}
            </div>
 
@@ -944,7 +942,10 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
               {['Poor', 'Neutral', 'Elite'].map((label, idx) => (
                 <button 
                   key={label}
-                  onClick={() => setShowRating(false)} 
+                  onClick={() => {
+                    socket?.emit('rate-conversation', { rating: idx + 1, roomId: lastRoomId || roomIdRef.current });
+                    setShowRating(false);
+                  }} 
                   className={`flex-1 py-4 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all ${idx === 2 ? 'bg-violet-500 text-black hover:bg-white' : 'bg-white/5 border border-white/5 hover:border-white/20'}`}
                 >
                   {label}

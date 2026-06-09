@@ -7,6 +7,10 @@ import { countryToFlag } from '../utils/countryFlag';
 import { AdSlot } from './AdSlot';
 import { CoinBadge } from './CoinBadge';
 import { ReportSafetyModal } from './ReportSafetyModal';
+import { ChatInputWithEmoji } from './ChatInputWithEmoji';
+import { SafetyBanner } from './ModerationMenu';
+import { MiniChatGamePanel } from './MiniChatGamePanel';
+import { PHASE_2, PHASE_3_PRO } from '../constants/features';
 
 const GROUP_MAX = 4;
 const COLORS = ['#818cf8', '#34d399', '#fb923c', '#f472b6'];
@@ -162,8 +166,8 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
   }, [socket, isQueuing, roomIdProp]);
 
   // AI Moderation & Send
-  const handleSendMessage = async () => {
-    const text = chatInput.trim();
+  const handleSendMessage = async (overrideText) => {
+    const text = String(overrideText ?? chatInput).trim();
     if (!text || isAiModerating || !socket) return;
 
     setIsAiModerating(true);
@@ -218,6 +222,11 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
     } finally {
       setIsAiGenerating(false);
     }
+  };
+
+  const handleVoiceMessage = (audioDataUrl) => {
+    if (!socket || !roomIdRef.current) return;
+    socket.emit('send-message', { roomId: roomIdRef.current, text: audioDataUrl, type: 'voice' });
   };
 
   const send3dEmoji = (emoji) => {
@@ -426,6 +435,8 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
                          <div className="rounded-lg overflow-hidden border border-white/10 mt-1 max-w-sm">
                             {m.type === 'video' ? <video src={m.content} controls className="w-full h-auto" /> : <img src={m.content} className="w-full h-auto" alt="media" />}
                          </div>
+                      ) : m.type === 'voice' ? (
+                         <audio controls src={m.audio} className="max-w-full w-full mt-1" />
                       ) : m.text}
                     </div>
                   </div>
@@ -480,50 +491,22 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
                </div>
             )}
 
-            <div className="flex items-end gap-2 sm:gap-3">
-               <div className="flex-1 relative flex items-center p-1.5 sm:p-2 rounded-2xl sm:rounded-3xl bg-[#12142a] border border-white/5 focus-within:border-indigo-500/50 focus-within:bg-[#151829] transition-all shadow-xl group">
-                  
-                  <button onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="p-2 sm:p-3 text-white/20 hover:text-amber-400 transition-colors shrink-0">✨</button>
-                  
-                  <input 
-                    ref={inputRef}
-                    disabled={isQueuing || isAiModerating}
-                    value={chatInput}
-                    onChange={e => setChatInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
-                    placeholder={isAiModerating ? 'Reviewing speech...' : "Message the Realm..."}
-                    className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base px-2 py-1 placeholder:text-white/10"
-                  />
+            <SafetyBanner onReport={() => setShowReportModal(true)} />
+            {PHASE_3_PRO.miniChatGames && roomIdRef.current && (
+              <MiniChatGamePanel onSendPrompt={(text) => { setChatInput(text); handleSendMessage(text); }} />
+            )}
 
-                  <div className="flex items-center gap-1.5 shrink-0 px-1">
-                    <button onClick={() => fileInputRef.current.click()} className="p-2 sm:p-3 text-white/20 hover:text-emerald-400 transition-colors">📂</button>
-                    <button 
-                      onClick={generateAiSpark}
-                      disabled={isAiGenerating}
-                      className={`p-2 sm:p-3 rounded-xl transition-all ${isAiGenerating ? 'text-indigo-400 animate-spin' : 'text-white/20 hover:text-indigo-400'}`}
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                    </button>
-                  </div>
-
-                  <input type="file" ref={fileInputRef} onChange={handleMediaUpload} className="hidden" accept="image/*,video/*" />
-
-                  {showEmojiPicker && (
-                    <div className="absolute bottom-full right-0 mb-4 p-4 bg-[#151829] border border-white/10 rounded-3xl shadow-2xl w-[200px] grid grid-cols-4 gap-2 animate-in-zoom backdrop-blur-2xl">
-                      {EMOJIS_3D.map(e => (
-                        <button key={e.char} onClick={() => send3dEmoji(e)} className="w-10 h-10 flex items-center justify-center hover:bg-white/5 rounded-xl transition-all">{e.char}</button>
-                      ))}
-                    </div>
-                  )}
-               </div>
-
-               <button 
-                  onClick={handleSendMessage}
-                  disabled={!chatInput.trim() || isAiModerating}
-                  className="w-12 h-12 sm:w-14 sm:h-14 bg-indigo-600 rounded-2xl sm:rounded-3xl flex items-center justify-center shadow-lg shadow-indigo-600/20 active:scale-90 transition-all disabled:opacity-30 flex-shrink-0"
-               >
-                 {isAiModerating ? <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <svg className="w-6 h-6 rotate-45 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>}
-               </button>
+            <div className="flex items-end gap-2 sm:gap-3 mt-3">
+               <ChatInputWithEmoji
+                 value={chatInput}
+                 onChange={setChatInput}
+                 onSend={handleSendMessage}
+                 disabled={isQueuing || isAiModerating}
+                 placeholder={isAiModerating ? 'Reviewing...' : 'Type a message...'}
+                 showVoice={PHASE_2.voiceMessages}
+                 onVoiceMessage={handleVoiceMessage}
+                 className="flex-1"
+               />
             </div>
           </div>
         </div>

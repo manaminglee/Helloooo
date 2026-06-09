@@ -2,10 +2,13 @@ import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react
 import { LandingPage } from './components/LandingPage';
 import { PreloadSplash } from './components/PreloadSplash';
 import { AgeVerificationGate } from './components/AgeVerificationGate';
+import { CreatorPublicProfile } from './components/CreatorPublicProfile';
+import { PwaInstallPrompt } from './components/PwaInstallPrompt';
+import { UnblockPaymentModal } from './components/UnblockPaymentModal';
+import { LowPowerProvider } from './context/LowPowerContext';
 import { useSocket } from './hooks/useSocket';
 import { useCoins } from './hooks/useCoins';
-import { GlobalParticles } from './components/GlobalParticles';
-
+import { loadReconnectSession, clearReconnectSession, saveReconnectSession } from './utils/reconnectSession';
 // Lazy load off-screen and secondary modules for extreme performance
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const TextChat = lazy(() => import('./components/TextChat'));
@@ -35,7 +38,10 @@ export default function App() {
   const [interest, setInterest] = useState('general');
   const [roomId, setRoomId] = useState(null);
   const [preloadDone, setPreloadDone] = useState(false);
-  const [isJoining, setIsJoining] = useState(false);
+  const [joinMeta, setJoinMeta] = useState({ language: '', region: '', displayNickname: 'Anonymous' });
+  const [showUnblockPay, setShowUnblockPay] = useState(false);
+  const [creatorHandle, setCreatorHandle] = useState(null);
+  const [pendingJoinRoomId, setPendingJoinRoomId] = useState(null);
   const { socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds } = useSocket();
   const coinState = useCoins();
   const coinStateWithAds = useMemo(
@@ -45,6 +51,61 @@ export default function App() {
 
 
   const handlePreloadReady = useCallback(() => setPreloadDone(true), []);
+
+  useEffect(() => {
+    const path = window.location.pathname || '/';
+    const creatorMatch = path.match(/^\/creator\/([^/]+)/i);
+    if (creatorMatch) {
+      setCreatorHandle(decodeURIComponent(creatorMatch[1]));
+      setAppState(STATES.CREATOR_PROFILE);
+    }
+    const joinMatch = path.match(/^\/join\/([^/]+)/i);
+    if (joinMatch) setPendingJoinRoomId(decodeURIComponent(joinMatch[1]));
+  }, []);
+
+  useEffect(() => {
+    if (!socket || !connected || !pendingJoinRoomId) return;
+    const rid = pendingJoinRoomId;
+    fetch(`${import.meta.env.VITE_SOCKET_URL || ''}/api/rooms/${rid}`)
+      .then((r) => r.json())
+      .then((room) => {
+        if (room.joinable) {
+          setInterest(room.interest || 'general');
+          setMode(room.mode);
+          setRoomId(rid);
+          setAppState(STATES.CHAT);
+          window.history.pushState({ mode: room.mode, roomId: rid }, '');
+        }
+      })
+      .catch(() => {})
+      .finally(() => setPendingJoinRoomId(null));
+  }, [socket, connected, pendingJoinRoomId]);
+
+  useEffect(() => {
+    if (!socket) return;
+    socket.on('reconnect-token', (data) => {
+      if (data?.token && data?.roomId) {
+        saveReconnectSession({ token: data.token, roomId: data.roomId, mode: data.mode, nickname: joinMeta.displayNickname });
+      }
+    });
+    const saved = loadReconnectSession();
+    if (saved?.token && connected) {
+      socket.emit('reconnect-session', { token: saved.token });
+    }
+    socket.on('reconnect-success', (data) => {
+      clearReconnectSession();
+      setRoomId(data.roomId);
+      setMode(data.mode);
+      setInterest(data.interest || 'general');
+      setAppState(STATES.CHAT);
+    });
+    socket.on('reconnect-failed', () => clearReconnectSession());
+    return () => {
+      socket.off('reconnect-token');
+      socket.off('reconnect-success');
+      socket.off('reconnect-failed');
+    };
+  }, [socket, connected, joinMeta.displayNickname]);
 
   useEffect(() => {
     if (socket) {
@@ -92,18 +153,17 @@ export default function App() {
   };
 
   // Called when user selects a mode from the landing page
-  const handleJoin = (interestVal, _nick, m, rid = null) => {
+  const handleJoin = (interestVal, nick, m, rid = null, meta = {}) => {
     if (!socket || !connected || isJoining) return;
     setIsJoining(true);
     const intst = (interestVal || 'general').trim().toLowerCase() || 'general';
+    const displayNick = (nick || joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
+    setJoinMeta((prev) => ({ ...prev, ...meta, displayNickname: displayNick }));
     setInterest(intst);
     setMode(m);
     setRoomId(rid);
     setAppState(STATES.CHAT);
-
-    // Push state so back button works
     window.history.pushState({ mode: m, roomId: rid }, '');
-
     setTimeout(() => setIsJoining(false), 500);
   };
 
@@ -159,16 +219,20 @@ export default function App() {
             <div className="bg-black/40 p-5 rounded-2xl border border-white/5 mb-8">
               <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-400 mb-2">Unblock Account</h3>
               <p className="text-[11px] text-white/40 mb-4">Pay the $5.00 unblock fee using cryptocurrency to verify intent and clear your IP reputation.</p>
-              <button className="btn w-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500 shadow-none hover:text-white py-3 rounded-xl font-bold text-xs" onClick={() => alert('Payment processor would open here')}>
-                Pay $5.00 via Stripe
+              <button className="btn w-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500 shadow-none hover:text-white py-3 rounded-xl font-bold text-xs min-h-[48px]" onClick={() => setShowUnblockPay(true)}>
+                Pay $5.00 to unblock
               </button>
             </div>
             <p className="text-[10px] text-white/20">Provide the Admin with your IP if this was a mistake.</p>
+            <UnblockPaymentModal open={showUnblockPay} onClose={() => setShowUnblockPay(false)} />
           </div>
         </div>
       );
     }
-    if (appState === STATES.LANDING || appState === STATES.CREATOR_PROFILE) {
+    if (appState === STATES.CREATOR_PROFILE && creatorHandle) {
+      return <CreatorPublicProfile handle={creatorHandle} />;
+    }
+    if (appState === STATES.LANDING) {
       return (
         <div className="animate-fade-in">
           <LandingPage
@@ -179,6 +243,9 @@ export default function App() {
             isJoining={isJoining}
             registered={registered}
             currentActiveSeconds={activeSeconds}
+            joinMeta={joinMeta}
+            setJoinMeta={setJoinMeta}
+            country={country}
           />
         </div>
       );
@@ -192,7 +259,9 @@ export default function App() {
             country={country}
             onlineCount={onlineCount}
             interest={interest}
-            nickname={nickname}
+            nickname={joinMeta.displayNickname || nickname}
+            language={joinMeta.language}
+            region={joinMeta.region || country}
             isCreator={isCreator}
             adsEnabled={adsEnabled}
             adScripts={adScripts}
@@ -215,7 +284,7 @@ export default function App() {
             country={country}
             onlineCount={onlineCount}
             interest={interest}
-            nickname={nickname}
+            nickname={joinMeta.displayNickname || nickname}
             isCreator={isCreator}
             adsEnabled={adsEnabled}
             adScripts={adScripts}
@@ -235,7 +304,7 @@ export default function App() {
           <GroupTextRoom
             roomId={roomId}
             interest={interest}
-            nickname={nickname}
+            nickname={joinMeta.displayNickname || nickname}
             isCreator={isCreator}
             myCountry={country}
             socket={socket}
@@ -258,7 +327,7 @@ export default function App() {
           <GroupVideoRoom
             roomId={roomId}
             interest={interest}
-            nickname={nickname}
+            nickname={joinMeta.displayNickname || nickname}
             isCreator={isCreator}
             myCountry={country}
             socket={socket}
@@ -285,22 +354,24 @@ export default function App() {
   }
 
   return (
+    <LowPowerProvider>
     <>
       {!preloadDone && (
         <PreloadSplash ready={connected} onReady={handlePreloadReady} />
       )}
-      <div className="relative flex min-h-0 w-full max-w-[100vw] flex-1 flex-col overflow-x-hidden">
+      <div className="relative flex min-h-0 w-full max-w-[100vw] flex-1 flex-col overflow-x-hidden mm-mobile-safe">
         <Suspense fallback={<LoadingFallback />}>
           {renderContent()}
         </Suspense>
       </div>
 
-      <GlobalParticles />
+      <PwaInstallPrompt />
       {contentFlagged && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3 rounded-xl bg-amber-500/90 text-black font-semibold text-sm shadow-xl animate-fade-in-up max-w-md text-center">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3 rounded-xl bg-amber-500/90 text-black font-semibold text-sm shadow-xl max-w-md text-center mm-mobile-safe">
           ⚠️ {String(contentFlagged)}
         </div>
       )}
     </>
+    </LowPowerProvider>
   );
 }
