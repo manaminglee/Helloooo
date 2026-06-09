@@ -1743,11 +1743,6 @@ app.post('/api/ai/moderate', async (req, res) => {
 
 // Removed duplicate creator list endpoint; merged into /api/admin/creators above.
 
-// API 404 Fallback
-app.all('/api/*', (req, res) => {
-  res.status(404).json({ error: 'API endpoint not found' });
-});
-
 // Serve React build when client/dist exists (single-host deploy). Else API-only (Vercel frontend).
 const clientBuild = path.join(__dirname, '..', 'client', 'dist');
 const clientExists = fs.existsSync(path.join(clientBuild, 'index.html'));
@@ -1789,6 +1784,11 @@ const enhancements = registerEnhancements(app, io, {
   countryFromIP,
   addUserToRoom,
   removeUserFromRoom,
+});
+
+// API 404 fallback — must be after registerEnhancements (rooms/public, creators, etc.)
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ error: 'API endpoint not found' });
 });
 
 // Per-socket rate limit for signaling (WebRTC offer/answer/ICE bursts)
