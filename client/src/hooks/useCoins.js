@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { API_BASE } from '../config/apiBase';
 
 const CLAIM_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -31,8 +32,7 @@ export function useCoins() {
 
     const fetchStatus = async (retries = 3) => {
         try {
-            const apiBase = import.meta.env.VITE_SOCKET_URL || '';
-            const res = await fetch(`${apiBase}/api/user/coins`, { credentials: 'include' });
+            const res = await fetch(`${API_BASE}/api/user/coins`, { credentials: 'include' });
             if (res.ok) {
                 const data = await res.json();
                 setBalance(data.coins);
@@ -54,8 +54,7 @@ export function useCoins() {
 
     const claimCoins = async () => {
         try {
-            const apiBase = import.meta.env.VITE_SOCKET_URL || '';
-            const res = await fetch(`${apiBase}/api/user/claim`, { method: 'POST', credentials: 'include' });
+            const res = await fetch(`${API_BASE}/api/user/claim`, { method: 'POST', credentials: 'include' });
             if (res.ok) {
                 const data = await res.json();
                 setBalance(data.coins);

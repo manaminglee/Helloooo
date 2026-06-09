@@ -1,4 +1,4 @@
-import { useState, useEffect, useSyncExternalStore } from 'react';
+import { useReducer, useEffect } from 'react';
 import { API_BASE } from '../config/apiBase';
 
 const BASE_URL = API_BASE;
@@ -151,17 +151,15 @@ function boot() {
   fetchInitialSettings();
 }
 
-function subscribe(fn) {
-  boot();
-  listeners.add(fn);
-  return () => listeners.delete(fn);
-}
-
-function getSnapshot() {
-  return state;
-}
-
 export function useSocket() {
-  useEffect(() => { boot(); }, []);
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const [, rerender] = useReducer((n) => n + 1, 0);
+
+  useEffect(() => {
+    boot();
+    const listener = () => rerender();
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  }, []);
+
+  return state;
 }

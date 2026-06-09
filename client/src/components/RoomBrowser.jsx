@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 
-const API = import.meta.env.VITE_SOCKET_URL || '';
+import { API_BASE } from '../config/apiBase';
+
+const API = API_BASE;
 
 export function RoomBrowser({ onJoinRoom, connected }) {
   const [rooms, setRooms] = useState([]);

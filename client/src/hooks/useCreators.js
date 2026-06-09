@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getCreatorAuthHeaders } from '../utils/creatorAuth';
-
-const API_BASE = import.meta.env.VITE_SOCKET_URL || '';
+import { API_BASE } from '../config/apiBase';
 
 export function useCreators() {
   const [creatorStatus, setCreatorStatus] = useState(null); // { handle_name, status, coins_earned, earnings_rs, referral_code }

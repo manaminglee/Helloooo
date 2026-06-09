@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { LandingPage } from './components/LandingPage';
-import { PreloadSplash } from './components/PreloadSplash';
 import { AgeVerificationGate } from './components/AgeVerificationGate';
 import { CreatorPublicProfile } from './components/CreatorPublicProfile';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
@@ -38,7 +37,6 @@ export default function App() {
   const [mode, setMode] = useState(null);
   const [interest, setInterest] = useState('general');
   const [roomId, setRoomId] = useState(null);
-  const [preloadDone, setPreloadDone] = useState(false);
   const [joinMeta, setJoinMeta] = useState({ language: '', region: '', displayNickname: 'Anonymous' });
   const [showUnblockPay, setShowUnblockPay] = useState(false);
   const [creatorHandle, setCreatorHandle] = useState(null);
@@ -51,8 +49,6 @@ export default function App() {
     [coinState, adsEnabled, adScripts]
   );
 
-
-  const handlePreloadReady = useCallback(() => setPreloadDone(true), []);
 
   useEffect(() => {
     const path = window.location.pathname || '/';
@@ -71,7 +67,7 @@ export default function App() {
     fetch(`${API_BASE}/api/rooms/${rid}`)
       .then((r) => r.json())
       .then((room) => {
-        if (room.joinable) {
+        if (room.joinable && room.mode) {
           setInterest(room.interest || 'general');
           setMode(room.mode);
           setRoomId(rid);
@@ -96,6 +92,12 @@ export default function App() {
     }
     socket.on('reconnect-success', (data) => {
       clearReconnectSession();
+      if (!data?.roomId || !data?.mode) {
+        setAppState(STATES.LANDING);
+        setMode(null);
+        setRoomId(null);
+        return;
+      }
       setRoomId(data.roomId);
       setMode(data.mode);
       setInterest(data.interest || 'general');
@@ -108,6 +110,13 @@ export default function App() {
       socket.off('reconnect-failed');
     };
   }, [socket, connected, joinMeta.displayNickname]);
+
+  useEffect(() => {
+    if (appState === STATES.CHAT && !mode) {
+      setAppState(STATES.LANDING);
+      setRoomId(null);
+    }
+  }, [appState, mode]);
 
   useEffect(() => {
     if (socket) {
@@ -234,7 +243,7 @@ export default function App() {
     if (appState === STATES.CREATOR_PROFILE && creatorHandle) {
       return <CreatorPublicProfile handle={creatorHandle} />;
     }
-    if (appState === STATES.LANDING) {
+    if (appState === STATES.LANDING || (appState === STATES.CHAT && !mode)) {
       return (
         <div className="animate-fade-in">
           <LandingPage
@@ -346,7 +355,22 @@ export default function App() {
         </div>
       );
     }
-    return null;
+    return (
+      <div className="animate-fade-in">
+        <LandingPage
+          onJoin={handleJoin}
+          connected={connected}
+          onlineCount={onlineCount}
+          coinState={coinStateWithAds}
+          isJoining={isJoining}
+          registered={registered}
+          currentActiveSeconds={activeSeconds}
+          joinMeta={joinMeta}
+          setJoinMeta={setJoinMeta}
+          country={country}
+        />
+      </div>
+    );
   };
 
   if (!gateVerified) {
@@ -358,9 +382,6 @@ export default function App() {
   return (
     <LowPowerProvider>
     <>
-      {!preloadDone && (
-        <PreloadSplash ready={connected} onReady={handlePreloadReady} />
-      )}
       <div className="relative flex min-h-[100dvh] w-full max-w-[100vw] flex-1 flex-col overflow-x-hidden mm-mobile-safe">
         <Suspense fallback={<LoadingFallback />}>
           {renderContent()}
