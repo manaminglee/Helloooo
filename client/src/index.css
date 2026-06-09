@@ -418,6 +418,10 @@ h1, h2, h3, .font-display {
   animation: fade-in 0.4s ease-out both;
 }
 
+.mm-page-enter {
+  animation: fade-in 0.4s ease-out both;
+}
+
 .animate-slide-in-right {
   animation: slide-in-right 0.4s ease-out both;
 }
@@ -3018,9 +3022,15 @@ button, a, input, select, textarea {
 }
 
 .mm-low-power .hero-glow,
-.mm-low-power [class*="blur-"],
-.mm-low-power [class*="animate-"] {
-  display: none !important;
+.mm-low-power [class*="backdrop-blur"] {
+  opacity: 0.35;
+}
+
+.mm-low-power .preload-grid,
+.mm-low-power .animate-pulse,
+.mm-low-power .animate-spin,
+.mm-low-power .animate-bounce {
+  animation: none !important;
 }
 
 /* ============================================================

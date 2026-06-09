@@ -28,12 +28,11 @@ class ErrorBoundary extends React.Component {
 
 const path = window.location.pathname || '/';
 
-if ('serviceWorker' in navigator && !path.startsWith('/admin')) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).then((reg) => {
-      reg.update();
-    }).catch(() => {});
-  });
+// Service worker caused stale/broken JS on GitHub Pages — disabled until cache strategy is stable
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then((regs) => {
+    regs.forEach((reg) => reg.unregister());
+  }).catch(() => {});
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(

@@ -245,7 +245,7 @@ export default function App() {
     }
     if (appState === STATES.LANDING || (appState === STATES.CHAT && !mode)) {
       return (
-        <div className="animate-fade-in">
+        <div className="mm-page-enter">
           <LandingPage
             onJoin={handleJoin}
             connected={connected}
@@ -263,7 +263,7 @@ export default function App() {
     }
     if (mode === MODES.TEXT) {
       return (
-        <div className="animate-fade-in">
+        <div className="mm-page-enter">
           <TextChat
             socket={socket}
             connected={connected}
@@ -288,7 +288,7 @@ export default function App() {
     }
     if (mode === MODES.VIDEO) {
       return (
-        <div className="animate-fade-in">
+        <div className="mm-page-enter">
           <VideoChat
             socket={socket}
             connected={connected}
@@ -311,7 +311,7 @@ export default function App() {
     }
     if (mode === MODES.GROUP_TEXT) {
       return (
-        <div className="animate-fade-in">
+        <div className="mm-page-enter">
           <GroupTextRoom
             roomId={roomId}
             interest={interest}
@@ -334,7 +334,7 @@ export default function App() {
     }
     if (mode === MODES.GROUP_VIDEO) {
       return (
-        <div className="animate-fade-in">
+        <div className="mm-page-enter">
           <GroupVideoRoom
             roomId={roomId}
             interest={interest}
@@ -356,7 +356,7 @@ export default function App() {
       );
     }
     return (
-      <div className="animate-fade-in">
+      <div className="mm-page-enter">
         <LandingPage
           onJoin={handleJoin}
           connected={connected}
