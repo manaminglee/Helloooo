@@ -65,6 +65,13 @@ const INSIGHTS = [
   'Report unsafe behavior from any chat screen.',
 ];
 
+const CHAT_MODES = [
+  { id: 'video', icon: '📹', name: 'Video Chat', hint: 'One-to-one video', tag: 'Live' },
+  { id: 'text', icon: '💬', name: 'Text Chat', hint: 'Anonymous messaging', tag: 'Fast' },
+  { id: 'group_video', icon: '🎥', name: 'Group Video', hint: 'Up to 4 people on video', tag: 'Squad' },
+  { id: 'group_text', icon: '👥', name: 'Group Text', hint: 'Group text rooms', tag: 'Social' },
+];
+
 export function LandingPage({ onJoin, coinState, isJoining = false, registered = false, currentActiveSeconds = 0, joinMeta = {}, setJoinMeta, country: userCountry = null }) {
   const { balance, streak, canClaim, nextClaim, claimCoins, adsEnabled, adScripts } = coinState || {};
   const [interests, setInterests] = useState([]);
@@ -345,10 +352,17 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const scrollToStart = () => startRef.current?.scrollIntoView({ behavior: 'smooth' });
 
   return (
-    <div className="min-h-screen bg-[#0f1117] text-white relative font-sans antialiased overflow-x-hidden">
+    <div className="min-h-screen mm-landing text-white relative overflow-x-hidden">
 
-      {/* Simple background — no heavy image or blur layers */}
-      <div className="fixed inset-0 z-0 pointer-events-none bg-gradient-to-b from-[#151821] to-[#0a0c10]" />
+      {/* Mesh background */}
+      <div className="mm-landing-bg" aria-hidden="true">
+        {!lowPower && (
+          <>
+            <div className="hero-glow hero-glow-1" />
+            <div className="hero-glow hero-glow-2" />
+          </>
+        )}
+      </div>
 
       {/* COMMUNITY POLICY (first-time video / group video) */}
       {showCommunityPolicy && (
@@ -381,22 +395,25 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* SCANNING OVERLAY */}
       {scanning && (
-        <div className="fixed inset-0 z-[2000] flex flex-col items-center justify-center bg-black/85">
-          <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
-          <span className="mt-4 text-sm text-white/70">Connecting...</span>
+        <div className="fixed inset-0 z-[2000] mm-landing-scan flex flex-col items-center justify-center">
+          <div className="mm-landing-scan-ring" />
+          <span className="mt-5 text-sm font-semibold tracking-wide text-white/75">Finding your match...</span>
+          <span className="mt-1 text-xs text-white/35">Secure anonymous connection</span>
         </div>
       )}
 
       {/* HEADER */}
       {!showDashboardModal && (
-        <header className="fixed top-0 left-0 right-0 z-[150] pt-[env(safe-area-inset-top)] bg-[#12151c]/95 border-b border-white/10">
+        <header className="mm-landing-header fixed top-0 left-0 right-0 z-[150] pt-[env(safe-area-inset-top)]">
           <div className="h-14 sm:h-16 px-4 sm:px-8 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 shrink-0 min-w-0">
-            <button type="button" onClick={scrollToStart} className="flex items-center gap-3 text-left rounded-lg focus:outline-none focus:ring-2 focus:ring-white/30">
-            <img src="/apple-touch-icon.png" alt="Mana Mingle" className="w-9 h-9 object-contain shrink-0" />
+            <button type="button" onClick={scrollToStart} className="flex items-center gap-3 text-left rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/40">
+            <div className="mm-landing-logo-ring shrink-0">
+              <img src="/apple-touch-icon.png" alt="Mana Mingle" />
+            </div>
             <div className="flex flex-col min-w-0">
-              <h1 className="text-sm sm:text-base font-semibold text-white truncate">Mana Mingle</h1>
-              <span className="hidden sm:block text-xs text-white/45">Chat and video by interest</span>
+              <h1 className="text-sm sm:text-base font-bold text-white truncate" style={{ fontFamily: 'var(--font-display)' }}>Mana Mingle</h1>
+              <span className="hidden sm:block text-[11px] text-white/45 tracking-wide">Interest-based chat & video</span>
             </div>
             </button>
           </div>
@@ -404,16 +421,16 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             <button
               type="button"
               onClick={() => setShowCreatorModal(true)}
-              className="hidden sm:inline-flex px-3 py-1.5 rounded-lg border border-white/15 text-xs font-medium text-white/80 hover:bg-white/10 transition-colors"
+              className="hidden sm:inline-flex px-3.5 py-2 rounded-xl border border-violet-500/25 bg-violet-500/10 text-xs font-semibold text-violet-200 hover:bg-violet-500/20 transition-colors"
             >
               For Creators
             </button>
             {connected && balance !== undefined && (
               <CoinBadge balance={balance} streak={streak} canClaim={canClaim} nextClaim={nextClaim ?? 0} claimCoins={claimCoins} registered={registered} currentActiveSeconds={currentActiveSeconds} isCreator={!!creatorStatus || socketIsCreator} />
             )}
-            <div className="px-2 sm:px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs text-white/60 flex items-center gap-1 shrink-0">
+            <div className="mm-landing-stat-pill shrink-0">
               {country && <span title={`Your region: ${country}`}>{countryToFlag(country)}</span>}
-              <span>{(onlineCount ?? 0)} online</span>
+              <span className="tabular-nums">{(onlineCount ?? 0).toLocaleString()} online</span>
             </div>
             {creatorStatus && (
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
@@ -448,25 +465,34 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
           <AdSlot slotKey="hero" script={adScripts?.hero} adsEnabled={adsEnabled} className="w-full max-w-4xl" />
 
-          <div className="text-center mb-10 w-full max-w-2xl">
-            <h2 className="text-3xl sm:text-5xl font-bold tracking-tight text-white mb-3">
+          <div className="text-center mb-12 w-full max-w-3xl mm-landing-fade-in">
+            <div className="mm-landing-eyebrow">
+              {!lowPower && <span className="mm-landing-eyebrow-dot" aria-hidden="true" />}
+              Live anonymous connections
+            </div>
+            <h2 className="mm-landing-title">
               Meet people who share your interests
             </h2>
-            <p className="text-sm sm:text-base text-white/60 leading-relaxed">
-              No sign-up required. Pick topics, choose a chat mode, and connect instantly.
+            <p className="mm-landing-subtitle">
+              No sign-up required. Pick topics, choose a chat mode, and connect instantly with strangers worldwide.
             </p>
-            <div className="mt-5 flex flex-col sm:flex-row gap-2 max-w-md mx-auto">
+            <div className="mm-landing-stat-row">
+              <span className="mm-landing-stat-pill">🔒 No account needed</span>
+              <span className="mm-landing-stat-pill">⚡ Instant matching</span>
+              <span className="mm-landing-stat-pill">🛡️ AI safety monitoring</span>
+            </div>
+            <div className="mt-8 flex flex-col sm:flex-row gap-2 max-w-lg mx-auto mm-landing-fade-in mm-landing-fade-in-delay-1">
               <input
                 type="text"
                 value={joinMeta.displayNickname || ''}
                 onChange={(e) => setJoinMeta?.((p) => ({ ...p, displayNickname: e.target.value.slice(0, 30) }))}
                 placeholder="Display name (optional)"
-                className="flex-1 min-h-[48px] rounded-xl border border-white/10 bg-[#161a22] px-4 text-base text-white placeholder:text-white/30"
+                className="mm-landing-field flex-1 w-full"
               />
               <select
                 value={languageFilter}
                 onChange={(e) => setLanguageFilter(e.target.value)}
-                className="min-h-[48px] rounded-xl border border-white/10 bg-[#161a22] px-3 text-sm text-white"
+                className="mm-landing-field sm:max-w-[11rem] w-full"
                 aria-label="Language preference"
               >
                 <option value="">Any language</option>
@@ -476,28 +502,29 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 <option value="es">Spanish</option>
               </select>
             </div>
-            <div className="mt-3 flex flex-wrap justify-center gap-2">
-              <button type="button" onClick={() => setShowCreatorModal(true)} className="sm:hidden inline-flex px-4 py-2 rounded-lg border border-white/15 text-sm text-white/80 hover:bg-white/10 min-h-[44px]">
+            <div className="mt-4 flex flex-wrap justify-center gap-2 mm-landing-fade-in mm-landing-fade-in-delay-2">
+              <button type="button" onClick={() => setShowCreatorModal(true)} className="sm:hidden mm-landing-chip min-h-[44px] px-4">
                 For Creators
               </button>
-              <button type="button" onClick={() => setLowPower(!lowPower)} className="inline-flex px-4 py-2 rounded-lg border border-white/15 text-sm text-white/80 hover:bg-white/10 min-h-[44px]">
-                {lowPower ? 'Low power: On' : 'Low power: Off'}
+              <button type="button" onClick={() => setLowPower(!lowPower)} className="mm-landing-chip min-h-[44px] px-4">
+                {lowPower ? '⚡ Low power: On' : 'Low power: Off'}
               </button>
             </div>
           </div>
 
           {/* INTEREST DOCK - REFINED COMPACT */}
-          <section ref={startRef} className="w-full max-w-2xl mx-auto mb-12 px-4 scroll-mt-28">
-            <div className="relative p-6 sm:p-8 rounded-2xl bg-[#161a22] border border-white/10">
-              <div className="flex flex-col items-center">
-                <span className="text-sm font-medium text-white/80 mb-4">Choose your interests</span>
+          <section ref={startRef} className="w-full max-w-2xl mx-auto mb-14 px-4 scroll-mt-28 mm-landing-fade-in mm-landing-fade-in-delay-2">
+            <div className="mm-landing-glass p-6 sm:p-8">
+              <div className="flex flex-col items-center relative z-[1]">
+                <span className="mm-landing-section-label">Step 1</span>
+                <span className="mm-landing-section-title mb-5">Choose your interests</span>
 
-                <div className="flex flex-wrap justify-center gap-1.5 mb-8">
+                <div className="flex flex-wrap justify-center gap-2 mb-8">
                   {INTERESTS.filter(r => !interests.find(i => i.id === r.id)).slice(0, 8).map((r) => (
                     <button
                       key={r.id}
                       onClick={() => addInterest(r.id)}
-                      className="px-3 py-1.5 rounded-full bg-white/5 border border-white/10 hover:border-white/25 hover:bg-white/10 transition-colors text-xs text-white/70"
+                      className="mm-landing-chip"
                     >
                       #{r.label}
                     </button>
@@ -510,20 +537,20 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleInputKeyDown}
-                    placeholder="Add a topic..."
-                    className="w-full h-12 bg-[#0f1117] border border-white/10 focus:border-white/30 rounded-xl px-4 text-sm text-white outline-none transition-all placeholder:text-white/30 text-center"
+                    placeholder={`Try "${rotatingPlaceholder}"...`}
+                    className="mm-landing-field w-full text-center pr-12"
                   />
-                  <button onClick={getAiSuggestions} title="Suggest topics" className="absolute right-1 top-1/2 -translate-y-1/2 p-2.5 bg-white/10 text-white/70 rounded-lg hover:bg-white/20 transition-colors">
+                  <button onClick={getAiSuggestions} title="Suggest topics" className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2.5 rounded-lg bg-violet-500/15 border border-violet-500/25 text-violet-300 hover:bg-violet-500/25 transition-colors">
                     <svg className={`w-3.5 h-3.5 ${isSuggesting ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                   </button>
                 </div>
 
                 {interests.length > 0 && (
-                  <div className="flex flex-wrap justify-center gap-1.5 mt-5">
+                  <div className="flex flex-wrap justify-center gap-2 mt-5">
                     {interests.map(i => (
-                      <div key={i.id} className="flex items-center gap-2 bg-white text-[#0f1117] px-3 py-1 rounded-lg text-xs font-medium">
+                      <div key={i.id} className="mm-landing-tag">
                         {i.label}
-                        <button type="button" onClick={() => removeInterest(i.id)} className="hover:scale-125 transition-transform">✕</button>
+                        <button type="button" onClick={() => removeInterest(i.id)} className="opacity-50 hover:opacity-100 transition-opacity ml-0.5" aria-label={`Remove ${i.label}`}>✕</button>
                       </div>
                     ))}
                   </div>
@@ -533,7 +560,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   <button
                     type="button"
                     onClick={saveAnonymousInterestBundle}
-                    className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-white/60 hover:text-white hover:border-white/20 transition-colors"
+                    className="mm-landing-chip px-4 py-2"
                   >
                     Save topic list (this device)
                   </button>
@@ -567,32 +594,39 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
           <AdSlot slotKey="sidebar" script={adScripts?.sidebar} adsEnabled={adsEnabled} className="w-full max-w-2xl" />
 
-          <section className="w-full max-w-4xl grid grid-cols-1 sm:grid-cols-2 gap-4 mb-12" aria-label="Chat modes">
-            {[
-              { id: 'video', icon: '📹', name: 'Video Chat', hint: 'One-to-one video' },
-              { id: 'text', icon: '💬', name: 'Text Chat', hint: 'Anonymous messaging' },
-              { id: 'group_video', icon: '🎥', name: 'Group Video', hint: 'Up to 4 people on video' },
-              { id: 'group_text', icon: '👥', name: 'Group Text', hint: 'Group text rooms' },
-            ].map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => handleStartInteraction(m.id)}
-                disabled={!connected || isJoining}
-                aria-label={`${m.name}: ${m.hint}`}
-                className="group relative min-h-[120px] rounded-xl bg-[#161a22] border border-white/10 hover:border-white/25 focus:outline-none focus:ring-2 focus:ring-white/30 transition-colors p-5 text-left disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <div className="w-10 h-10 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-lg mb-4">
-                  {m.icon}
-                </div>
-                <h3 className="text-base font-semibold text-white">{m.name}</h3>
-                <p className="text-xs text-white/50 mt-1">{m.hint}</p>
-              </button>
-            ))}
+          <section className="w-full max-w-4xl mb-14 mm-landing-fade-in mm-landing-fade-in-delay-3" aria-label="Chat modes">
+            <div className="text-center mb-6">
+              <span className="mm-landing-section-label">Step 2</span>
+              <h3 className="mm-landing-section-title">Pick how you want to connect</h3>
+            </div>
+            <div className="mm-landing-mode-grid">
+              {CHAT_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  data-mode={m.id}
+                  onClick={() => handleStartInteraction(m.id)}
+                  disabled={!connected || isJoining}
+                  aria-label={`${m.name}: ${m.hint}`}
+                  className="mm-landing-mode-card disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50"
+                >
+                  <div className="mm-landing-mode-icon">{m.icon}</div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="mm-landing-mode-title">{m.name}</h3>
+                    <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/10 text-white/50">{m.tag}</span>
+                  </div>
+                  <p className="mm-landing-mode-hint">{m.hint}</p>
+                  <span className="mm-landing-mode-arrow" aria-hidden="true">→</span>
+                </button>
+              ))}
+            </div>
           </section>
 
-          <section className="w-full max-w-3xl mx-auto mb-12 px-4">
-            <h3 className="text-lg font-semibold text-white mb-3 text-center">Active rooms</h3>
+          <section className="w-full max-w-3xl mx-auto mb-14 px-4">
+            <div className="text-center mb-5">
+              <span className="mm-landing-section-label">Browse</span>
+              <h3 className="mm-landing-section-title">Active rooms</h3>
+            </div>
             <RoomBrowser
               connected={connected}
               onJoinRoom={(room) => {
@@ -604,9 +638,10 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
           <PresenceMap onlineCount={onlineCount} />
 
-          <section className="w-full max-w-3xl mx-auto mb-12 px-4">
-            <div className="rounded-xl border border-white/10 bg-[#161a22] p-5 flex items-start gap-4">
-              <div className="text-sm text-white/70 leading-relaxed flex-1">
+          <section className="w-full max-w-3xl mx-auto mb-14 px-4">
+            <div className="mm-landing-insight">
+              <div className="mm-landing-insight-icon" aria-hidden="true">💡</div>
+              <div className="text-sm text-white/75 leading-relaxed flex-1 transition-opacity duration-500">
                 {INSIGHTS[insightIndex]}
               </div>
             </div>
@@ -617,18 +652,20 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
       )}
 
       {/* FOOTER */}
-      <footer className="relative z-10 py-12 px-6 bg-[#0a0c10] border-t border-white/10">
+      <footer className="relative z-10 mm-landing-footer py-14 px-6">
         <div className="max-w-5xl mx-auto flex flex-col md:flex-row justify-between items-start gap-10">
-          <div className="max-w-sm space-y-3">
-            <img src="/apple-touch-icon.png" alt="Mana Mingle" className="w-10 h-10 rounded-lg border border-white/10" />
+          <div className="max-w-sm space-y-4">
+            <div className="mm-landing-logo-ring w-11 h-11">
+              <img src="/apple-touch-icon.png" alt="Mana Mingle" className="w-7 h-7" />
+            </div>
             <p className="text-sm text-white/50 leading-relaxed">
-              Anonymous interest-based chat and video. Built for privacy and simple connections.
+              Anonymous interest-based chat and video. Built for privacy, safety, and real connections.
             </p>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-8 flex-1 w-full min-w-0">
             <div className="space-y-3">
-              <h5 className="text-sm font-semibold text-white">Legal</h5>
+              <h5 className="mm-landing-section-label mb-2">Legal</h5>
               <div className="flex flex-col gap-2">
                 {['Privacy', 'Integrity', 'Safety'].map(m => (
                   <button key={m} onClick={() => setModal(m.toLowerCase())} className="text-sm text-left text-white/50 hover:text-white transition-colors">{m}</button>
@@ -636,7 +673,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
               </div>
             </div>
             <div className="space-y-3">
-              <h5 className="text-sm font-semibold text-white">Help</h5>
+              <h5 className="mm-landing-section-label mb-2">Help</h5>
               <div className="flex flex-col gap-2">
                 {['Dev', 'Bug'].map(m => (
                   <button key={m} onClick={() => setModal(m.toLowerCase())} className="text-sm text-left text-white/50 hover:text-white transition-colors">{m === 'Dev' ? 'How it works' : 'Report a bug'}</button>
@@ -645,13 +682,14 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
               </div>
             </div>
             <div className="space-y-3">
-              <h5 className="text-sm font-semibold text-white">Creators</h5>
+              <h5 className="mm-landing-section-label mb-2">Creators</h5>
               <button type="button" onClick={() => setShowCreatorModal(true)} className="text-sm text-left text-white/50 hover:text-white transition-colors">Open creator program</button>
             </div>
           </div>
         </div>
-        <div className="max-w-5xl mx-auto pt-8 mt-8 border-t border-white/10 text-xs text-white/40">
-          © 2026 Mana Mingle
+        <div className="max-w-5xl mx-auto pt-8 mt-8 border-t border-white/[0.06] text-xs text-white/35 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <span>© 2026 Mana Mingle</span>
+          <span className="text-white/25">manamingle.site</span>
         </div>
       </footer>
 
