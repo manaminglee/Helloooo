@@ -13,6 +13,6 @@ services:
       - key: NODE_ENV
         value: production
       - key: ADMIN_KEY
-        generateValue: true
+        sync: false
       - key: FRONTEND_ORIGIN
         sync: false

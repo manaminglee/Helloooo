@@ -106,6 +106,7 @@ To enable auto-deploy on Render: Service → **Settings** → **Build & Deploy**
 
 ## Troubleshooting
 
+- **Admin login always invalid** → The admin panel calls the **Render backend**, not the Vercel site. Ensure `ADMIN_KEY` on Render matches the key you type at `/admin` (Render → Environment → `ADMIN_KEY`). If Render auto-generated a random key, copy it from the dashboard or replace it with your own (min 16 chars recommended).
 - **"Failed to fetch" or CORS errors** → Check `FRONTEND_ORIGIN` on Render matches your Vercel URL exactly (no trailing slash).
 - **Socket not connecting** → Check `VITE_SOCKET_URL` on Vercel matches your Render URL (with `https://`).
 - **Render sleeping** → First request after sleep can take 30–60 seconds. Use UptimeRobot to reduce this.

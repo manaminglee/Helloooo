@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-
-const API_BASE = import.meta.env.VITE_SOCKET_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+import { API_BASE } from '../config/apiBase';
 
 /**
  * Mana Mingle Admin Dashboard v2.5
@@ -32,9 +31,15 @@ export function AdminDashboard({ onJoinRoom }) {
   const socketRef = useRef(null);
 
   const fetchStats = async (adminKey) => {
+    const trimmedKey = String(adminKey || '').trim();
+    if (!trimmedKey) {
+      setError('Enter your admin key.');
+      setIsLogged(false);
+      return;
+    }
     try {
       const res = await fetch(`${API_BASE}/api/admin/overview`, {
-        headers: { 'x-admin-key': adminKey },
+        headers: { 'x-admin-key': trimmedKey },
       });
       if (res.ok) {
         const data = await res.json();
@@ -42,14 +47,23 @@ export function AdminDashboard({ onJoinRoom }) {
         if (data.adScripts) setAdForm((prev) => ({ ...prev, ...data.adScripts }));
         setError('');
         setIsLogged(true);
-        sessionStorage.setItem('mm_admin_key', adminKey);
+        setKey(trimmedKey);
+        sessionStorage.setItem('mm_admin_key', trimmedKey);
       } else {
-        const err = await res.json();
-        setError(err.error || 'Unauthorized');
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 503) {
+          setError(err.error || 'Admin panel not configured on server (set ADMIN_KEY).');
+        } else if (res.status === 401) {
+          setError('Invalid admin key.');
+          sessionStorage.removeItem('mm_admin_key');
+        } else {
+          setError(err.error || `Login failed (${res.status})`);
+        }
         setIsLogged(false);
       }
     } catch (e) {
-      setError('Connection failed');
+      setError('Cannot reach API server. Check VITE_SOCKET_URL / backend URL.');
+      setIsLogged(false);
     }
   };
 
@@ -464,7 +478,7 @@ export function AdminDashboard({ onJoinRoom }) {
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
                 placeholder="Enter Admin Key..."
-                className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:outline-none focus:border-cyan-500/50 transition-all text-center tracking-widest font-black uppercase text-xs"
+                className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:outline-none focus:border-cyan-500/50 transition-all text-center tracking-widest font-mono text-sm"
               />
             </div>
             <button className="w-full py-4 bg-cyan-500 text-black rounded-2xl font-black uppercase tracking-widest text-[11px] shadow-xl shadow-cyan-600/20 hover:scale-[1.02] active:scale-95 transition-all">
@@ -477,7 +491,7 @@ export function AdminDashboard({ onJoinRoom }) {
             >
               ← Back to Site
             </button>
-            {error && <p className="text-rose-400 text-[10px] text-center font-black uppercase mt-4 animate-shake">Invalid Admin Key</p>}
+            {error && <p className="text-rose-400 text-[10px] text-center font-black uppercase mt-4 animate-shake">{error}</p>}
           </form>
         </div>
       </div>
