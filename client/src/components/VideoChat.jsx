@@ -435,6 +435,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const findPartnerEmittedRef = useRef(false);
   const peerInfoRef = useRef(new Map());
   const chatEndRef = useRef(null);
+  const chatPanelRef = useRef(null);
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -611,7 +612,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [showStrangerReveal, setShowStrangerReveal] = useState(false);
   const [showSafetyNudge, setShowSafetyNudge] = useState(() => !sessionStorage.getItem('mm_video_safety_seen'));
   const [chatUnread, setChatUnread] = useState(0);
-  const chatPanelRef = useRef(null);
   const [ultraLow, setUltraLow] = useState(false);
   const [calmMode, setCalmMode] = useState(calmModeProp);
 
