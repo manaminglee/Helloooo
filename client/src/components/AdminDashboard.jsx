@@ -109,6 +109,67 @@ export function AdminDashboard({ onJoinRoom }) {
     } catch (e) { setToast('⚠️ Network error'); }
   };
 
+  const handleWithdrawalStatus = async (withdrawalId, status) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/withdrawals/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
+        body: JSON.stringify({ withdrawalId, status }),
+      });
+      if (res.ok) {
+        fetchCreators();
+        fetchHistory();
+        setToast(status === 'paid' ? '✅ Withdrawal marked paid' : '❌ Withdrawal rejected — coins restored');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setToast(err.error || 'Withdrawal update failed');
+      }
+    } catch (e) {
+      setToast('⚠️ Network error');
+    }
+  };
+
+  const handleFeaturedToggle = async (creatorId, featured) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/creators/featured`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
+        body: JSON.stringify({ creatorId, featured }),
+      });
+      if (res.ok) {
+        fetchCreators();
+        setToast(featured ? '⭐ Creator featured' : 'Creator unfeatured');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setToast(err.error || 'Featured update failed');
+      }
+    } catch (e) {
+      setToast('⚠️ Network error');
+    }
+  };
+
+  const handleAdminResetPassword = async (creatorId) => {
+    const creator = creators.find((c) => c.id === creatorId);
+    if (!window.confirm(`Reset password for @${creator?.handle_name}?`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/creators/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
+        body: JSON.stringify({ creatorId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setToast(`🔑 Password reset${data.password ? `: ${data.password}` : ''}${creator?.email ? ' (emailed to creator)' : ''}`);
+        fetchHistory();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setToast(err.error || 'Reset failed');
+      }
+    } catch (e) {
+      setToast('⚠️ Network error');
+    }
+  };
+
 
   const handleLogin = (e) => {
     e.preventDefault();
@@ -759,24 +820,45 @@ export function AdminDashboard({ onJoinRoom }) {
 
           {activeTab === 'room-monitoring' && (
             <div className="space-y-10 animate-fade-in select-none">
+              <div className="flex flex-wrap items-center justify-between gap-4 px-2">
+                <p className="text-[10px] font-black uppercase tracking-[0.35em] text-white/30">
+                  Live sessions · {(stats?.roomsWithActivity || stats?.roomList || []).length} active
+                </p>
+                <button type="button" onClick={() => fetchStats(key)} className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white/50 hover:text-white">
+                  Refresh
+                </button>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                {(stats?.roomsWithActivity || []).map(r => (
+                {(stats?.roomsWithActivity || stats?.roomList || []).map((r) => {
+                  const typeLabel = r.sessionType === '1:1' ? '1:1' : 'Group';
+                  const modeLabel = r.mode === 'group_video' ? 'Group Video' : r.mode === 'video' ? 'Video Chat' : r.mode === 'group_text' ? 'Group Text' : r.mode === 'text' ? 'Text Chat' : r.mode;
+                  return (
                   <div key={r.id} className="group p-8 rounded-[40px] bg-white/[0.02] border border-white/5 hover:border-indigo-500/30 transition-all relative overflow-hidden flex flex-col min-h-[400px] shadow-2xl">
                     <div className="absolute top-0 right-0 p-6 flex items-center gap-2">
                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]" />
-                       <span className="text-[10px] font-black text-white/20 uppercase tracking-widest">{r.mode}</span>
+                       <span className="text-[10px] font-black text-white/20 uppercase tracking-widest">{typeLabel} · {modeLabel}</span>
                     </div>
                     
                     <div className="mb-6">
                       <div className="text-xl font-black italic uppercase tracking-tighter mb-1 text-white group-hover:text-indigo-400 transition-colors">#{r.interest}</div>
                       <div className="text-[9px] text-white/20 font-black uppercase tracking-widest leading-relaxed">ID: {r.id}</div>
+                      <div className="text-[9px] text-white/25 font-bold mt-1">
+                        {r.participantCount ?? r.participants?.length ?? 0}/{r.maxSize || '?'} participants
+                      </div>
                     </div>
 
                     <div className="flex-1 space-y-4">
-                       <div className="text-[10px] font-black text-indigo-400/60 uppercase tracking-widest italic mb-2">Live Participants ({r.users?.length || 0})</div>
-                       <div className="flex flex-wrap gap-2">
-                          {(r.users || []).map((nick, i) => (
-                            <span key={i} className="px-3 py-1 rounded-full bg-white/5 border border-white/5 text-[9px] font-bold text-white/40">{nick}</span>
+                       <div className="text-[10px] font-black text-indigo-400/60 uppercase tracking-widest italic mb-2">Live Participants</div>
+                       <div className="space-y-2">
+                          {(r.participants || []).map((p) => (
+                            <div key={p.socketId || p.nickname} className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/5 text-[9px] font-bold text-white/50">
+                              <span>{p.isCreator ? `@${p.nickname}` : (p.nickname || 'Anonymous')}</span>
+                              {p.country && <span className="text-white/30 uppercase">{p.country}</span>}
+                              {p.isCreator && <span className="text-violet-400">★</span>}
+                            </div>
+                          ))}
+                          {(!r.participants || r.participants.length === 0) && (r.users || []).map((nick, i) => (
+                            <span key={i} className="inline-block px-3 py-1 rounded-full bg-white/5 border border-white/5 text-[9px] font-bold text-white/40">{nick}</span>
                           ))}
                        </div>
 
@@ -786,7 +868,7 @@ export function AdminDashboard({ onJoinRoom }) {
                              {(r.messages || []).map((m, i) => (
                                <div key={i} className="p-2.5 rounded-xl bg-black/40 border border-white/5 text-[10px] leading-relaxed">
                                   <span className="font-black text-white/20 uppercase mr-2">{m.nickname}:</span>
-                                  <span className="text-white/60 italic">"{m.text}"</span>
+                                  <span className="text-white/60 italic">&ldquo;{m.text}&rdquo;</span>
                                </div>
                              ))}
                              {(!r.messages || r.messages.length === 0) && <div className="text-[9px] text-white/10 uppercase font-black italic">No activity detected...</div>}
@@ -795,28 +877,24 @@ export function AdminDashboard({ onJoinRoom }) {
                     </div>
 
                     <div className="mt-8 pt-6 border-t border-white/5 flex flex-col gap-3">
+                       {onJoinRoom && r.mode?.includes('video') && (
                        <button 
-                         onClick={() => onJoinRoom && onJoinRoom(r.id, r.mode, r.interest)}
+                         onClick={() => onJoinRoom(r.id, r.mode, r.interest)}
                          className="w-full py-3.5 bg-white/5 hover:bg-white text-white hover:text-black transition-all rounded-2xl text-[10px] font-black uppercase tracking-widest border border-white/10"
                        >
                          Spectate View →
                        </button>
+                       )}
                        <button 
-                         onClick={async () => {
-                           try {
-                             await fetch(`${API_BASE}/api/admin/end-room`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-key': key }, body: JSON.stringify({ roomId: r.id }) });
-                             fetchStats(key);
-                             setToast(`Terminated Room: ${r.id}`);
-                           } catch (e) {}
-                         }}
+                         onClick={() => handleEndRoom(r.id)}
                          className="w-full py-3.5 rounded-2xl bg-rose-500/10 text-rose-500 border border-rose-500/20 hover:bg-rose-500 hover:text-white transition-all font-black text-[10px] uppercase tracking-widest"
                        >
-                         Kill Room Signal
+                         Terminate {typeLabel} Session
                        </button>
                     </div>
                   </div>
-                ))}
-                {(!stats?.roomsWithActivity || stats.roomsWithActivity.length === 0) && (
+                );})}
+                {(!stats?.roomsWithActivity || stats.roomsWithActivity.length === 0) && (!stats?.roomList || stats.roomList.length === 0) && (
                   <div className="lg:col-span-3 py-48 text-center bg-white/[0.01] border border-white/5 rounded-[60px] shadow-inner">
                     <div className="text-5xl mb-6 opacity-20">🍃</div>
                     <p className="text-[11px] font-black uppercase tracking-[0.4em] text-white/20">No active signal rooms found</p>
@@ -859,9 +937,11 @@ export function AdminDashboard({ onJoinRoom }) {
                     <thead>
                       <tr className="text-[10px] uppercase font-black tracking-widest text-white/20 border-b border-white/5 italic">
                         <th className="py-4 pr-4">Creator Handle</th>
+                        <th className="py-4 pr-4">Email</th>
                         <th className="py-4 pr-4">Platform</th>
                         <th className="py-4 pr-4">Profile Link</th>
-                        <th className="py-4 pr-4">Coins / Referrals</th>
+                        <th className="py-4 pr-4">Coins / Ref / Tips</th>
+                        <th className="py-4 pr-4">Featured</th>
                         <th className="py-4 pr-4">Applied</th>
                         <th className="py-4 pr-4">Status</th>
                         <th className="py-4 text-right">Actions</th>
@@ -869,7 +949,7 @@ export function AdminDashboard({ onJoinRoom }) {
                     </thead>
                     <tbody className="divide-y divide-white/[0.03]">
                       {creators.length === 0 && (
-                        <tr><td colSpan="7" className="py-20 text-center text-white/10 italic text-sm font-black uppercase tracking-[0.5em]">No creator applications yet</td></tr>
+                        <tr><td colSpan="9" className="py-20 text-center text-white/10 italic text-sm font-black uppercase tracking-[0.5em]">No creator applications yet</td></tr>
                       )}
                       {creators.map(c => (
                         <tr key={c.id} className={`hover:bg-white/[0.01] transition-all group ${ c.status === 'pending' ? 'border-l-2 border-l-amber-500/40' : ''}`}>
@@ -877,6 +957,7 @@ export function AdminDashboard({ onJoinRoom }) {
                             <div className="font-black text-white italic group-hover:text-cyan-400 transition-colors uppercase tracking-widest">{c.handle_name}</div>
                             <div className="text-[9px] text-white/20 font-mono mt-0.5">{c.referral_code}</div>
                           </td>
+                          <td className="py-5 pr-4 text-[9px] text-white/40 max-w-[140px] truncate" title={c.email || ''}>{c.email || '—'}</td>
                           <td className="py-5 pr-4 text-xs text-white/40 font-black uppercase tracking-widest">{c.platform}</td>
                           <td className="py-5 pr-4">
                             <a href={c.profile_link} target="_blank" rel="noopener noreferrer"
@@ -888,6 +969,23 @@ export function AdminDashboard({ onJoinRoom }) {
                             <span className="text-cyan-400 italic">🪙 {c.coins_earned}</span>
                             <span className="mx-2 text-white/5">/</span>
                             <span className="text-indigo-400 italic">🖱️ {c.referral_count || 0}</span>
+                            <span className="mx-2 text-white/5">/</span>
+                            <span className="text-amber-400 italic">💰 {c.tips_received_total || 0}</span>
+                          </td>
+                          <td className="py-5 pr-4">
+                            {c.status === 'approved' ? (
+                              <button
+                                type="button"
+                                onClick={() => handleFeaturedToggle(c.id, !c.featured)}
+                                className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${
+                                  c.featured ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-white/5 text-white/30 border border-white/10 hover:text-amber-300'
+                                }`}
+                              >
+                                {c.featured ? '⭐ Featured' : '☆ Pin'}
+                              </button>
+                            ) : (
+                              <span className="text-white/15 text-[9px]">—</span>
+                            )}
                           </td>
                           <td className="py-5 pr-4 text-[9px] text-white/20 font-black">
                             {new Date(c.created_at).toLocaleDateString()}
@@ -900,7 +998,15 @@ export function AdminDashboard({ onJoinRoom }) {
                             }`}>{c.status}</span>
                           </td>
                           <td className="py-5 text-right">
-                            <div className="flex gap-2 justify-end">
+                            <div className="flex flex-wrap gap-2 justify-end">
+                              {c.status === 'approved' && (
+                                <>
+                                  <button type="button" onClick={() => handleAdminResetPassword(c.id)}
+                                    className="px-3 py-1.5 bg-violet-500/20 hover:bg-violet-500 text-violet-300 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all">
+                                    🔑 Reset PW
+                                  </button>
+                                </>
+                              )}
                               {c.status !== 'approved' && (
                                 <button onClick={() => handleCreatorApprove(c.id, 'approved')}
                                   className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500 text-emerald-400 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all">
@@ -926,17 +1032,26 @@ export function AdminDashboard({ onJoinRoom }) {
                 <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-emerald-400 mb-8 italic">💸 Withdrawal Requests</h3>
                 <div className="space-y-4">
                   {withdrawals?.map(w => (
-                    <div key={w.id} className="p-6 rounded-[30px] bg-white/[0.02] border border-white/5 flex items-center justify-between group hover:border-emerald-500/20 transition-all">
+                    <div key={w.id} className="p-6 rounded-[30px] bg-white/[0.02] border border-white/5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 group hover:border-emerald-500/20 transition-all">
                       <div>
                         <div className="text-sm font-black text-white italic uppercase tracking-widest">{w.creators?.handle_name || w.handle_name}</div>
                         <div className="text-[10px] text-white/20 font-black uppercase tracking-widest mt-1">UPI: {w.upi}</div>
                         <div className="text-[9px] text-white/10 mt-1">{new Date(w.created_at).toLocaleString()}</div>
+                        {w.admin_note && <div className="text-[9px] text-white/30 mt-2 italic">{w.admin_note}</div>}
                       </div>
-                      <div className="text-right">
-                        <div className="text-xl font-black text-emerald-400 italic mb-2 tracking-tighter">₹{Number(w.amount_rs ?? w.amount ?? 0).toLocaleString()}</div>
+                      <div className="text-right flex flex-col items-end gap-2">
+                        <div className="text-xl font-black text-emerald-400 italic tracking-tighter">₹{Number(w.amount_rs ?? w.amount ?? 0).toLocaleString()}</div>
                         <span className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest ${
-                          w.status === 'paid' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
+                          w.status === 'paid' ? 'bg-emerald-500/20 text-emerald-400' :
+                          w.status === 'rejected' ? 'bg-rose-500/20 text-rose-400' :
+                          'bg-amber-500/20 text-amber-400'
                         }`}>{w.status}</span>
+                        {w.status === 'pending' && (
+                          <div className="flex gap-2 mt-1">
+                            <button type="button" onClick={() => handleWithdrawalStatus(w.id, 'paid')} className="px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 text-[8px] font-black uppercase hover:bg-emerald-500 hover:text-black transition-all">Mark paid</button>
+                            <button type="button" onClick={() => handleWithdrawalStatus(w.id, 'rejected')} className="px-3 py-1.5 rounded-xl bg-rose-500/20 text-rose-400 text-[8px] font-black uppercase hover:bg-rose-500 hover:text-white transition-all">Reject</button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}

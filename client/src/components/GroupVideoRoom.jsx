@@ -3,7 +3,8 @@
  * Premium 2x2 grid layout, Multi-way call, side chat panel
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { countryToFlag } from '../utils/countryFlag';
+import { CountryFlag } from './CountryFlag';
+import { VideoLogoPlaceholder, VideoWatermark } from './VideoPanelChrome';
 import { useIceServers } from '../hooks/useIceServers';
 import { CoinBadge } from './CoinBadge';
 import { ReportSafetyModal } from './ReportSafetyModal';
@@ -31,6 +32,7 @@ import {
   VideoReactionBar,
   VideoSessionBanners,
 } from './VideoSessionUI';
+import { CreatorProfilePopup } from './CreatorProfilePopup';
 
 const BlueTick = () => (
   <span className="inline-flex items-center justify-center w-3 h-3 bg-violet-500 rounded-full ml-1.5 shadow-[0_0_10px_#a78bfa]">
@@ -155,16 +157,30 @@ function TileMicIcon({ muted }) {
   );
 }
 
-function VideoTile({ stream, label, flag, isMe, isEmpty, isSearching, isCreator = false, isActiveSpeaker = false, quality = 'good', handRaised = false, deskStyle = false, isMuted = false, hideTileMic = false }) {
+function VideoTile({ stream, label, country, flag, isMe, isEmpty, isSearching, isCreator = false, isActiveSpeaker = false, quality = 'good', handRaised = false, deskStyle = false, isMuted = false, hideTileMic = false, onCreatorProfile, onTipCreator, canTip = false }) {
   const ref = useRef(null);
+  const [streamTick, setStreamTick] = useState(0);
+  const videoTracks = stream?.getVideoTracks?.() || [];
+  const streamLive = !!(stream?.active && videoTracks.some((t) => t.readyState === 'live' && t.enabled));
+
+  useEffect(() => {
+    if (!stream) return undefined;
+    const bump = () => setStreamTick((t) => t + 1);
+    stream.getTracks().forEach((t) => t.addEventListener('ended', bump));
+    return () => stream.getTracks().forEach((t) => t.removeEventListener('ended', bump));
+  }, [stream]);
+
   useEffect(() => {
     const el = ref.current;
-    if (!el || !stream) return;
+    if (!el) return;
+    if (!stream || !streamLive) {
+      el.srcObject = null;
+      return undefined;
+    }
     el.srcObject = stream;
-    const play = async () => { try { await el.play(); } catch (e) { } };
+    const play = async () => { try { await el.play(); } catch (e) { /* ignore */ } };
     play();
 
-    // Stream stabilizer
     const handleStalled = () => { if (el.paused && stream.active) el.play().catch(() => { }); };
     el.addEventListener('stalled', handleStalled);
     el.addEventListener('waiting', () => { if (stream.active) el.play().catch(() => { }); });
@@ -172,43 +188,38 @@ function VideoTile({ stream, label, flag, isMe, isEmpty, isSearching, isCreator 
 
     return () => {
       el.removeEventListener('stalled', handleStalled);
+      el.srcObject = null;
     };
-  }, [stream]);
+  }, [stream, streamLive, streamTick]);
 
   if (isSearching) {
     return (
       <div className="video-tile flex flex-col items-center justify-center gap-3">
-        <div className="relative w-12 h-12">
-          <div className="radar-ring absolute inset-0" style={{ borderColor: 'rgba(99,102,241,0.4)' }} />
-          <div className="radar-ring absolute inset-2" style={{ animationDelay: '0.6s', borderColor: 'rgba(99,102,241,0.3)' }} />
-          <div className="absolute inset-3 rounded-full bg-indigo-500/20 flex items-center justify-center text-sm">📡</div>
-        </div>
-        <p className="text-xs" style={{ color: 'rgba(232,234,246,0.5)' }}>Entering room...</p>
+        <VideoLogoPlaceholder label="Entering room…" compact />
       </div>
     );
   }
 
   if (isEmpty) {
     return (
-      <div className="video-tile flex flex-col items-center justify-center gap-2 opacity-40">
-        <div className="w-10 h-10 rounded-xl border border-white/10 flex items-center justify-center text-xl">⏳</div>
-        <p className="text-xs" style={{ color: 'rgba(232,234,246,0.4)' }}>Waiting...</p>
+      <div className={`video-tile min-h-0 min-w-0 overflow-hidden ${deskStyle ? 'mm-group-desk-tile' : ''}`}>
+        <VideoLogoPlaceholder label="Waiting for participant" compact />
+        <VideoWatermark />
       </div>
     );
   }
 
+  const showLogoInsteadOfVideo = !streamLive;
+
   return (
     <div className={`video-tile min-h-0 min-w-0 transition-all duration-500 overflow-hidden ${deskStyle ? 'mm-group-desk-tile' : ''} ${isMe ? 'mirror' : ''} ${isActiveSpeaker && !deskStyle ? 'ring-4 ring-violet-500/40 ring-inset shadow-[0_0_30px_rgba(167,139,250,0.2)] scale-[1.02] z-10' : deskStyle && isActiveSpeaker ? 'mm-group-desk-tile--speaking' : 'brightness-90 hover:brightness-100'}`}>
-      {stream ? (
-        <video ref={ref} autoPlay playsInline muted={isMe} className="w-full h-full object-cover" />
+      {showLogoInsteadOfVideo ? (
+        <VideoLogoPlaceholder label={isMe ? 'Camera starting…' : 'Reconnecting…'} compact />
       ) : (
-        <div className="tile-empty">
-          <div className="peer-avatar text-xl" style={{ width: 52, height: 52, fontSize: '1.5rem' }}>
-            {isMe ? '🙋' : '👤'}
-          </div>
-          <div className="search-dots"><span /><span /><span /></div>
-        </div>
+        <video ref={ref} autoPlay playsInline muted={isMe} className="w-full h-full object-cover" />
       )}
+
+      <VideoWatermark />
 
       {handRaised && (
         <div className="absolute top-4 left-4 z-20 animate-bounce">
@@ -227,15 +238,29 @@ function VideoTile({ stream, label, flag, isMe, isEmpty, isSearching, isCreator 
       {deskStyle ? (
         <div className="mm-group-desk-tile__tag">
           <span className="mm-desk-dot mm-desk-dot--green" aria-hidden />
-          <span className="truncate">{isMe ? 'You' : (isCreator ? `@${label}` : label)}</span>
+          <button
+            type="button"
+            className={`truncate text-left ${isCreator && !isMe && onCreatorProfile ? 'hover:text-violet-200 underline-offset-2 hover:underline' : ''}`}
+            onClick={isCreator && !isMe && onCreatorProfile ? (e) => { e.stopPropagation(); onCreatorProfile(); } : undefined}
+          >
+            {isMe ? 'You' : (isCreator ? `@${label}` : label)}
+          </button>
           {isCreator && <BlueTick />}
-          {!isMe && flag && <span className="ml-0.5">{flag}</span>}
+          {(country || flag) && (
+            <CountryFlag country={country || flag} className="mm-country-flag" size={14} title={country || flag} />
+          )}
         </div>
       ) : (
       <div className={`tile-label flex items-center justify-between gap-4 ${isCreator ? 'border border-violet-500/30 bg-violet-950/40 text-violet-400 font-black tracking-widest' : ''}`}>
-        <div className="flex items-center gap-1.5">
-          {flag && <span className="mr-1">{flag}</span>}
-          <span className="truncate max-w-[80px]">{isCreator ? `@${label}` : label}</span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          {(country || flag) && <CountryFlag country={country || flag} className="mm-country-flag" size={14} title={country || flag} />}
+          <button
+            type="button"
+            className={`truncate max-w-[80px] text-left ${isCreator && !isMe && onCreatorProfile ? 'hover:text-violet-200' : ''}`}
+            onClick={isCreator && !isMe && onCreatorProfile ? (e) => { e.stopPropagation(); onCreatorProfile(); } : undefined}
+          >
+            {isCreator ? `@${label}` : label}
+          </button>
           {isCreator && <BlueTick />}
           {isMe && !isCreator && <span className="text-[8px] opacity-50 ml-1 uppercase">(me)</span>}
         </div>
@@ -254,6 +279,18 @@ function VideoTile({ stream, label, flag, isMe, isEmpty, isSearching, isCreator 
           <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" /><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" /></svg>
           Speaking
         </div>
+      )}
+
+      {isCreator && !isMe && onTipCreator && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onTipCreator(); }}
+          disabled={!canTip}
+          className="absolute bottom-14 right-3 z-20 px-2.5 py-1.5 rounded-xl bg-amber-500/90 text-black text-[9px] font-black uppercase tracking-widest shadow-lg hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed"
+          title={canTip ? 'Tip creator' : 'Not enough coins'}
+        >
+          💰 Tip
+        </button>
       )}
     </div>
   );
@@ -329,6 +366,8 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showDevicePicker, setShowDevicePicker] = useState(false);
   const [showTipModal, setShowTipModal] = useState(false);
+  const [tipTargetSid, setTipTargetSid] = useState(null);
+  const [showProfileHandle, setShowProfileHandle] = useState(null);
   const [showRating, setShowRating] = useState(false);
   const [ratingDone, setRatingDone] = useState(false);
   const [chatCollapsed, setChatCollapsed] = useState(false);
@@ -400,12 +439,18 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
   const sendTip = (amount, targetSid) => {
     const rid = roomIdRef.current || roomId;
-    const target = targetSid || peers.find((p) => p.isCreator)?.socketId;
+    const target = targetSid || tipTargetSid || peers.find((p) => p.isCreator)?.socketId;
     if (!socket || !rid || !target || balance < amount) return;
-    socket.emit('spend-coins', { amount, reason: 'creator-tip' });
     socket.emit('tip-creator', { roomId: rid, targetSocketId: target, amount });
     setToast(`Sent ${amount} coins!`);
+    setTipTargetSid(null);
   };
+
+  const peerTileActions = (p) => ({
+    onCreatorProfile: p.isCreator ? () => setShowProfileHandle(p.nickname) : undefined,
+    onTipCreator: p.isCreator ? () => { setTipTargetSid(p.socketId); setShowTipModal(true); } : undefined,
+    canTip: balance >= 10,
+  });
 
   const dismissSafetyNudge = () => {
     sessionStorage.setItem('mm_group_video_safety_seen', '1');
@@ -1043,11 +1088,18 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     const onUserLeft = (data) => {
       const sid = data.socketId || data.userId;
       if (sid) {
-        // Immediate removal for speed
-        setPeers((p) => p.filter((x) => x.socketId !== sid));
+        setPeers((p) => {
+          const leavingPeer = p.find((x) => x.socketId === sid);
+          if (leavingPeer?.stream) {
+            leavingPeer.stream.getTracks().forEach((t) => {
+              try { t.stop(); t.enabled = false; } catch { /* ignore */ }
+            });
+          }
+          return p.filter((x) => x.socketId !== sid);
+        });
 
         setParticipantCount((c) => {
-          const next = Math.max(1, (data.participantCount ?? c) - 1);
+          const next = Math.max(1, data.participantCount ?? c - 1);
           if (next === 1 && !isQueuing && !hasAutoLeftRef.current) {
             hasAutoLeftRef.current = true;
             setTimeout(() => { if (roomIdRef.current) handleLeaveRoom(); }, 2000);
@@ -1062,7 +1114,16 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           pc.close();
           peerConnectionsRef.current.delete(sid);
         }
-        const leavingNick = peerNicksRef.current.get(sid);
+        pendingCandidatesRef.current.delete(sid);
+        const leavingNick = data.nickname || peerNicksRef.current.get(sid);
+        peerNicksRef.current.delete(sid);
+        peerCountriesRef.current.delete(sid);
+        peerCreatorsRef.current.delete(sid);
+        setReconnectingPeers((prev) => {
+          const n = new Set(prev);
+          n.delete(sid);
+          return n;
+        });
         if (leavingNick) setMessages((m) => [...m, { id: `sys-left-${Date.now()}`, system: true, text: `${leavingNick} left the room` }]);
         playDisconnectSound();
         cleanupAudioAnalyzer(sid);
@@ -1526,7 +1587,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                   isMe
                   stream={localStreamRef.current}
                   label={nickname || 'Anonymous'}
-                  flag={countryToFlag(myCountry)}
+                  country={myCountry}
                   isCreator={isCreator}
                   isActiveSpeaker={activeSpeakerId === 'local'}
                   handRaised={handRaised}
@@ -1538,11 +1599,12 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                     deskStyle
                     stream={p.stream}
                     label={p.nickname}
-                    flag={countryToFlag(p.country)}
+                    country={p.country}
                     isCreator={p.isCreator}
                     isActiveSpeaker={activeSpeakerId === p.socketId}
                     quality={connectionQuality.get(p.socketId) || 'good'}
                     handRaised={remoteRaisedHands.has(p.socketId)}
+                    {...peerTileActions(p)}
                   />
                 ))}
                 {Array.from({ length: Math.max(0, 3 - peers.length) }).map((_, i) => (
@@ -1678,7 +1740,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                 isMe
                 stream={localStreamRef.current}
                 label={nickname || 'Anonymous'}
-                flag={countryToFlag(myCountry)}
+                country={myCountry}
                 isCreator={isCreator}
                 isActiveSpeaker={activeSpeakerId === 'local'}
                 handRaised={handRaised}
@@ -1691,11 +1753,12 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                   hideTileMic
                   stream={p.stream}
                   label={p.nickname}
-                  flag={countryToFlag(p.country)}
+                  country={p.country}
                   isCreator={p.isCreator}
                   isActiveSpeaker={activeSpeakerId === p.socketId}
                   quality={connectionQuality.get(p.socketId) || 'good'}
                   handRaised={remoteRaisedHands.has(p.socketId)}
+                  {...peerTileActions(p)}
                 />
               ))}
               {Array.from({ length: Math.max(0, 3 - peers.length) }).map((_, i) => (
@@ -1920,11 +1983,19 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       />
       <TipCreatorModal
         open={showTipModal}
-        onClose={() => setShowTipModal(false)}
-        onTip={(amount) => sendTip(amount, peers.find((p) => p.isCreator)?.socketId)}
+        onClose={() => { setShowTipModal(false); setTipTargetSid(null); }}
+        onTip={(amount) => sendTip(amount, tipTargetSid || peers.find((p) => p.isCreator)?.socketId)}
         balance={balance}
-        creatorName={peers.find((p) => p.isCreator)?.nickname}
+        creatorName={peers.find((p) => p.socketId === tipTargetSid)?.nickname || peers.find((p) => p.isCreator)?.nickname}
       />
+
+      {showProfileHandle && (
+        <div className="fixed inset-0 z-[3000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md" onClick={() => setShowProfileHandle(null)}>
+          <div onClick={(e) => e.stopPropagation()}>
+            <CreatorProfilePopup handle={showProfileHandle} onClose={() => setShowProfileHandle(null)} />
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-[200] max-w-[90vw] px-4 py-3 rounded-2xl bg-black/90 border border-white/10 text-xs font-bold text-white shadow-2xl animate-fade-in-up">

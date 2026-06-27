@@ -78,6 +78,21 @@ export function DataSaverHud({ bytesEstimate, ultraLow, onToggleUltra }) {
   );
 }
 
+export function LiveCaptionsPanel({ caption, enabled, onToggle }) {
+  if (!enabled) return null;
+  return (
+    <aside className="mm-desk-captions" aria-label="Live captions">
+      <div className="mm-desk-captions__head">
+        <span>Captions</span>
+        <button type="button" className="mm-desk-captions__close mm-compact-btn" onClick={onToggle} aria-label="Hide captions">✕</button>
+      </div>
+      <div className="mm-desk-captions__body custom-scrollbar">
+        {caption ? <p>{caption}</p> : <p className="mm-desk-captions__empty">Listening…</p>}
+      </div>
+    </aside>
+  );
+}
+
 export function LiveCaptionsBar({ caption, enabled, onToggle }) {
   return (
     <div className="absolute bottom-16 left-2 right-2 z-[60] pointer-events-none">

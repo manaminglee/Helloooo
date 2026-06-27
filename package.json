@@ -18,12 +18,14 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.1",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.22.1",
     "express-rate-limit": "^7.0.0",
     "geoip-lite": "^1.4.10",
     "helmet": "^8.1.0",
+    "nodemailer": "^9.0.1",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"
   },

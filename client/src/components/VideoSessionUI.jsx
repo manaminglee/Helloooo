@@ -64,6 +64,7 @@ export function VideoMoreSheet({
   showGames,
   onRoomBoost,
   balance = 0,
+  essentialOnly = false,
 }) {
   if (!open) return null;
   const Item = ({ onClick, label, sub, active, disabled }) => (
@@ -86,6 +87,22 @@ export function VideoMoreSheet({
           <button type="button" onClick={onClose} className="text-white/40 hover:text-white px-2">✕</button>
         </div>
         <div className="grid gap-2">
+          {essentialOnly ? (
+            <>
+              {onOpenDevices && <Item onClick={onOpenDevices} label="Mic & camera" sub="Choose devices" />}
+              {onToggleTranslate && <Item onClick={onToggleTranslate} label="Live translation" sub="Translate incoming messages" active={isTranslatorActive} />}
+              {onToggleBandwidth && (
+                <Item
+                  onClick={onToggleBandwidth}
+                  label={autoBandwidth ? 'Bandwidth: Auto' : (lowBandwidth ? 'Bandwidth: Low' : 'Bandwidth: High')}
+                  sub="Tap to cycle quality"
+                  active={!autoBandwidth && lowBandwidth}
+                />
+              )}
+              {onToggleAutoBlur && <Item onClick={onToggleAutoBlur} label="Auto-blur strangers" sub="Blur new matches briefly" active={autoStrangerBlur} />}
+            </>
+          ) : (
+            <>
           {onToggleTranslate && <Item onClick={onToggleTranslate} label="Live translation" sub="Translate incoming messages" active={isTranslatorActive} />}
           {onToggleScreenShare && <Item onClick={onToggleScreenShare} label={isScreenSharing ? 'Stop screen share' : 'Share screen'} sub="50 coins in group" active={isScreenSharing} />}
           {onFlipCamera && isMobile && <Item onClick={onFlipCamera} label="Flip camera" sub="Front / back" />}
@@ -115,8 +132,10 @@ export function VideoMoreSheet({
               {onPinLocal && <Item onClick={() => onPinPeer?.('local')} label="Pin yourself" active={pinnedId === 'local'} />}
             </div>
           )}
+            </>
+          )}
         </div>
-        {showGames && PHASE_3_PRO.miniChatGames && (
+        {!essentialOnly && showGames && PHASE_3_PRO.miniChatGames && (
           <div className="mt-4 pt-4 border-t border-white/10">
             <MiniChatGamePanel onSendPrompt={(text) => { onIcebreaker?.(text, true); onClose?.(); }} />
           </div>

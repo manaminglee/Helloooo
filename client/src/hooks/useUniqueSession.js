@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchCopilot, fetchModePrompt, fetchTrustScore, polishCaption } from '../services/nvidiaAiClient';
+import { fetchModePrompt, fetchTrustScore, polishCaption } from '../services/nvidiaAiClient';
 
 /**
  * Mutual consent, structured modes, NVIDIA copilot, live captions, data saver.
@@ -78,23 +78,6 @@ export function useUniqueSession({
       setAiOnline(!r.offline);
     });
   }, [status, conversationMode, interest]);
-
-  useEffect(() => {
-    if (status !== 'connected' || !consentComplete || calmMode) return;
-    const t = setInterval(async () => {
-      const silent = (Date.now() - lastMsgRef.current) / 1000;
-      if (silent > 25 && silent < 200) {
-        const r = await fetchCopilot({
-          silenceSeconds: Math.floor(silent),
-          mode: conversationMode,
-          interest,
-          lastMessages: messages.filter((m) => !m.system).slice(-4),
-        });
-        if (r.prompt) setCopilotPrompt(r.prompt);
-      }
-    }, 15000);
-    return () => clearInterval(t);
-  }, [status, consentComplete, conversationMode, interest, messages, calmMode]);
 
   useEffect(() => {
     if (status !== 'connected' || !roomId || !socket) return;

@@ -15,6 +15,7 @@ export function CreatorProfilePopup({ handle, onClose }) {
         if (!res.ok) throw new Error('Profile not found');
         const data = await res.json();
         setCreator(data);
+        if (data.is_following) setIsFollowing(true);
       } catch (e) {
         setError(e.message);
       } finally {

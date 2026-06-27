@@ -11,6 +11,7 @@ import { AdSlot } from './AdSlot';
 import { RoomBrowser } from './RoomBrowser';
 import { useLowPower } from '../context/LowPowerContext';
 import { CREATOR_MIN_WITHDRAWAL_COINS } from '../utils/creatorAuth';
+import { validateCreatorHandle } from '../utils/creatorValidation';
 import { EventsHubStrip, ConversationModePicker, AiStatusPill } from './unique/UniqueSessionUI';
 import { fetchPublicEvents, fetchAiStatus } from '../services/nvidiaAiClient';
 import { loadSessionPrefs, saveSessionPrefs } from '../constants/conversationModes';
@@ -86,7 +87,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [insightIndex, setInsightIndex] = useState(0);
-  const [creatorForm, setCreatorForm] = useState({ handle: '', platform: 'Instagram', link: '' });
+  const [creatorForm, setCreatorForm] = useState({ handle: '', platform: 'Instagram', link: '', email: '' });
   const [linkValidated, setLinkValidated] = useState(false);
   const [linkVerifying, setLinkVerifying] = useState(false);
   const [linkVerifyFailed, setLinkVerifyFailed] = useState(false);
@@ -102,6 +103,13 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [showCreatorModal, setShowCreatorModal] = useState(false);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
+  const [showResetPasswordModal, setShowResetPasswordModal] = useState(false);
+  const [resetToken, setResetToken] = useState('');
+  const [forgotForm, setForgotForm] = useState({ handle: '', referralCode: '' });
+  const [resetForm, setResetForm] = useState({ password: '', confirm: '' });
+  const [forgotMessage, setForgotMessage] = useState('');
+  const [resetMessage, setResetMessage] = useState('');
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showDashboardModal, setShowDashboardModal] = useState(false);
   const [customRoomName, setCustomRoomName] = useState('');
@@ -118,7 +126,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [dialog, setDialog] = useState(null); // { title, body, confirm?, onConfirm?, onCancel? }
   const [showCommunityPolicy, setShowCommunityPolicy] = useState(false);
   const [pendingVideoMode, setPendingVideoMode] = useState(null);
-  const { creatorStatus, registerCreator, verifyReferral, requestWithdrawal, login, checkStatus, reRequestApproval, updateProfile, fetchMyActivity, fetchMyWithdrawals } = useCreators();
+  const { creatorStatus, registerCreator, verifyReferral, requestWithdrawal, login, checkStatus, reRequestApproval, updateProfile, fetchStatus, fetchMyActivity, fetchMyWithdrawals, fetchMyAnalytics, fetchFeaturedCreators, requestPasswordReset, resetPassword } = useCreators();
   const { lowPower, setLowPower } = useLowPower();
   const [languageFilter, setLanguageFilter] = useState(joinMeta.language || '');
   const [sessionMode, setSessionMode] = useState(joinMeta.conversationMode || loadSessionPrefs().conversationMode || 'free');
@@ -129,6 +137,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [interestPresets, setInterestPresets] = useState([]);
   const [dashboardActivity, setDashboardActivity] = useState([]);
   const [dashboardWithdrawals, setDashboardWithdrawals] = useState([]);
+  const [dashboardAnalytics, setDashboardAnalytics] = useState([]);
+  const [creatorFormError, setCreatorFormError] = useState('');
+  const [featuredCreators, setFeaturedCreators] = useState([]);
 
   useEffect(() => {
     try {
@@ -213,43 +224,79 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
     };
   }, [waitingForApproval, approvalTimer, creatorStatus, uniqueAccessCode, checkStatus]);
 
-  // Real-time: when admin approves/rejects a creator, update UI instantly via socket
+  useEffect(() => {
+    fetchFeaturedCreators().then(({ creators }) => setFeaturedCreators(creators || [])).catch(() => {});
+  }, [fetchFeaturedCreators]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('creator_reset');
+    if (token) {
+      setResetToken(token);
+      setShowResetPasswordModal(true);
+      setShowCreatorModal(true);
+    }
+  }, []);
+
   useEffect(() => {
     if (!socket) return;
     const handler = (data) => {
-      // If this creator is currently waiting for approval
+      if (data.password) {
+        try { sessionStorage.setItem('mm_creator_password_once', data.password); } catch { /* ignore */ }
+      }
       if (data.referral_code === uniqueAccessCode && waitingForApproval) {
         if (data.status === 'approved') {
           setApprovalData({ ...data, status: 'approved' });
           setWaitingForApproval(false);
+        } else if (data.status === 'rejected') {
+          setWaitingForApproval(false);
+          showAlert('Application rejected', data.rejection_reason || 'Your application was not approved.');
         }
       }
-      // If admin panel status check modal is open and result matches
       setStatusCheckResult(prev => {
         if (prev && typeof prev === 'object' && prev.referral_code === data.referral_code) {
-          return { ...prev, status: data.status, password: data.password || prev.password };
+          return { ...prev, status: data.status, password: data.password || prev.password, rejection_reason: data.rejection_reason };
         }
         return prev;
       });
+      if (creatorStatus?.referral_code === data.referral_code) {
+        fetchStatus();
+      }
     };
     socket.on('creator-status-changed', handler);
+    socket.on('creator-withdrawal-updated', () => {
+      if (showDashboardModal) {
+        fetchMyWithdrawals().then((w) => setDashboardWithdrawals(w.withdrawals || []));
+        fetchStatus();
+      }
+    });
 
     return () => {
       socket.off('creator-status-changed', handler);
+      socket.off('creator-withdrawal-updated');
     };
-  }, [socket, uniqueAccessCode, waitingForApproval]);
+  }, [socket, uniqueAccessCode, waitingForApproval, creatorStatus?.referral_code, showDashboardModal, fetchMyWithdrawals]);
 
   useEffect(() => {
-    if (!showDashboardModal || !creatorStatus?.referral_code) return;
+    if (!creatorStatus?.referral_code || creatorStatus.status !== 'approved') return;
+    if (!showDashboardModal && !showCreatorModal) return;
     let cancelled = false;
     (async () => {
-      const [a, w] = await Promise.all([fetchMyActivity(), fetchMyWithdrawals()]);
+      const [a, w, analytics] = await Promise.all([
+        showDashboardModal ? fetchMyActivity() : Promise.resolve({ entries: [] }),
+        showDashboardModal ? fetchMyWithdrawals() : Promise.resolve({ withdrawals: [] }),
+        fetchMyAnalytics(),
+      ]);
       if (cancelled) return;
-      setDashboardActivity(a.entries || []);
-      setDashboardWithdrawals(w.withdrawals || []);
+      if (showDashboardModal) {
+        setDashboardActivity(a.entries || []);
+        setDashboardWithdrawals(w.withdrawals || []);
+      }
+      const series = analytics.series || [];
+      setDashboardAnalytics(series.map((d) => (d.referrals || 0) + (d.tips || 0) + (d.follows || 0) + Math.floor((d.coins || 0) / 10)));
     })();
     return () => { cancelled = true; };
-  }, [showDashboardModal, creatorStatus?.referral_code, creatorStatus?.coins_earned, fetchMyActivity, fetchMyWithdrawals]);
+  }, [showDashboardModal, showCreatorModal, creatorStatus?.referral_code, creatorStatus?.status, creatorStatus?.coins_earned, fetchMyActivity, fetchMyWithdrawals, fetchMyAnalytics]);
 
   const addInterest = (interestArg) => {
     if (!interestArg) return;
@@ -385,7 +432,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const scrollToStart = () => startRef.current?.scrollIntoView({ behavior: 'smooth' });
 
   return (
-    <div className="min-h-screen mm-landing text-white relative overflow-x-hidden">
+    <div className="mm-landing text-white relative">
 
       {/* Mesh background */}
       <div className="mm-landing-bg" aria-hidden="true">
@@ -437,68 +484,70 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* HEADER */}
       {!showDashboardModal && (
-        <header className="mm-landing-header fixed top-0 left-0 right-0 z-[150] pt-[env(safe-area-inset-top)]">
-          <div className="h-14 sm:h-16 px-4 sm:px-8 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 shrink-0 min-w-0">
-            <button type="button" onClick={scrollToStart} className="flex items-center gap-3 text-left rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/40">
-            <div className="mm-landing-logo-ring shrink-0">
-              <img src="/apple-touch-icon.png" alt="Mana Mingle" />
-            </div>
-            <div className="flex flex-col min-w-0">
-              <h1 className="text-sm sm:text-base font-bold text-white truncate" style={{ fontFamily: 'var(--font-display)' }}>Mana Mingle</h1>
-              <span className="hidden sm:block text-[11px] text-white/45 tracking-wide">Interest-based chat & video</span>
-            </div>
-            </button>
-          </div>
-          <div className="flex items-center gap-2 sm:gap-3 overflow-hidden shrink-0">
-            <button
-              type="button"
-              onClick={() => setShowCreatorModal(true)}
-              className="hidden sm:inline-flex px-3.5 py-2 rounded-xl border border-violet-500/25 bg-violet-500/10 text-xs font-semibold text-violet-200 hover:bg-violet-500/20 transition-colors"
-            >
-              For Creators
-            </button>
-            {connected && balance !== undefined && (
-              <CoinBadge balance={balance} streak={streak} canClaim={canClaim} nextClaim={nextClaim ?? 0} claimCoins={claimCoins} registered={registered} currentActiveSeconds={currentActiveSeconds} isCreator={!!creatorStatus || socketIsCreator} />
-            )}
-            <div className="mm-landing-stat-pill shrink-0">
-              {country && <span title={`Your region: ${country}`}>{countryToFlag(country)}</span>}
-              <span className="tabular-nums">{(onlineCount ?? 0).toLocaleString()} online</span>
-            </div>
-            {creatorStatus && (
-              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-fuchsia-500/15 to-indigo-500/10 border border-violet-500/25 rounded-full text-[9px] font-black text-violet-200/90 uppercase tracking-tight max-w-[140px] md:max-w-none">
-                  <span className="truncate">@{creatorStatus.handle_name}</span>
-                  {creatorStatus.status === 'approved' && <BlueTick />}
+        <header className="mm-landing-header">
+          <div className="mm-landing-header__bar">
+            <div className="mm-landing-header__brand">
+              <button type="button" onClick={scrollToStart} className="flex items-center gap-3 min-w-0 text-left rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/40 mm-compact-btn">
+                <div className="mm-landing-logo-ring shrink-0">
+                  <img src="/apple-touch-icon.png" alt="Mana Mingle" />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowDashboardModal(true)}
-                  className="hidden sm:inline-flex px-2 py-1.5 bg-white/10 border border-white/15 text-white/90 rounded-lg text-xs font-medium hover:bg-white/15 transition-all"
-                >Dashboard</button>
-                <button
-                  onClick={() => {
-                    window.localStorage.setItem('mm_logout_flag', 'true');
-                    window.localStorage.removeItem('mm_creatorId');
-                    window.location.reload();
-                  }}
-                  className="px-2 py-1.5 bg-rose-500/10 border border-rose-500/20 text-rose-500 hover:bg-rose-500 hover:text-white rounded-lg text-[8px] font-black uppercase tracking-widest transition-all"
-                  title="Logout Session"
-                >Out</button>
+                <div className="flex flex-col min-w-0">
+                  <h1 className="text-sm sm:text-base font-bold text-white truncate" style={{ fontFamily: 'var(--font-display)' }}>Mana Mingle</h1>
+                  <span className="hidden sm:block text-[11px] text-white/45 tracking-wide">Interest-based chat & video</span>
+                </div>
+              </button>
+            </div>
+            <div className="mm-landing-header__actions">
+              <button
+                type="button"
+                onClick={() => setShowCreatorModal(true)}
+                className="mm-hide-mobile mm-compact-btn px-3.5 py-2 rounded-xl border border-violet-500/25 bg-violet-500/10 text-xs font-semibold text-violet-200 hover:bg-violet-500/20 transition-colors"
+              >
+                For Creators
+              </button>
+              {connected && balance !== undefined && (
+                <CoinBadge balance={balance} streak={streak} canClaim={canClaim} nextClaim={nextClaim ?? 0} claimCoins={claimCoins} registered={registered} currentActiveSeconds={currentActiveSeconds} isCreator={!!creatorStatus || socketIsCreator} />
+              )}
+              <div className="mm-landing-stat-pill shrink-0" title={`${(onlineCount ?? 0).toLocaleString()} people online`}>
+                {country && <span title={`Your region: ${country}`}>{countryToFlag(country)}</span>}
+                <span className="tabular-nums">{(onlineCount ?? 0).toLocaleString()}</span>
+                <span className="hidden sm:inline">online</span>
               </div>
-            )}
-          </div>
+              {creatorStatus && (
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                  <div className="mm-hide-mobile flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-fuchsia-500/15 to-indigo-500/10 border border-violet-500/25 rounded-full text-[9px] font-black text-violet-200/90 uppercase tracking-tight max-w-[140px] md:max-w-none">
+                    <span className="truncate">@{creatorStatus.handle_name}</span>
+                    {creatorStatus.status === 'approved' && <BlueTick />}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowDashboardModal(true)}
+                    className="mm-hide-mobile mm-compact-btn px-2 py-1.5 bg-white/10 border border-white/15 text-white/90 rounded-lg text-xs font-medium hover:bg-white/15 transition-all"
+                  >Dashboard</button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.localStorage.setItem('mm_logout_flag', 'true');
+                      window.localStorage.removeItem('mm_creatorId');
+                      window.location.reload();
+                    }}
+                    className="mm-compact-btn px-2 py-1.5 bg-rose-500/10 border border-rose-500/20 text-rose-500 hover:bg-rose-500 hover:text-white rounded-lg text-[8px] font-black uppercase tracking-widest transition-all"
+                    title="Logout Session"
+                  >Out</button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
       )}
 
       {/* HERO SECTION */}
       {!showDashboardModal && (
-        <main className="relative z-10 pt-[calc(8rem+env(safe-area-inset-top))] sm:pt-36 pb-16 sm:pb-20 px-4 sm:px-6 max-w-7xl mx-auto flex flex-col items-center mm-landing-neural-mesh">
+        <main className="mm-landing-main mm-landing-neural-mesh">
 
           <AdSlot slotKey="hero" script={adScripts?.hero} adsEnabled={adsEnabled} className="w-full max-w-4xl" />
 
-          <div className="text-center mb-12 w-full max-w-3xl mm-landing-fade-in">
+          <section className="mm-landing-section mm-landing-section--medium text-center mm-landing-fade-in">
             <div className="mm-landing-eyebrow">
               {!lowPower && <span className="mm-landing-eyebrow-dot" aria-hidden="true" />}
               Live anonymous connections
@@ -539,17 +588,17 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
               </select>
             </div>
             <div className="mt-4 flex flex-wrap justify-center gap-2 mm-landing-fade-in mm-landing-fade-in-delay-2">
-              <button type="button" onClick={() => setShowCreatorModal(true)} className="sm:hidden mm-landing-chip min-h-[44px] px-4">
+              <button type="button" onClick={() => setShowCreatorModal(true)} className="mm-hide-desktop mm-landing-chip px-4">
                 For Creators
               </button>
-              <button type="button" onClick={() => setLowPower(!lowPower)} className="mm-landing-chip min-h-[44px] px-4">
+              <button type="button" onClick={() => setLowPower(!lowPower)} className="mm-landing-chip px-4">
                 {lowPower ? '⚡ Low power: On' : 'Low power: Off'}
               </button>
             </div>
-          </div>
+          </section>
 
           {/* INTEREST DOCK - REFINED COMPACT */}
-          <section ref={startRef} className="w-full max-w-2xl mx-auto mb-14 px-4 scroll-mt-28 mm-landing-fade-in mm-landing-fade-in-delay-2">
+          <section ref={startRef} className="mm-landing-section mm-landing-section--narrow mm-landing-anchor mm-landing-fade-in mm-landing-fade-in-delay-2">
             <div className="mm-landing-glass p-6 sm:p-8">
               <div className="flex flex-col items-center relative z-[1]">
                 <span className="mm-landing-section-label">Step 1</span>
@@ -586,7 +635,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                     {interests.map(i => (
                       <div key={i.id} className="mm-landing-tag">
                         {i.label}
-                        <button type="button" onClick={() => removeInterest(i.id)} className="opacity-50 hover:opacity-100 transition-opacity ml-0.5" aria-label={`Remove ${i.label}`}>✕</button>
+                        <button type="button" onClick={() => removeInterest(i.id)} className="mm-landing-tag-btn opacity-50 hover:opacity-100 transition-opacity ml-0.5" aria-label={`Remove ${i.label}`}>✕</button>
                       </div>
                     ))}
                   </div>
@@ -633,7 +682,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
           )}
 
           {PHASE_4_UNIQUE.structuredModes && (
-            <section className="w-full max-w-2xl mx-auto mb-14 px-4 mm-landing-fade-in mm-landing-fade-in-delay-2">
+            <section className="mm-landing-section mm-landing-section--narrow mm-landing-fade-in mm-landing-fade-in-delay-2">
               <div className="mm-neural-panel p-6 sm:p-8">
                 <span className="mm-neural-badge mb-4 inline-block">NVIDIA AI · Session setup</span>
                 <ConversationModePicker
@@ -648,7 +697,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
           <AdSlot slotKey="sidebar" script={adScripts?.sidebar} adsEnabled={adsEnabled} className="w-full max-w-2xl" />
 
-          <section className="w-full max-w-4xl mb-14 mm-landing-fade-in mm-landing-fade-in-delay-3" aria-label="Chat modes">
+          <section className="mm-landing-section mm-landing-section--wide mm-landing-fade-in mm-landing-fade-in-delay-3" aria-label="Chat modes">
             <div className="text-center mb-6">
               <span className="mm-landing-section-label">Step 2</span>
               <h3 className="mm-landing-section-title">Pick how you want to connect</h3>
@@ -676,7 +725,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             </div>
           </section>
 
-          <section className="w-full max-w-3xl mx-auto mb-14 px-4">
+          <section className="mm-landing-section mm-landing-section--medium">
             <div className="text-center mb-5">
               <span className="mm-landing-section-label">Browse</span>
               <h3 className="mm-landing-section-title">Active rooms</h3>
@@ -698,7 +747,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
           <PresenceMap onlineCount={onlineCount} />
 
-          <section className="w-full max-w-3xl mx-auto mb-14 px-4">
+          <section className="mm-landing-section mm-landing-section--medium">
             <div className="mm-landing-insight">
               <div className="mm-landing-insight-icon" aria-hidden="true">💡</div>
               <div className="text-sm text-white/75 leading-relaxed flex-1 transition-opacity duration-500">
@@ -712,7 +761,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
       )}
 
       {/* FOOTER */}
-      <footer className="relative z-10 mm-landing-footer py-14 px-6">
+      <footer className="mm-landing-footer">
         <div className="max-w-5xl mx-auto flex flex-col md:flex-row justify-between items-start gap-10">
           <div className="max-w-sm space-y-4">
             <div className="mm-landing-logo-ring w-11 h-11">
@@ -795,6 +844,28 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             <div className="text-center mb-6">
               <p className="text-xs text-white/40">{approvalData ? 'Approved account' : waitingForApproval ? 'Application in review' : creatorStatus ? 'Your creator account' : 'New application'}</p>
             </div>
+
+            {featuredCreators.length > 0 && !creatorStatus && (
+              <div className="mb-8">
+                <div className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-3">Featured creators</div>
+                <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">
+                  {featuredCreators.map((c) => (
+                    <a
+                      key={c.handle_name}
+                      href={`/creator/${c.handle_name}`}
+                      className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-2xl bg-white/[0.04] border border-white/10 hover:border-violet-500/30 transition-colors"
+                    >
+                      {c.avatar_url ? (
+                        <img src={c.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover" />
+                      ) : (
+                        <span className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-xs">⭐</span>
+                      )}
+                      <span className="text-[10px] font-black text-white">@{c.handle_name}</span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {approvalData ? (
               <div className="space-y-8 animate-in-zoom">
@@ -913,6 +984,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                     value={creatorForm.handle}
                     onChange={e => {
                       const h = e.target.value.replace(/^@/, '');
+                      setCreatorFormError('');
                       const platformUrls = {
                         'Instagram': `https://instagram.com/${h}`,
                         'YouTube': `https://youtube.com/@${h}`,
@@ -925,6 +997,17 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       setLinkValidated(false);
                     }}
                   />
+                  {creatorForm.handle && !validateCreatorHandle(creatorForm.handle).ok && (
+                    <p className="text-[9px] text-amber-400/80 px-2">{validateCreatorHandle(creatorForm.handle).error}</p>
+                  )}
+                  <input
+                    type="email"
+                    placeholder="Email (for approval & payout updates)"
+                    className="w-full h-14 bg-white/5 border border-white/5 focus:border-violet-500/30 rounded-2xl px-6 text-sm outline-none text-white font-bold"
+                    value={creatorForm.email}
+                    onChange={(e) => setCreatorForm((f) => ({ ...f, email: e.target.value }))}
+                  />
+                  <p className="text-[9px] text-white/25 px-2">Recommended — used for approval, password reset, and payout emails.</p>
                   <div className="relative group">
                     <button
                       onClick={() => setPlatformDropdownOpen(!platformDropdownOpen)}
@@ -1038,19 +1121,24 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   </div>
                   <button
                     onClick={async () => {
-                      if (!creatorForm.handle) return showAlert('Missing Handle', 'Please enter your handle name.');
+                      setCreatorFormError('');
+                      const handleCheck = validateCreatorHandle(creatorForm.handle);
+                      if (!handleCheck.ok) return showAlert('Invalid handle', handleCheck.error);
                       if (!creatorForm.link) return showAlert('Missing Profile Link', 'Please enter your profile link.');
                       if (!linkValidated) {
                         const go = await showConfirm('Profile Not Verified', "You haven't verified your profile link yet. Are you sure you want to submit?");
                         if (!go) return;
                       }
-                      const res = await registerCreator(creatorForm.handle, creatorForm.platform, creatorForm.link);
+                      const res = await registerCreator(creatorForm.handle, creatorForm.platform, creatorForm.link, creatorForm.email);
                       if (res.success) {
                         setUniqueAccessCode(res.accessCode);
                         setWaitingForApproval(true);
                         setApprovalTimer(15);
                       }
-                      else showAlert('Registration Failed', res.error || 'Something went wrong. Please try again.');
+                      else {
+                        setCreatorFormError(res.error || 'Registration failed');
+                        showAlert('Registration Failed', res.error || 'Something went wrong. Please try again.');
+                      }
                     }}
                     className="w-full h-14 bg-violet-400 text-black font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-white transition-all shadow-xl shadow-violet-500/25"
                   >Register as Creator</button>
@@ -1097,13 +1185,15 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   <div className="space-y-6">
                     {/* GROWTH VELOCITY ANALYTICS */}
                     <div className="mb-8 animate-in-zoom" style={{ animationDelay: '100ms' }}>
-                      <MiniTrendChart data={[35, 42, 38, 55, 48, 65, 82]} color="#a78bfa" />
+                      <MiniTrendChart data={dashboardAnalytics.length ? dashboardAnalytics : [0, 0, 0, 0, 0, 0, 0]} color="#a78bfa" />
                       <div className="flex justify-between mt-3 px-2 text-[8px] font-black uppercase text-white/10 tracking-[0.3em] italic">
                         <span className="flex items-center gap-2">
                           <span className="w-1 h-1 rounded-full bg-violet-400" />
-                          Performance Trend: Last 7 Days
+                          Activity: referrals + tips + follows (7 days)
                         </span>
-                        <span className="text-emerald-400/40">+64.8% Influence Delta</span>
+                        <span className="text-emerald-400/40 tabular-nums">
+                          {dashboardAnalytics.reduce((a, b) => a + b, 0)} events
+                        </span>
                       </div>
                     </div>
 
@@ -1258,6 +1348,123 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 className="w-full h-14 bg-indigo-600 text-white font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-white hover:text-black transition-all shadow-xl shadow-indigo-600/20 active:scale-95"
               >Login as Creator</button>
               {loginError && <p className="text-rose-500 text-[10px] text-center font-black uppercase tracking-widest mt-4 animate-shake">{loginError}</p>}
+              <button
+                type="button"
+                onClick={() => { setShowLoginModal(false); setShowForgotPasswordModal(true); setForgotMessage(''); }}
+                className="w-full mt-4 text-[9px] font-black uppercase tracking-widest text-white/35 hover:text-violet-400 transition-colors"
+              >
+                Forgot password?
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FORGOT PASSWORD MODAL */}
+      {showForgotPasswordModal && (
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-6 bg-black/95 backdrop-blur-3xl animate-in-zoom" onClick={() => setShowForgotPasswordModal(false)}>
+          <div className="relative w-full max-w-sm bg-black border border-white/10 rounded-[50px] p-10 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setShowForgotPasswordModal(false)} className="absolute top-6 right-8 text-white/20 hover:text-white transition-colors">✕</button>
+            <div className="text-center mb-8">
+              <h3 className="text-xl font-black italic uppercase tracking-tighter text-white">Reset Password</h3>
+              <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mt-2">Handle + access code from your application</p>
+            </div>
+            <div className="space-y-4">
+              <input
+                type="text"
+                placeholder="Creator handle"
+                value={forgotForm.handle}
+                onChange={(e) => setForgotForm({ ...forgotForm, handle: e.target.value })}
+                className="w-full h-14 bg-white/5 border border-white/5 rounded-2xl px-6 text-sm outline-none text-white font-bold"
+              />
+              <input
+                type="text"
+                placeholder="Access code (referral code)"
+                value={forgotForm.referralCode}
+                onChange={(e) => setForgotForm({ ...forgotForm, referralCode: e.target.value })}
+                className="w-full h-14 bg-white/5 border border-white/5 rounded-2xl px-6 text-sm outline-none text-white font-mono"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  setForgotMessage('');
+                  const res = await requestPasswordReset(forgotForm.handle, forgotForm.referralCode);
+                  if (res.success) {
+                    setForgotMessage(res.message || 'Check your email for a reset link.');
+                  } else {
+                    setForgotMessage(res.error || 'Request failed');
+                  }
+                }}
+                className="w-full h-14 bg-violet-600 text-white font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-white hover:text-black transition-all"
+              >
+                Send reset link
+              </button>
+              {forgotMessage && <p className="text-[10px] text-center text-violet-300/80 font-bold">{forgotMessage}</p>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RESET PASSWORD MODAL (from email link) */}
+      {showResetPasswordModal && resetToken && (
+        <div className="fixed inset-0 z-[2100] flex items-center justify-center p-6 bg-black/95 backdrop-blur-3xl animate-in-zoom">
+          <div className="relative w-full max-w-sm bg-black border border-white/10 rounded-[50px] p-10 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => {
+                setShowResetPasswordModal(false);
+                const url = new URL(window.location.href);
+                url.searchParams.delete('creator_reset');
+                window.history.replaceState({}, '', url.pathname + url.search);
+              }}
+              className="absolute top-6 right-8 text-white/20 hover:text-white transition-colors"
+            >✕</button>
+            <div className="text-center mb-8">
+              <h3 className="text-xl font-black italic uppercase tracking-tighter text-white">Set New Password</h3>
+              <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mt-2">Min. 8 characters</p>
+            </div>
+            <div className="space-y-4">
+              <input
+                type="password"
+                placeholder="New password"
+                value={resetForm.password}
+                onChange={(e) => setResetForm({ ...resetForm, password: e.target.value })}
+                className="w-full h-14 bg-white/5 border border-white/5 rounded-2xl px-6 text-sm outline-none text-white"
+              />
+              <input
+                type="password"
+                placeholder="Confirm password"
+                value={resetForm.confirm}
+                onChange={(e) => setResetForm({ ...resetForm, confirm: e.target.value })}
+                className="w-full h-14 bg-white/5 border border-white/5 rounded-2xl px-6 text-sm outline-none text-white"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  setResetMessage('');
+                  if (resetForm.password !== resetForm.confirm) {
+                    setResetMessage('Passwords do not match.');
+                    return;
+                  }
+                  const res = await resetPassword(resetToken, resetForm.password);
+                  if (res.success) {
+                    setResetMessage('Password updated. You can log in now.');
+                    setTimeout(() => {
+                      setShowResetPasswordModal(false);
+                      setShowLoginModal(true);
+                      const url = new URL(window.location.href);
+                      url.searchParams.delete('creator_reset');
+                      window.history.replaceState({}, '', url.pathname + url.search);
+                    }, 1500);
+                  } else {
+                    setResetMessage(res.error || 'Reset failed');
+                  }
+                }}
+                className="w-full h-14 bg-emerald-600 text-white font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-white hover:text-black transition-all"
+              >
+                Update password
+              </button>
+              {resetMessage && <p className="text-[10px] text-center text-emerald-400/90 font-bold">{resetMessage}</p>}
             </div>
           </div>
         </div>
@@ -1491,6 +1698,10 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
                   {/* STATS GRID */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="md:col-span-2 p-8 rounded-[40px] bg-white/[0.02] border border-white/5">
+                      <MiniTrendChart data={dashboardAnalytics.length ? dashboardAnalytics : [0, 0, 0, 0, 0, 0, 0]} color="#34d399" />
+                      <p className="text-[9px] font-bold text-white/25 uppercase tracking-widest mt-3">7-day activity (referrals, tips, follows)</p>
+                    </div>
                     <div className="p-10 rounded-[50px] bg-white/[0.02] border border-white/5 group hover:border-violet-500/30 transition-all">
                       <div className="flex justify-between items-start mb-4">
                         <span className="text-[10px] font-black text-violet-400 uppercase tracking-widest">Total Audience</span>
@@ -1535,11 +1746,14 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       ) : (
                         <ul className="space-y-2">
                           {dashboardWithdrawals.map((w) => (
-                            <li key={w.id} className="text-[10px] text-white/55 flex justify-between gap-2 border-b border-white/[0.04] pb-2">
-                              <span className="text-white/40">{w.created_at ? new Date(w.created_at).toLocaleString() : '—'}</span>
-                              <span className={`font-black uppercase shrink-0 ${w.status === 'pending' ? 'text-amber-400' : w.status === 'paid' ? 'text-emerald-400' : 'text-white/50'}`}>
-                                {w.status || 'pending'}
-                              </span>
+                            <li key={w.id} className="text-[10px] text-white/55 flex flex-col gap-1 border-b border-white/[0.04] pb-2">
+                              <div className="flex justify-between gap-2">
+                                <span className="text-white/40">{w.created_at ? new Date(w.created_at).toLocaleString() : '—'}</span>
+                                <span className={`font-black uppercase shrink-0 ${w.status === 'pending' ? 'text-amber-400' : w.status === 'paid' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  {w.status || 'pending'}
+                                </span>
+                              </div>
+                              {w.admin_note && <span className="text-[9px] text-white/35 italic">{w.admin_note}</span>}
                             </li>
                           ))}
                         </ul>
@@ -1551,7 +1765,13 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   <div className="p-8 rounded-[40px] bg-black/40 border border-white/5 grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div>
                       <div className="text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">Access PIN</div>
-                      <div className="text-lg font-black text-violet-400 select-all hover:scale-105 transition-all w-fit cursor-help" title="Private Passphrase">{creatorStatus.password}</div>
+                      {(() => {
+                        const once = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('mm_creator_password_once') : null;
+                        if (once) {
+                          return <div className="text-lg font-black text-violet-400 select-all" title="Save this password securely">{once}</div>;
+                        }
+                        return <p className="text-[10px] text-white/35 leading-relaxed">Hidden for security. Use the password shown when you were approved, or contact admin for a reset.</p>;
+                      })()}
                     </div>
                     <div>
                       <div className="text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">Matrix Code</div>

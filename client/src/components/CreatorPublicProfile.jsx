@@ -44,8 +44,8 @@ export function CreatorPublicProfile({ handle }) {
         <h1 className="text-xl font-semibold text-white">@{profile.handle_name}</h1>
         <p className="text-sm text-white/50 mt-1">{profile.platform || 'Creator'}</p>
         {profile.bio && <p className="text-sm text-white/70 mt-4">{profile.bio}</p>}
-        {profile.public_profile !== false && profile.link && (
-          <a href={profile.link} target="_blank" rel="noreferrer" className="inline-block mt-4 text-sm text-violet-300 underline">
+        {profile.public_profile !== false && (profile.profile_link || profile.link) && (
+          <a href={profile.profile_link || profile.link} target="_blank" rel="noreferrer" className="inline-block mt-4 text-sm text-violet-300 underline">
             View social profile
           </a>
         )}

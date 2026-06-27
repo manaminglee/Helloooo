@@ -5,6 +5,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { countryToFlag } from '../utils/countryFlag';
+import { CountryFlag } from './CountryFlag';
+import { VideoLogoPlaceholder, VideoWatermark } from './VideoPanelChrome';
 import { CreatorProfilePopup } from './CreatorProfilePopup';
 import { AdSlot } from './AdSlot';
 
@@ -33,7 +35,7 @@ import {
   ConsentSessionGate,
   DataSaverHud,
   LiveCaptionsBar,
-  NvidiaCopilotToast,
+  LiveCaptionsPanel,
   TrustScoreChip,
 } from './unique/UniqueSessionUI';
 import { MiniChatGamePanel } from './MiniChatGamePanel';
@@ -134,6 +136,7 @@ const EMOJIS_3D = [
 ];
 
 const API_BASE = import.meta.env.VITE_SOCKET_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+const MESSAGE_TTL_SEC = 90;
 
 const VIDEO_FILTERS = [
   { id: 'none', label: 'Normal' },
@@ -149,7 +152,27 @@ function chatMessageCountry(m, isMe, myCountry, peerCountry) {
   return isMe ? myCountry : peerCountry;
 }
 
+function useMessageTtl(m) {
+  const [timeLeft, setTimeLeft] = useState(MESSAGE_TTL_SEC);
+
+  useEffect(() => {
+    if (m.system) return;
+    const age = Math.floor((Date.now() - (m.ts || Date.now())) / 1000);
+    const rem = Math.max(0, MESSAGE_TTL_SEC - age);
+    setTimeLeft(rem);
+    if (rem <= 0) return;
+    const int = setInterval(() => {
+      setTimeLeft((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(int);
+  }, [m.ts, m.system]);
+
+  return timeLeft;
+}
+
 function MobChatBubble({ m, isMe, myCountry, peerCountry }) {
+  const timeLeft = useMessageTtl(m);
+
   if (m.system) {
     return (
       <div className="flex justify-center my-2">
@@ -160,10 +183,12 @@ function MobChatBubble({ m, isMe, myCountry, peerCountry }) {
   if (m.type === 'voice' || m.media) {
     return <VanishingMessage m={m} isMe={isMe} country={chatMessageCountry(m, isMe, myCountry, peerCountry)} />;
   }
+  if (timeLeft <= 0) return null;
   const time = m.ts
     ? new Date(m.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
     : '';
   const flag = countryToFlag(chatMessageCountry(m, isMe, myCountry, peerCountry));
+  const ttlLabel = `${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, '0')}`;
   return (
     <div className={`mm-mobile-bubble-row ${isMe ? 'mm-mobile-bubble-row--me' : ''}`}>
       {!isMe && flag && <span className="mm-chat-flag" title="Stranger's region">{flag}</span>}
@@ -172,6 +197,7 @@ function MobChatBubble({ m, isMe, myCountry, peerCountry }) {
         <span className="mm-mobile-bubble__meta">
           {isMe && flag && <span className="mm-chat-flag mm-chat-flag--inline" title="Your region">{flag}</span>}
           {time}
+          <span className={`mm-desk-bubble__ttl ${timeLeft <= 10 ? 'mm-desk-bubble__ttl--warn' : ''}`}>{ttlLabel}</span>
           {isMe && <span className="mm-mobile-bubble__read" aria-hidden> ✓✓</span>}
         </span>
       </div>
@@ -191,6 +217,8 @@ function MobSignalBars({ quality }) {
 }
 
 function DeskChatBubble({ m, isMe, myCountry, peerCountry }) {
+  const timeLeft = useMessageTtl(m);
+
   if (m.system) {
     return (
       <div className="flex justify-center my-2">
@@ -201,10 +229,12 @@ function DeskChatBubble({ m, isMe, myCountry, peerCountry }) {
   if (m.type === 'voice' || m.media) {
     return <VanishingMessage m={m} isMe={isMe} country={chatMessageCountry(m, isMe, myCountry, peerCountry)} />;
   }
+  if (timeLeft <= 0) return null;
   const time = m.ts
     ? new Date(m.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
     : '';
   const flag = countryToFlag(chatMessageCountry(m, isMe, myCountry, peerCountry));
+  const ttlLabel = `${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, '0')}`;
   return (
     <div className={`mm-desk-bubble-row ${isMe ? 'mm-desk-bubble-row--me' : ''}`}>
       {!isMe && flag && <span className="mm-chat-flag" title="Stranger's region">{flag}</span>}
@@ -213,6 +243,7 @@ function DeskChatBubble({ m, isMe, myCountry, peerCountry }) {
         <span className="mm-desk-bubble__meta">
           {isMe && flag && <span className="mm-chat-flag mm-chat-flag--inline" title="Your region">{flag}</span>}
           {time}
+          <span className={`mm-desk-bubble__ttl ${timeLeft <= 10 ? 'mm-desk-bubble__ttl--warn' : ''}`}>{ttlLabel}</span>
           {isMe && <span className="mm-desk-bubble__read" aria-hidden> ✓✓</span>}
         </span>
       </div>
@@ -221,21 +252,7 @@ function DeskChatBubble({ m, isMe, myCountry, peerCountry }) {
 }
 
 function VanishingMessage({ m, isMe, country: countryCode }) {
-  const [timeLeft, setTimeLeft] = useState(90);
-
-  useEffect(() => {
-    if (m.system) return;
-    const age = Math.floor((Date.now() - (m.ts || Date.now())) / 1000);
-    const rem = Math.max(0, 90 - age);
-    setTimeLeft(rem);
-
-    if (rem <= 0) return;
-
-    const int = setInterval(() => {
-      setTimeLeft(prev => Math.max(0, prev - 1));
-    }, 1000);
-    return () => clearInterval(int);
-  }, [m.ts, m.system]);
+  const timeLeft = useMessageTtl(m);
 
   if (!m.system && timeLeft <= 0) return null;
 
@@ -352,6 +369,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [strangerCameraOff, setStrangerCameraOff] = useState(false);
   const [mutedStranger, setMutedStranger] = useState(false);
   const [facingMode, setFacingMode] = useState('user');
+  const [localMirrored, setLocalMirrored] = useState(true);
   const [lowBandwidth, setLowBandwidth] = useState(false);
   const [localStream, setLocalStream] = useState(null);
   const latency = useLatency();
@@ -398,7 +416,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [activeFilter, setActiveFilter] = useState('none');
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showCoinHistory, setShowCoinHistory] = useState(false);
-  const [smartReplies, setSmartReplies] = useState([]);
   const [filterTimer, setFilterTimer] = useState(0);
   const [showDeductionAnim, setShowDeductionAnim] = useState(false);
   const [deductionValue, setDeductionValue] = useState(0);
@@ -472,7 +489,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   useChatSwipeCollapse(chatPanelRef, () => isMobile && setChatCollapsed(true));
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const el = document.getElementById('video-chat-messages');
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
   useEffect(() => {
@@ -571,7 +590,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   const sendTip = (amount) => {
     if (!socket || !roomIdRef.current || !peer?.socketId || balance < amount) return;
-    socket.emit('spend-coins', { amount, reason: 'creator-tip' });
     socket.emit('tip-creator', { roomId: roomIdRef.current, targetSocketId: peer.socketId, amount });
     setToast(`Sent ${amount} coins to ${peer.nickname || 'creator'}!`);
   };
@@ -799,7 +817,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       }
     })();
     return () => {
-      if (s) s.getTracks().forEach((t) => { t.stop(); t.enabled = false; });
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => { t.stop(); t.enabled = false; });
+        localStreamRef.current = null;
+      } else if (s) {
+        s.getTracks().forEach((t) => { t.stop(); t.enabled = false; });
+      }
     };
   }, [selectedAudioDeviceId, facingMode]);
 
@@ -878,8 +901,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     el.play?.().catch(() => { });
   }, [peer?.stream, remoteVolume]);
 
-  const bandwidthLabel = autoBandwidth ? 'Auto' : (lowBandwidth ? 'Low' : 'High');
-
   const clearRoom = useCallback(() => {
     if (healthTimerRef.current) clearTimeout(healthTimerRef.current);
     peerConnectionsRef.current.forEach((pc) => pc.close());
@@ -898,6 +919,31 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     setMessages([]);
     roomIdRef.current = null;
     setP2pHealth('good');
+  }, []);
+
+  const releaseAllMedia = useCallback(() => {
+    const stopStream = (stream) => {
+      if (!stream) return;
+      stream.getTracks().forEach((t) => {
+        try {
+          t.stop();
+          t.enabled = false;
+        } catch { /* ignore */ }
+      });
+    };
+    stopStream(localStreamRef.current);
+    localStreamRef.current = null;
+    setLocalStream(null);
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    peerConnectionsRef.current.forEach((pc) => {
+      try { pc.close(); } catch { /* ignore */ }
+    });
+    peerConnectionsRef.current.clear();
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      try { recorderRef.current.stop(); } catch { /* ignore */ }
+    }
+    setIsScreenSharing(false);
   }, []);
 
   const handleStart = () => {
@@ -953,18 +999,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (statusRef.current === 'connected' && connectedSecsRef.current >= 3 && selectedInterests.length > 0) {
       setToast(`Anonymous session ended (~${connectedSecsRef.current}s). Topics: ${selectedInterests.join(', ')} — not stored on our servers.`);
     }
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(t => t.stop());
-      localStreamRef.current = null;
-      setLocalStream(null);
-    }
+    releaseAllMedia();
     if (roomIdRef.current && socket) socket.emit('leave-room', { roomId: roomIdRef.current });
     socket?.emit('cancel-find-partner');
     clearRoom();
     setStatus('idle');
     setGoodVibesSent(false); setGoodVibesMatch(false); setCameraBlur(false);
     setStrangerFilter('none'); setStrangerBlur(false);
-  }, [socket, clearRoom, selectedInterests, maybeShowRating, saveSessionVibe]);
+  }, [socket, clearRoom, selectedInterests, maybeShowRating, saveSessionVibe, releaseAllMedia]);
 
   const handleBack = () => { handleStop(); onBack?.(); };
 
@@ -1030,6 +1072,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       setLocalStream(stream);
     }
   };
+
+  const toggleFlip = () => {
+    if (isMobile) toggleFacingMode();
+    else setLocalMirrored((v) => !v);
+  };
+
+  const mirrorLocalVideo = isMobile ? facingMode === 'user' : localMirrored;
 
   const retryIce = useCallback(async () => {
     const remoteId = peer?.socketId;
@@ -1252,30 +1301,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     setShowFilterMenu(false);
     setToast(`✨ Premium Filter Active: 60s duration started.`);
   };
-
-  useEffect(() => {
-    const fetchReplies = async () => {
-      const last = messages.filter(m => !m.system && m.socketId !== socket?.id).slice(-1)[0];
-      if (!last?.text) {
-        setSmartReplies([]);
-        return;
-      }
-      try {
-        const res = await fetch(`${API_BASE}/api/ai/reply`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lastMessage: last.text })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setSmartReplies(data.replies || []);
-        }
-      } catch (e) { setSmartReplies([]); }
-    };
-
-    const timeout = setTimeout(fetchReplies, 800);
-    return () => clearTimeout(timeout);
-  }, [messages, socket?.id]);
 
   useEffect(() => {
     if (status === 'connected') {
@@ -1868,7 +1893,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     }
   }, [socket]);
 
-  useEffect(() => () => { clearRoom(); }, [clearRoom]);
+  useEffect(() => () => {
+    releaseAllMedia();
+    clearRoom();
+  }, [releaseAllMedia, clearRoom]);
 
   const sendMsg = () => {
     const t = input.trim();
@@ -1903,7 +1931,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const scrollToChat = () => {
     setShowChat(true);
     setChatCollapsed(false);
-    chatPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const el = document.getElementById('video-chat-messages');
+    if (el) el.scrollTop = el.scrollHeight;
   };
 
   const chatMyCountry = myCountry || country;
@@ -1987,18 +2016,25 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       <main className={desktopLayout ? 'mm-desk-main' : `mm-mobile-main ${status !== 'connected' ? 'mm-mobile-main--solo' : ''}`}>
         {desktopLayout ? (
           <div className="mm-desk-card">
-            <div className="mm-desk-video-row">
+            <div className="mm-desk-body">
+              <div className="mm-desk-media">
+                <div className="mm-desk-video-row">
               <div className="mm-desk-pane">
                 <div className="mm-desk-pane__tag mm-desk-pane__tag--you">
                   <span className="mm-desk-dot mm-desk-dot--green" aria-hidden /> You
+                  {(myCountry || country) && (
+                    <CountryFlag country={myCountry || country} className="mm-country-flag" size={14} />
+                  )}
+                  {isCreator && <BlueTick />}
                 </div>
+                <VideoWatermark />
                 {cameraError && !localStream && <AudioOnlyFallback nickname={nickname} onRetryCamera={retryMediaLocal} />}
                 <video
                   ref={bindLocalVideo}
                   autoPlay
                   muted
                   playsInline
-                  className={`${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
+                  className={`${mirrorLocalVideo ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
                   style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }}
                 />
                 {status === 'idle' && (
@@ -2010,8 +2046,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               </div>
               <div className="mm-desk-pane" ref={remoteStageRef}>
                 <div className="mm-desk-pane__tag mm-desk-pane__tag--stranger">
-                  <span className="mm-desk-dot mm-desk-dot--blue" aria-hidden /> Stranger
+                  <span className="mm-desk-dot mm-desk-dot--blue" aria-hidden />
+                  {peer?.isCreator ? `@${peer?.nickname || 'Creator'}` : 'Stranger'}
+                  {peer?.country && (
+                    <CountryFlag country={peer.country} className="mm-country-flag" size={14} />
+                  )}
+                  {peer?.isCreator && <BlueTick />}
                 </div>
+                <VideoWatermark />
                 {status === 'searching' && (
                   <div className="mm-desk-pane__placeholder">
                     <div className="mm-omegle-search__spinner mb-3" aria-hidden />
@@ -2053,6 +2095,15 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   </div>
                 )}
               </div>
+                </div>
+              </div>
+              {PHASE_4_UNIQUE.liveCaptions && unique.captionsOn && (
+                <LiveCaptionsPanel
+                  caption={unique.caption}
+                  enabled={unique.captionsOn}
+                  onToggle={() => unique.setCaptionsOn(false)}
+                />
+              )}
             </div>
             {status === 'connected' && (
               <div ref={chatPanelRef} className="mm-desk-chat" id="video-chat-messages-wrap">
@@ -2133,7 +2184,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   autoPlay
                   muted
                   playsInline
-                  className={`absolute inset-0 w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
+                  className={`absolute inset-0 w-full h-full object-cover ${mirrorLocalVideo ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
                   style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }}
                 />
               </>
@@ -2181,7 +2232,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                     autoPlay
                     muted
                     playsInline
-                    className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
+                    className={`w-full h-full object-cover ${mirrorLocalVideo ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
                     style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }}
                   />
                   <div className="mm-mobile-pip__footer">
@@ -2258,6 +2309,20 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             Camera
             <span className="mm-desk-tool__chev" onClick={(e) => { e.stopPropagation(); setShowDevicePicker(true); }} role="presentation">▾</span>
           </button>
+          <button type="button" onClick={toggleFlip} className="mm-desk-tool" title={isMobile ? 'Switch camera' : 'Flip mirror'}>
+            <svg className="w-4 h-4 text-violet-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>
+            Flip
+          </button>
+          {PHASE_4_UNIQUE.liveCaptions && (
+            <button
+              type="button"
+              onClick={() => unique.setCaptionsOn((v) => !v)}
+              className={`mm-desk-tool ${unique.captionsOn ? 'mm-desk-tool--next' : ''}`}
+              title="Toggle live captions panel"
+            >
+              CC
+            </button>
+          )}
           <button type="button" onClick={scrollToChat} className="mm-desk-tool">
             <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
             Chat
@@ -2284,6 +2349,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
           </span>
           <span className="mm-mobile-bar__label">Camera</span>
+        </button>
+        <button type="button" onClick={toggleFlip} className="mm-mobile-bar__item" title="Flip camera">
+          <span className="mm-mobile-bar__icon mm-mobile-bar__icon--green">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>
+          </span>
+          <span className="mm-mobile-bar__label">Flip</span>
         </button>
         <button
           type="button"
@@ -2439,11 +2510,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         audioIntroDone={unique.audioIntroComplete}
         aiOnline={unique.aiOnline}
       />
-      <NvidiaCopilotToast
-        prompt={unique.copilotPrompt}
-        onUse={() => unique.applyCopilotToInput(setInput)}
-        onDismiss={unique.dismissCopilot}
-      />
       {PHASE_4_UNIQUE.dataSaverHud && status === 'connected' && (
         <div className="shrink-0 px-3 py-1 flex justify-between items-center border-b border-white/5 bg-black/20">
           <DataSaverHud bytesEstimate={unique.bytesEstimate} ultraLow={ultraLow} onToggleUltra={() => { setUltraLow((u) => !u); setLowBandwidth((b) => !b); setAutoBandwidth(false); }} />
@@ -2455,14 +2521,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         open={showMoreMenu}
         onClose={() => setShowMoreMenu(false)}
         isMobile={isMobile}
+        essentialOnly
         isTranslatorActive={isTranslatorActive}
         onToggleTranslate={() => setIsTranslatorActive((v) => !v)}
-        isScreenSharing={isScreenSharing}
-        onToggleScreenShare={startScreenShare}
-        onFlipCamera={toggleFacingMode}
         onOpenDevices={() => setShowDevicePicker(true)}
-        onIcebreaker={() => generateAiSpark()}
-        onTip={peer?.isCreator ? () => setShowTipModal(true) : undefined}
         onToggleBandwidth={cycleBandwidth}
         autoBandwidth={autoBandwidth}
         lowBandwidth={lowBandwidth}
@@ -2472,12 +2534,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           localStorage.setItem('mm_auto_stranger_blur', next ? '1' : '0');
         }}
         autoStrangerBlur={autoStrangerBlur}
-        onHidePip={() => setPipHidden((h) => !h)}
-        pipHidden={pipHidden}
-        onCyclePipSize={cyclePipSize}
-        pipSize={pipSize}
-        showGames
-        balance={balance}
       />
       <DevicePickerSheet
         open={showDevicePicker}
@@ -2496,23 +2552,50 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
 function RemoteVideoComponent({ stream, muted, strangerFilter, strangerBlur }) {
   const ref = useRef(null);
+  const [streamTick, setStreamTick] = useState(0);
+  const videoTracks = stream?.getVideoTracks?.() || [];
+  const streamLive = !!(stream?.active && videoTracks.some((t) => t.readyState === 'live' && t.enabled));
 
   useEffect(() => {
-    return attachStreamToVideo(ref.current, stream);
+    if (!stream) return undefined;
+    const bump = () => setStreamTick((t) => t + 1);
+    stream.getTracks().forEach((t) => t.addEventListener('ended', bump));
+    return () => stream.getTracks().forEach((t) => t.removeEventListener('ended', bump));
   }, [stream]);
 
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !stream || !streamLive) {
+      if (el) el.srcObject = null;
+      return undefined;
+    }
+    return attachStreamToVideo(el, stream);
+  }, [stream, streamLive, streamTick]);
+
+  if (!streamLive) {
+    return (
+      <>
+        <VideoLogoPlaceholder label="Partner disconnected" compact />
+        <VideoWatermark />
+      </>
+    );
+  }
+
   return (
-    <video
-      ref={ref}
-      autoPlay
-      playsInline
-      muted={muted}
-      className="absolute inset-0 w-full h-full object-cover -scale-x-100 transition-all duration-300"
-      style={{
-        backgroundColor: '#000',
-        filter: strangerBlur && strangerFilter === 'none' ? 'blur(20px)' : (strangerFilter !== 'none' ? strangerFilter : 'none'),
-        willChange: 'transform, opacity',
-      }}
-    />
+    <>
+      <video
+        ref={ref}
+        autoPlay
+        playsInline
+        muted={muted}
+        className="absolute inset-0 w-full h-full object-cover -scale-x-100 transition-all duration-300"
+        style={{
+          backgroundColor: '#000',
+          filter: strangerBlur && strangerFilter === 'none' ? 'blur(20px)' : (strangerFilter !== 'none' ? strangerFilter : 'none'),
+          willChange: 'transform, opacity',
+        }}
+      />
+      <VideoWatermark />
+    </>
   );
 }

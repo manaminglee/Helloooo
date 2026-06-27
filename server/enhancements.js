@@ -105,7 +105,7 @@ function registerEnhancements(app, io, deps) {
     try {
       let creator = null;
       if (supabase) {
-        const { data } = await supabase.from('creators').select('handle_name, platform, link, bio, avatar_url, status, public_profile').eq('handle_name', handle).single();
+        const { data } = await supabase.from('creators').select('handle_name, platform, profile_link, bio, avatar_url, status, public_profile, followers_count, referral_count').ilike('handle_name', handle).maybeSingle();
         creator = data;
       } else {
         creator = localDb.creators.find((c) => c.handle_name === handle);

@@ -102,12 +102,17 @@ DROP POLICY IF EXISTS "Allow full access" ON withdrawals;
 DROP POLICY IF EXISTS "Allow full access" ON user_coins;
 DROP POLICY IF EXISTS "Allow full access" ON creator_logins;
 DROP POLICY IF EXISTS "Allow full access" ON admin_history;
+DROP POLICY IF EXISTS "Allow full access" ON group_rooms;
 DROP POLICY IF EXISTS "Allow service role access" ON creators;
 DROP POLICY IF EXISTS "Allow service role access" ON referral_logs;
 DROP POLICY IF EXISTS "Allow service role access" ON withdrawals;
 DROP POLICY IF EXISTS "Allow service role access" ON user_coins;
 DROP POLICY IF EXISTS "Allow service role access" ON creator_logins;
 DROP POLICY IF EXISTS "Allow service role access" ON admin_history;
+DROP POLICY IF EXISTS "Allow service role access" ON group_rooms;
+
+-- Enable RLS on group_rooms before policies
+ALTER TABLE group_rooms ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Allow ALL operations (server uses service_role key which bypasses RLS anyway)
 CREATE POLICY "Allow full access" ON creators FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
@@ -117,9 +122,6 @@ CREATE POLICY "Allow full access" ON user_coins FOR ALL TO anon, authenticated, 
 CREATE POLICY "Allow full access" ON creator_logins FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 CREATE POLICY "Allow full access" ON admin_history FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 CREATE POLICY "Allow full access" ON group_rooms FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
-
--- Enable RLS for new table
-ALTER TABLE group_rooms ENABLE ROW LEVEL SECURITY;
 
 -- 7. Delta/Migration Patches (Safe to run multiple times)
 DO $$ 
@@ -227,10 +229,74 @@ CREATE TABLE IF NOT EXISTS activity_logs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE activity_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON activity_logs;
 DROP POLICY IF EXISTS "Allow authenticated read on activity_logs" ON activity_logs;
 DROP POLICY IF EXISTS "Allow server-side insert on activity_logs" ON activity_logs;
 
-CREATE POLICY "Allow authenticated read on activity_logs" ON activity_logs FOR SELECT USING (true);
-CREATE POLICY "Allow server-side insert on activity_logs" ON activity_logs FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow full access" ON activity_logs FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+-- 8. Creator Events Table (tips, referrals, follows — dashboard analytics)
+CREATE TABLE IF NOT EXISTS creator_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_id TEXT REFERENCES creators(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  amount INTEGER DEFAULT 0,
+  details TEXT,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_creator_events_creator_created ON creator_events(creator_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_creator_events_type ON creator_events(event_type);
+
+ALTER TABLE creator_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON creator_events;
+CREATE POLICY "Allow full access" ON creator_events FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+-- 9. Creator security & analytics columns (safe re-run)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='creators' AND column_name='password_hash') THEN
+        ALTER TABLE creators ADD COLUMN password_hash TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='creators' AND column_name='tips_received_total') THEN
+        ALTER TABLE creators ADD COLUMN tips_received_total INTEGER DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='creators' AND column_name='featured') THEN
+        ALTER TABLE creators ADD COLUMN featured BOOLEAN DEFAULT FALSE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='creators' AND column_name='rejection_reason') THEN
+        ALTER TABLE creators ADD COLUMN rejection_reason TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='withdrawals' AND column_name='admin_note') THEN
+        ALTER TABLE withdrawals ADD COLUMN admin_note TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='withdrawals' AND column_name='processed_at') THEN
+        ALTER TABLE withdrawals ADD COLUMN processed_at TIMESTAMPTZ;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='withdrawals' AND column_name='amount') THEN
+        ALTER TABLE withdrawals ADD COLUMN amount INTEGER DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='creators' AND column_name='email') THEN
+        ALTER TABLE creators ADD COLUMN email TEXT;
+    END IF;
+END $$;
+
+-- 10. Creator password reset tokens
+CREATE TABLE IF NOT EXISTS creator_password_resets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_id TEXT REFERENCES creators(id) ON DELETE CASCADE,
+  token TEXT UNIQUE NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_creator_password_resets_token ON creator_password_resets(token);
+
+ALTER TABLE creator_password_resets ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON creator_password_resets;
+CREATE POLICY "Allow full access" ON creator_password_resets FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
 -- End of ManaMingle Supabase Schema

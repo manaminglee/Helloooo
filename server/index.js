@@ -21,6 +21,8 @@ const nvidiaAi = require('./nvidiaAi');
 const { registerUniqueFeatures } = require('./uniqueFeatures');
 const { createPersistence } = require('./persistence');
 const { registerPayments } = require('./payments');
+const creatorSecurity = require('./creatorSecurity');
+const creatorEmail = require('./creatorEmail');
 
 // Persistence Strategy: Supabase (Cloud) or Local JSON (Node)
 const supabaseUrl = (process.env.SUPABASE_URL || '').trim();
@@ -40,6 +42,8 @@ let localDb = {
   moderation_reports: [],
   conversation_ratings: [],
   pro_users: {},
+  creator_events: [],
+  creator_password_resets: [],
 };
 
 function loadLocalDb() {
@@ -56,6 +60,8 @@ function loadLocalDb() {
         moderation_reports: [],
         conversation_ratings: [],
         pro_users: {},
+        creator_events: [],
+        creator_password_resets: [],
         ...parsed,
       };
       console.log('[DB] Local storage loaded.');
@@ -494,6 +500,20 @@ app.use(rateLimit({
   standardHeaders: true,
 }));
 
+const creatorRegisterLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  message: { error: 'Too many creator applications. Try again later.' },
+  standardHeaders: true,
+});
+
+const creatorLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: { error: 'Too many login attempts. Try again in 15 minutes.' },
+  standardHeaders: true,
+});
+
 // Public settings (for client feature flags like ads, dev tools, ad HTML slots)
 app.get('/api/settings', (req, res) => {
   res.json({
@@ -636,81 +656,131 @@ app.post('/api/validate-url', async (req, res) => {
   }
 });
 
-app.post('/api/creators/register', async (req, res) => {
-  const { handle, platform, link } = req.body || {};
-  const ip = req.ip === '::1' ? '127.0.0.1' : req.ip;
+app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
+  const { handle, platform, link, email } = req.body || {};
+  const ip = getClientIp(req);
+
+  const rate = creatorSecurity.checkRegisterRate(ip);
+  if (!rate.allowed) {
+    return res.status(429).json({ error: `Too many applications from this network. Retry in ${rate.retryAfterSec}s.` });
+  }
+
+  const handleCheck = creatorSecurity.validateHandle(handle);
+  if (!handleCheck.ok) return res.status(400).json({ error: handleCheck.error });
+
+  const platformCheck = creatorSecurity.validatePlatform(platform);
+  if (!platformCheck.ok) return res.status(400).json({ error: platformCheck.error });
+
+  const linkCheck = creatorSecurity.validateProfileLink(link, handleCheck.handle);
+  if (!linkCheck.ok) return res.status(400).json({ error: linkCheck.error });
+
+  const emailCheck = creatorSecurity.validateEmail(email);
+  if (!emailCheck.ok) return res.status(400).json({ error: emailCheck.error });
+
   const pin = Math.floor(1000 + Math.random() * 9000);
-  const referral_code = `${handle.replace(/\s+/g, '')}${pin}`;
+  const referral_code = `${handleCheck.handle.replace(/\s+/g, '')}${pin}`;
   const entry = {
     id: generateId('creator'),
-    handle_name: sanitize(handle, 30),
-    platform: sanitize(platform, 20),
-    profile_link: sanitize(link, 200),
+    handle_name: sanitize(handleCheck.handle, 30),
+    platform: sanitize(platformCheck.platform, 20),
+    profile_link: sanitize(linkCheck.link, 200),
+    email: emailCheck.email,
     authorized_ips: [ip],
-    referral_code, // Store the Handle+4PIN here for status checking
+    referral_code,
     status: 'pending',
     coins_earned: 0,
     earnings_rs: 0,
     referral_count: 0,
     followers_count: 0,
     follower_ips: [],
+    tips_received_total: 0,
+    featured: false,
     avatar_url: null,
     bio: '',
-    password: null, // No password until approved
+    password: null,
+    password_hash: null,
     created_at: new Date().toISOString()
   };
   try {
     if (supabase) {
-      // Check if handle already exists
-      const { data: existing } = await supabase.from('creators').select('id').eq('handle_name', entry.handle_name).single();
+      const { data: existing } = await supabase.from('creators').select('id').ilike('handle_name', entry.handle_name).maybeSingle();
       if (existing) return res.status(400).json({ error: 'Handle already registered.' });
 
       const { error: insertError } = await supabase.from('creators').insert(entry);
       if (insertError) return res.status(500).json({ error: 'Database save failed' });
     } else {
-      const existing = localDb.creators.find(c => c.handle_name === entry.handle_name);
+      const existing = localDb.creators.find(c => c.handle_name.toLowerCase() === entry.handle_name.toLowerCase());
       if (existing) return res.status(400).json({ error: 'Handle already registered.' });
       localDb.creators.push(entry);
       saveLocalDb();
     }
-    res.json({ success: true, message: 'Application Transmitted.', accessCode: referral_code });
-    // Notify admin panel in real-time
+    res.json({ success: true, message: 'Application submitted. Save your access code.', accessCode: referral_code });
     io.emit('creator-new-application', {
       id: entry.id,
       handle_name: entry.handle_name,
       platform: entry.platform,
       profile_link: entry.profile_link,
+      email: entry.email,
       referral_code: entry.referral_code,
       status: 'pending',
       coins_earned: 0,
       referral_count: 0,
       created_at: entry.created_at
     });
-  } catch (e) { res.status(500).json({ error: 'Database uplink failed' }); }
+    creatorEmail.notifyAdminNewApplication(entry).catch((e) => console.error('[EMAIL] admin notify failed', e.message));
+  } catch (e) { res.status(500).json({ error: 'Registration failed' }); }
 });
 
-app.post('/api/creators/login', async (req, res) => {
+app.post('/api/creators/login', creatorLoginLimiter, async (req, res) => {
   const { handle, password } = req.body || {};
-  const currentIp = req.ip === '::1' ? '127.0.0.1' : req.ip;
-  if (!handle || !password) return res.status(400).json({ error: 'Incomplete Signal' });
+  const currentIp = getClientIp(req);
+
+  const handleCheck = creatorSecurity.validateHandle(handle);
+  if (!handleCheck.ok) return res.status(400).json({ error: handleCheck.error });
+
+  const passCheck = creatorSecurity.validatePassword(password, { forLogin: true });
+  if (!passCheck.ok) return res.status(400).json({ error: passCheck.error });
+
+  const lock = creatorSecurity.checkLoginLock(handleCheck.handle, currentIp);
+  if (lock.locked) {
+    return res.status(429).json({ error: `Too many failed attempts. Try again in ${lock.retryAfterSec}s.` });
+  }
+
   try {
     let creator = null;
     if (supabase) {
-      const { data } = await supabase.from('creators').select('*').eq('handle_name', handle).eq('password', password).single();
+      const { data } = await supabase.from('creators').select('*').ilike('handle_name', handleCheck.handle).maybeSingle();
       creator = data;
     } else {
-      creator = localDb.creators.find(c => c.handle_name === handle && c.password === password);
-    }
-    if (!creator) {
-      if (supabase) await supabase.from('creator_logins').insert({ handle, ip: currentIp, success: false, reason: 'invalid_credentials' });
-      return res.status(401).json({ error: 'Invalid Credentials' });
-    }
-    if (creator.status !== 'approved') {
-      if (supabase) await supabase.from('creator_logins').insert({ handle, creator_id: creator.id, ip: currentIp, success: false, reason: 'pending_review' });
-      return res.status(403).json({ error: 'Application Pending Review' });
+      creator = localDb.creators.find(c => c.handle_name.toLowerCase() === handleCheck.handle.toLowerCase());
     }
 
-    // Link current IP if not already linked
+    const valid = creator ? await creatorSecurity.verifyPassword(passCheck.password, creator) : false;
+    if (!creator || !valid) {
+      creatorSecurity.recordLoginFailure(lock.key);
+      if (supabase) await supabase.from('creator_logins').insert({ handle: handleCheck.handle, ip: currentIp, success: false, reason: 'invalid_credentials' });
+      return res.status(401).json({ error: 'Invalid handle or password.' });
+    }
+
+    if (creator.status !== 'approved') {
+      if (supabase) await supabase.from('creator_logins').insert({ handle: handleCheck.handle, creator_id: creator.id, ip: currentIp, success: false, reason: 'pending_review' });
+      return res.status(403).json({ error: creator.status === 'rejected' ? 'Application was rejected. Contact support.' : 'Application pending review.' });
+    }
+
+    if (valid === 'legacy') {
+      const hash = await creatorSecurity.hashPassword(passCheck.password);
+      if (supabase) {
+        await supabase.from('creators').update({ password_hash: hash, password: null }).eq('id', creator.id);
+      } else {
+        creator.password_hash = hash;
+        creator.password = null;
+        saveLocalDb();
+      }
+      creator.password_hash = hash;
+      creator.password = null;
+    }
+
+    if (!Array.isArray(creator.authorized_ips)) creator.authorized_ips = [];
     if (!creator.authorized_ips.includes(currentIp)) {
       creator.authorized_ips.push(currentIp);
       if (supabase) {
@@ -720,9 +790,101 @@ app.post('/api/creators/login', async (req, res) => {
       }
     }
 
-    if (supabase) await supabase.from('creator_logins').insert({ handle, creator_id: creator.id, ip: currentIp, success: true });
-    res.json({ success: true, data: creator });
-  } catch (e) { res.status(500).json({ error: 'Authentication Failed' }); }
+    creatorSecurity.clearLoginFailures(lock.key);
+    if (supabase) await supabase.from('creator_logins').insert({ handle: handleCheck.handle, creator_id: creator.id, ip: currentIp, success: true });
+    res.json({ success: true, data: creatorSecurity.stripCreatorSecrets(creator) });
+  } catch (e) { res.status(500).json({ error: 'Authentication failed' }); }
+});
+
+app.post('/api/creators/forgot-password', creatorLoginLimiter, async (req, res) => {
+  const { handle, referral_code: code } = req.body || {};
+  const handleCheck = creatorSecurity.validateHandle(handle);
+  if (!handleCheck.ok) return res.status(400).json({ error: handleCheck.error });
+  const refCode = String(code || '').trim();
+  if (!refCode) return res.status(400).json({ error: 'Access code is required.' });
+
+  try {
+    let creator = null;
+    if (supabase) {
+      const { data } = await supabase.from('creators').select('*').ilike('handle_name', handleCheck.handle).eq('referral_code', refCode).maybeSingle();
+      creator = data;
+    } else {
+      creator = localDb.creators.find(
+        (c) => c.handle_name.toLowerCase() === handleCheck.handle.toLowerCase() && c.referral_code === refCode
+      );
+    }
+
+    if (creator && creator.status === 'approved' && creator.email) {
+      const token = await creatorSecurity.createPasswordResetToken(supabase, localDb, saveLocalDb, creator.id);
+      const resetUrl = `${creatorEmail.getFrontendUrl()}/?creator_reset=${token}`;
+      await creatorEmail.notifyPasswordReset(creator, resetUrl);
+    }
+
+    res.json({
+      success: true,
+      message: 'If a matching approved account with email exists, a reset link was sent.',
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Could not process reset request' });
+  }
+});
+
+app.post('/api/creators/reset-password', async (req, res) => {
+  const { token, password } = req.body || {};
+  const passCheck = creatorSecurity.validatePassword(password);
+  if (!passCheck.ok) return res.status(400).json({ error: passCheck.error });
+  if (!token) return res.status(400).json({ error: 'Reset token required' });
+
+  try {
+    const row = await creatorSecurity.findValidResetToken(supabase, localDb, String(token).trim());
+    if (!row) return res.status(400).json({ error: 'Invalid or expired reset link.' });
+
+    let creator = null;
+    if (supabase) {
+      const { data } = await supabase.from('creators').select('*').eq('id', row.creator_id).single();
+      creator = data;
+    } else {
+      creator = localDb.creators.find((c) => c.id === row.creator_id);
+    }
+    if (!creator || creator.status !== 'approved') {
+      return res.status(400).json({ error: 'Invalid or expired reset link.' });
+    }
+
+    const hash = await creatorSecurity.hashPassword(passCheck.password);
+    if (supabase) {
+      await supabase.from('creators').update({ password_hash: hash, password: null }).eq('id', creator.id);
+    } else {
+      creator.password_hash = hash;
+      creator.password = null;
+      saveLocalDb();
+    }
+    await creatorSecurity.markResetTokenUsed(supabase, localDb, saveLocalDb, row.token);
+
+    res.json({ success: true, message: 'Password updated. You can log in now.' });
+  } catch (e) {
+    res.status(500).json({ error: 'Password reset failed' });
+  }
+});
+
+app.get('/api/creators/follow-status', async (req, res) => {
+  const handle = creatorSecurity.normalizeHandle(req.query.handle || '');
+  const visitorIp = getClientIp(req);
+  if (!creatorSecurity.validateHandle(handle).ok) {
+    return res.json({ following: false });
+  }
+  try {
+    let creator = null;
+    if (supabase) {
+      const { data } = await supabase.from('creators').select('follower_ips').ilike('handle_name', handle).maybeSingle();
+      creator = data;
+    } else {
+      creator = localDb.creators.find((c) => c.handle_name.toLowerCase() === handle.toLowerCase());
+    }
+    const ips = creator?.follower_ips || [];
+    res.json({ following: ips.includes(visitorIp) });
+  } catch (e) {
+    res.json({ following: false });
+  }
 });
 
 // Update Creator Profile (Avatar & Bio)
@@ -794,42 +956,62 @@ app.get('/api/creators/status', async (req, res) => {
         creator = localDb.creators.find(c => c.authorized_ips.includes(ip));
       }
     }
-    res.json({ data: creator || null });
+    res.json({ data: creator ? creatorSecurity.stripCreatorSecrets(creator, { includePasswordOnce: creator.status === 'approved' && creator.password && !creator.password_hash }) : null });
   } catch (e) { res.json({ data: null }); }
 });
 
 app.post('/api/creators/withdraw', async (req, res) => {
   const { upi } = req.body || {};
-  if (!upi) return res.status(400).json({ error: 'UPI ID required' });
+  const upiCheck = creatorSecurity.validateUpi(upi);
+  if (!upiCheck.ok) return res.status(400).json({ error: upiCheck.error });
   try {
     const { creator, ip } = await getApprovedCreatorForRequest(req);
     if (!creator || creator.status !== 'approved') return res.status(403).json({ error: 'Unauthorized' });
     await linkCreatorIpIfNeeded(creator, ip);
     if ((creator.coins_earned || 0) < MIN_CREATOR_WITHDRAWAL_COINS) {
-      return res.status(400).json({ error: `Min. ${MIN_CREATOR_WITHDRAWAL_COINS} coins required` });
+      return res.status(400).json({ error: `Minimum ${MIN_CREATOR_WITHDRAWAL_COINS} coins required for withdrawal.` });
     }
 
+    const coinsToWithdraw = creator.coins_earned || 0;
     const withdrawal = {
       id: generateId('wd'),
       creator_id: creator.id,
       handle_name: creator.handle_name,
-      upi,
-      amount_rs: Math.floor(creator.coins_earned / 10000) * 150 || 0,
-      coins_spent: creator.coins_earned,
+      upi: upiCheck.upi,
+      amount: coinsToWithdraw,
+      amount_rs: creatorSecurity.computeEarningsRs(coinsToWithdraw),
+      coins_spent: coinsToWithdraw,
       status: 'pending',
+      admin_note: null,
       created_at: new Date().toISOString()
     };
 
     if (supabase) {
+      const { data: pending } = await supabase.from('withdrawals').select('id').eq('creator_id', creator.id).eq('status', 'pending').limit(1);
+      if (pending?.length) return res.status(400).json({ error: 'You already have a pending withdrawal request.' });
       await supabase.from('withdrawals').insert(withdrawal);
       await supabase.from('creators').update({ coins_earned: 0, earnings_rs: 0 }).eq('id', creator.id);
+      await creatorSecurity.logCreatorEvent(supabase, localDb, saveLocalDb, {
+        creatorId: creator.id,
+        eventType: 'withdrawal_requested',
+        amount: -coinsToWithdraw,
+        details: `Withdrawal queued (${upiCheck.upi})`,
+      });
     } else {
+      const pending = (localDb.withdrawals || []).find(w => w.creator_id === creator.id && w.status === 'pending');
+      if (pending) return res.status(400).json({ error: 'You already have a pending withdrawal request.' });
       localDb.withdrawals.push(withdrawal);
       creator.coins_earned = 0;
       creator.earnings_rs = 0;
+      await creatorSecurity.logCreatorEvent(supabase, localDb, saveLocalDb, {
+        creatorId: creator.id,
+        eventType: 'withdrawal_requested',
+        amount: -coinsToWithdraw,
+        details: `Withdrawal queued (${upiCheck.upi})`,
+      });
       saveLocalDb();
     }
-    res.json({ success: true, message: 'Withdrawal signal queued for admin audit.' });
+    res.json({ success: true, message: 'Withdrawal request submitted. Admin will review within 48 hours.' });
   } catch (e) { res.status(500).json({ error: 'Withdrawal request failed' }); }
 });
 
@@ -885,13 +1067,22 @@ app.post('/api/admin/creators/approve', requireAdmin, async (req, res) => {
     if (!creator) return res.status(404).json({ error: 'Node Not Found' });
 
     let updates = { status };
+    let plainPassword = null;
     if (status === 'approved') {
-      if (!creator.password) {
-        const pin = Math.floor(1000 + Math.random() * 9000);
-        updates.password = `${creator.handle_name}@${pin}`;
+      if (!creator.password_hash && !creator.password) {
+        plainPassword = creatorSecurity.generateSecurePassword(creator.handle_name);
+        updates.password_hash = await creatorSecurity.hashPassword(plainPassword);
+        updates.password = null;
+      } else if (creator.password && !creator.password_hash) {
+        plainPassword = creator.password;
+        updates.password_hash = await creatorSecurity.hashPassword(creator.password);
+        updates.password = null;
       }
-      // --- CREATOR BONUS: 500 COINS ON APPROVAL ---
       updates.coins_earned = (creator.coins_earned || 0) + 500;
+      updates.earnings_rs = creatorSecurity.computeEarningsRs(updates.coins_earned);
+      updates.rejection_reason = null;
+    } else if (status === 'rejected') {
+      updates.rejection_reason = sanitize(req.body?.reason || 'Did not meet program requirements', 200);
     }
 
     if (supabase) {
@@ -900,8 +1091,16 @@ app.post('/api/admin/creators/approve', requireAdmin, async (req, res) => {
         action_type: 'CREATOR_APPROVE',
         target_id: creatorId,
         target_name: creator.handle_name,
-        details: `Status set to ${status} (+500 Bonus if approved)`
+        details: `Status set to ${status}${status === 'approved' ? ' (+500 bonus coins)' : ''}`
       });
+      if (status === 'approved') {
+        await creatorSecurity.logCreatorEvent(supabase, localDb, saveLocalDb, {
+          creatorId,
+          eventType: 'approval_bonus',
+          amount: 500,
+          details: 'Creator approval bonus',
+        });
+      }
     } else {
       Object.assign(creator, updates);
       localDb.admin_history.push({
@@ -909,20 +1108,209 @@ app.post('/api/admin/creators/approve', requireAdmin, async (req, res) => {
         action_type: 'CREATOR_APPROVE',
         target_id: creatorId,
         target_name: creator.handle_name,
-        details: `Status set to ${status} (+500 Bonus)`,
+        details: `Status set to ${status}`,
         created_at: new Date().toISOString()
       });
       saveLocalDb();
     }
-    res.json({ success: true, password: updates.password });
-    // Notify creator in real-time (they may have the status modal open)
+    res.json({ success: true, password: plainPassword || undefined });
     io.emit('creator-status-changed', {
       referral_code: creator.referral_code,
       handle_name: creator.handle_name,
       status,
-      password: updates.password || creator.password
+      password: plainPassword || undefined,
+      rejection_reason: updates.rejection_reason || null,
     });
+
+    const merged = { ...creator, ...updates };
+    if (status === 'approved') {
+      creatorEmail.notifyCreatorApproved(merged, plainPassword).catch((e) => console.error('[EMAIL] approve notify', e.message));
+    } else if (status === 'rejected') {
+      creatorEmail.notifyCreatorRejected(merged, updates.rejection_reason).catch((e) => console.error('[EMAIL] reject notify', e.message));
+    }
   } catch (e) { res.status(500).json({ error: 'Approval failed' }); }
+});
+
+app.post('/api/admin/creators/featured', requireAdmin, async (req, res) => {
+  const { creatorId, featured } = req.body || {};
+  if (!creatorId || typeof featured !== 'boolean') {
+    return res.status(400).json({ error: 'creatorId and featured (boolean) required' });
+  }
+  try {
+    let creator = null;
+    if (supabase) {
+      const { data } = await supabase.from('creators').select('*').eq('id', creatorId).single();
+      creator = data;
+    } else {
+      creator = localDb.creators.find((c) => c.id === creatorId);
+    }
+    if (!creator) return res.status(404).json({ error: 'Creator not found' });
+    if (creator.status !== 'approved') {
+      return res.status(400).json({ error: 'Only approved creators can be featured' });
+    }
+
+    if (supabase) {
+      await supabase.from('creators').update({ featured }).eq('id', creatorId);
+      await supabase.from('admin_history').insert({
+        action_type: 'CREATOR_FEATURED',
+        target_id: creatorId,
+        target_name: creator.handle_name,
+        details: featured ? 'Pinned to featured directory' : 'Removed from featured',
+      });
+    } else {
+      creator.featured = featured;
+      localDb.admin_history.push({
+        id: Date.now().toString(),
+        action_type: 'CREATOR_FEATURED',
+        target_id: creatorId,
+        target_name: creator.handle_name,
+        details: featured ? 'Featured' : 'Unfeatured',
+        created_at: new Date().toISOString(),
+      });
+      saveLocalDb();
+    }
+    res.json({ success: true, featured });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to update featured status' });
+  }
+});
+
+app.post('/api/admin/creators/reset-password', requireAdmin, async (req, res) => {
+  const { creatorId } = req.body || {};
+  if (!creatorId) return res.status(400).json({ error: 'creatorId required' });
+  try {
+    let creator = null;
+    if (supabase) {
+      const { data } = await supabase.from('creators').select('*').eq('id', creatorId).single();
+      creator = data;
+    } else {
+      creator = localDb.creators.find((c) => c.id === creatorId);
+    }
+    if (!creator || creator.status !== 'approved') {
+      return res.status(404).json({ error: 'Approved creator not found' });
+    }
+
+    const plainPassword = creatorSecurity.generateSecurePassword(creator.handle_name);
+    const password_hash = await creatorSecurity.hashPassword(plainPassword);
+    if (supabase) {
+      await supabase.from('creators').update({ password_hash, password: null }).eq('id', creatorId);
+      await supabase.from('admin_history').insert({
+        action_type: 'CREATOR_PASSWORD_RESET',
+        target_id: creatorId,
+        target_name: creator.handle_name,
+        details: 'Admin reset creator password',
+      });
+    } else {
+      creator.password_hash = password_hash;
+      creator.password = null;
+      saveLocalDb();
+    }
+
+    creatorEmail.notifyPasswordResetByAdmin(creator, plainPassword).catch((e) => console.error('[EMAIL] admin reset', e.message));
+    res.json({ success: true, password: plainPassword });
+  } catch (e) {
+    res.status(500).json({ error: 'Password reset failed' });
+  }
+});
+
+app.post('/api/admin/withdrawals/status', requireAdmin, async (req, res) => {
+  const { withdrawalId, status, note } = req.body || {};
+  if (!withdrawalId || !['paid', 'rejected'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid withdrawal update' });
+  }
+  try {
+    let withdrawal = null;
+    if (supabase) {
+      const { data } = await supabase.from('withdrawals').select('*').eq('id', withdrawalId).single();
+      withdrawal = data;
+    } else {
+      withdrawal = (localDb.withdrawals || []).find((w) => w.id === withdrawalId);
+    }
+    if (!withdrawal) return res.status(404).json({ error: 'Withdrawal not found' });
+    if (withdrawal.status !== 'pending') return res.status(400).json({ error: 'Withdrawal already processed' });
+
+    const updates = {
+      status,
+      admin_note: sanitize(note || '', 200) || null,
+      processed_at: new Date().toISOString(),
+    };
+
+    if (status === 'rejected') {
+      let creator = null;
+      if (supabase) {
+        const { data: c } = await supabase.from('creators').select('*').eq('id', withdrawal.creator_id).single();
+        creator = c;
+      } else {
+        creator = localDb.creators.find((c) => c.id === withdrawal.creator_id);
+      }
+      if (creator) {
+        const refundCoins = withdrawal.coins_spent || withdrawal.amount || 0;
+        const newCoins = (creator.coins_earned || 0) + refundCoins;
+        const newEarnings = creatorSecurity.computeEarningsRs(newCoins);
+        if (supabase) {
+          await supabase.from('creators').update({ coins_earned: newCoins, earnings_rs: newEarnings }).eq('id', creator.id);
+        } else {
+          creator.coins_earned = newCoins;
+          creator.earnings_rs = newEarnings;
+        }
+        await creatorSecurity.logCreatorEvent(supabase, localDb, saveLocalDb, {
+          creatorId: creator.id,
+          eventType: 'withdrawal_rejected',
+          amount: refundCoins,
+          details: updates.admin_note || 'Withdrawal rejected — coins restored',
+        });
+      }
+    } else {
+      await creatorSecurity.logCreatorEvent(supabase, localDb, saveLocalDb, {
+        creatorId: withdrawal.creator_id,
+        eventType: 'withdrawal_paid',
+        amount: 0,
+        details: `Paid ₹${withdrawal.amount_rs || 0} to ${withdrawal.upi}`,
+      });
+    }
+
+    if (supabase) {
+      await supabase.from('withdrawals').update(updates).eq('id', withdrawalId);
+      await supabase.from('admin_history').insert({
+        action_type: 'WITHDRAWAL_UPDATE',
+        target_id: withdrawalId,
+        target_name: withdrawal.handle_name,
+        details: `Status: ${status}`,
+      });
+    } else {
+      Object.assign(withdrawal, updates);
+      localDb.admin_history.push({
+        id: Date.now().toString(),
+        action_type: 'WITHDRAWAL_UPDATE',
+        target_id: withdrawalId,
+        target_name: withdrawal.handle_name,
+        details: `Status: ${status}`,
+        created_at: new Date().toISOString(),
+      });
+      saveLocalDb();
+    }
+
+    io.emit('creator-withdrawal-updated', {
+      creator_id: withdrawal.creator_id,
+      withdrawalId,
+      status,
+    });
+
+    let creatorForEmail = null;
+    if (supabase) {
+      const { data: c } = await supabase.from('creators').select('*').eq('id', withdrawal.creator_id).single();
+      creatorForEmail = c;
+    } else {
+      creatorForEmail = localDb.creators.find((c) => c.id === withdrawal.creator_id);
+    }
+    if (creatorForEmail) {
+      creatorEmail.notifyWithdrawalUpdate(creatorForEmail, withdrawal, status, updates.admin_note).catch((e) => console.error('[EMAIL] withdrawal', e.message));
+    }
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to update withdrawal' });
+  }
 });
 
 app.post('/api/creators/verify-ref', async (req, res) => {
@@ -950,13 +1338,25 @@ app.post('/api/creators/verify-ref', async (req, res) => {
       await supabase.from('referral_logs').insert({ creator_id: creator.id, visitor_ip: visitorIp });
       const newCoins = (creator.coins_earned || 0) + 10;
       const newRefCount = (creator.referral_count || 0) + 1;
-      const newEarnings = Math.floor(newCoins / 10000) * 150;
+      const newEarnings = creatorSecurity.computeEarningsRs(newCoins);
       await supabase.from('creators').update({ coins_earned: newCoins, earnings_rs: newEarnings, referral_count: newRefCount }).eq('id', creator.id);
+      await creatorSecurity.logCreatorEvent(supabase, localDb, saveLocalDb, {
+        creatorId: creator.id,
+        eventType: 'referral_visit',
+        amount: 10,
+        details: `Referral from ${visitorIp}`,
+      });
     } else {
       localDb.referral_logs.push({ creator_id: creator.id, visitor_ip: visitorIp, created_at: new Date().toISOString() });
       creator.coins_earned = (creator.coins_earned || 0) + 10;
       creator.referral_count = (creator.referral_count || 0) + 1;
-      creator.earnings_rs = Math.floor(creator.coins_earned / 10000) * 150;
+      creator.earnings_rs = creatorSecurity.computeEarningsRs(creator.coins_earned);
+      await creatorSecurity.logCreatorEvent(supabase, localDb, saveLocalDb, {
+        creatorId: creator.id,
+        eventType: 'referral_visit',
+        amount: 10,
+        details: `Referral from ${visitorIp}`,
+      });
       saveLocalDb();
     }
     if (!coinUsers.has(visitorIp)) {
@@ -983,42 +1383,58 @@ app.get('/api/debug/webrtc-config', (req, res) => {
   });
 });
 
-/** Approved creator: recent economy activity (token or IP; aggregates all authorized IPs) */
+/** Approved creator: recent economy activity from creator_events */
 app.get('/api/creators/my-activity', async (req, res) => {
   try {
     const { creator, ip } = await getApprovedCreatorForRequest(req);
     if (!creator) return res.status(403).json({ error: 'Not an approved creator' });
     await linkCreatorIpIfNeeded(creator, ip);
 
-    const ips = (creator.authorized_ips && creator.authorized_ips.length) ? creator.authorized_ips : [ip];
-
     if (supabase) {
       const { data, error } = await supabase
-        .from('activity_logs')
+        .from('creator_events')
         .select('*')
-        .in('ip', ips)
+        .eq('creator_id', creator.id)
         .order('created_at', { ascending: false })
         .limit(80);
-      if (error) return res.json({ entries: [] });
-      let entries = data || [];
-      if (!entries.length) {
+      if (error) {
         const { data: refRows } = await supabase
           .from('referral_logs')
           .select('*')
           .eq('creator_id', creator.id)
           .order('created_at', { ascending: false })
           .limit(80);
-        entries = (refRows || []).map((l, i) => ({
+        const entries = (refRows || []).map((l, i) => ({
           id: `ref_${i}_${l.created_at}`,
-          ip: l.visitor_ip,
           action: 'referral_visit',
           amount: 10,
           details: 'Referral link visit',
           created_at: l.created_at,
         }));
+        return res.json({ entries });
       }
+      const entries = (data || []).map((row) => ({
+        id: row.id,
+        action: row.event_type,
+        amount: row.amount,
+        details: row.details,
+        created_at: row.created_at,
+      }));
       return res.json({ entries });
     }
+
+    const events = (localDb.creator_events || [])
+      .filter((e) => e.creator_id === creator.id)
+      .slice(-80)
+      .reverse()
+      .map((row) => ({
+        id: row.id,
+        action: row.event_type,
+        amount: row.amount,
+        details: row.details,
+        created_at: row.created_at,
+      }));
+    if (events.length) return res.json({ entries: events });
 
     const synthetic = (localDb.referral_logs || [])
       .filter((l) => l.creator_id === creator.id)
@@ -1026,7 +1442,6 @@ app.get('/api/creators/my-activity', async (req, res) => {
       .reverse()
       .map((l, i) => ({
         id: `ref_${i}_${l.created_at || i}`,
-        ip: l.visitor_ip,
         action: 'referral_visit',
         amount: 10,
         details: 'Referral link visit',
@@ -1035,6 +1450,98 @@ app.get('/api/creators/my-activity', async (req, res) => {
     return res.json({ entries: synthetic });
   } catch (e) {
     res.status(500).json({ error: 'Failed to load activity' });
+  }
+});
+
+/** Approved creator: 7-day analytics for dashboard chart */
+app.get('/api/creators/my-analytics', async (req, res) => {
+  try {
+    const { creator, ip } = await getApprovedCreatorForRequest(req);
+    if (!creator) return res.status(403).json({ error: 'Not an approved creator' });
+    await linkCreatorIpIfNeeded(creator, ip);
+
+    const days = [];
+    const now = new Date();
+    for (let i = 6; i >= 0; i -= 1) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      days.push(d.toISOString().slice(0, 10));
+    }
+
+    const emptyDay = () => ({ referrals: 0, tips: 0, follows: 0, coins: 0 });
+    const byDay = Object.fromEntries(days.map((d) => [d, emptyDay()]));
+
+    if (supabase) {
+      const since = new Date(now);
+      since.setDate(since.getDate() - 6);
+      since.setHours(0, 0, 0, 0);
+      const { data } = await supabase
+        .from('creator_events')
+        .select('event_type, amount, created_at')
+        .eq('creator_id', creator.id)
+        .gte('created_at', since.toISOString());
+      (data || []).forEach((row) => {
+        const key = String(row.created_at).slice(0, 10);
+        if (!byDay[key]) return;
+        const amt = Number(row.amount) || 0;
+        if (row.event_type === 'referral_visit') byDay[key].referrals += 1;
+        else if (row.event_type === 'tip') { byDay[key].tips += 1; byDay[key].coins += amt; }
+        else if (row.event_type === 'follow') byDay[key].follows += 1;
+        else if (amt > 0) byDay[key].coins += amt;
+      });
+    } else {
+      (localDb.creator_events || [])
+        .filter((e) => e.creator_id === creator.id)
+        .forEach((row) => {
+          const key = String(row.created_at).slice(0, 10);
+          if (!byDay[key]) return;
+          const amt = Number(row.amount) || 0;
+          if (row.event_type === 'referral_visit') byDay[key].referrals += 1;
+          else if (row.event_type === 'tip') { byDay[key].tips += 1; byDay[key].coins += amt; }
+          else if (row.event_type === 'follow') byDay[key].follows += 1;
+          else if (amt > 0) byDay[key].coins += amt;
+        });
+    }
+
+    res.json({
+      series: days.map((date) => ({ date, ...byDay[date] })),
+      totals: {
+        referrals: creator.referral_count || 0,
+        followers: creator.followers_count || 0,
+        tips_received: creator.tips_received_total || 0,
+        coins_earned: creator.coins_earned || 0,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Analytics unavailable' });
+  }
+});
+
+/** Public featured creators directory */
+app.get('/api/creators/featured', async (req, res) => {
+  try {
+    let list = [];
+    if (supabase) {
+      const { data } = await supabase
+        .from('creators')
+        .select('handle_name, platform, bio, avatar_url, referral_count, followers_count, featured')
+        .eq('status', 'approved')
+        .order('featured', { ascending: false })
+        .order('referral_count', { ascending: false })
+        .limit(12);
+      list = data || [];
+    } else {
+      list = localDb.creators
+        .filter((c) => c.status === 'approved')
+        .sort((a, b) => (b.featured ? 1 : 0) - (a.featured ? 1 : 0) || (b.referral_count || 0) - (a.referral_count || 0))
+        .slice(0, 12)
+        .map(({ handle_name, platform, bio, avatar_url, referral_count, followers_count, featured }) => ({
+          handle_name, platform, bio, avatar_url, referral_count, followers_count, featured,
+        }));
+    }
+    res.json({ creators: list });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to load creators' });
   }
 });
 
@@ -1062,17 +1569,20 @@ app.get('/api/creators/my-withdrawals', async (req, res) => {
 });
 
 app.get('/api/creator/profile/:handle', async (req, res) => {
-  const { handle } = req.params;
+  const handle = creatorSecurity.normalizeHandle(req.params.handle);
+  const visitorIp = getClientIp(req);
+  if (!creatorSecurity.validateHandle(handle).ok) return res.status(400).json({ error: 'Invalid handle' });
   try {
     let creator = null;
     if (supabase) {
-      const { data } = await supabase.from('creators').select('handle_name, platform, coins_earned, referral_count, status, earnings_rs').eq('handle_name', handle).single();
+      const { data } = await supabase.from('creators').select('handle_name, platform, profile_link, coins_earned, referral_count, status, earnings_rs, avatar_url, bio, followers_count, follower_ips').ilike('handle_name', handle).maybeSingle();
       creator = data;
     } else {
-      creator = localDb.creators.find(c => c.handle_name === handle);
+      creator = localDb.creators.find(c => c.handle_name.toLowerCase() === handle.toLowerCase());
     }
-    if (!creator) return res.status(404).json({ error: 'Creator not found' });
-    res.json({
+    if (!creator || creator.status !== 'approved') return res.status(404).json({ error: 'Creator not found' });
+    const isFollowing = (creator.follower_ips || []).includes(visitorIp);
+    res.json(creatorSecurity.stripCreatorSecrets({
       handle_name: creator.handle_name,
       platform: creator.platform,
       profile_link: creator.profile_link,
@@ -1082,24 +1592,26 @@ app.get('/api/creator/profile/:handle', async (req, res) => {
       avatar_url: creator.avatar_url,
       bio: creator.bio,
       status: creator.status,
-      earnings_rs: creator.earnings_rs
-    });
+      earnings_rs: creator.earnings_rs,
+      is_following: isFollowing,
+    }));
   } catch (e) { res.status(500).json({ error: 'Query failed' }); }
 });
 
 app.post('/api/creators/follow', async (req, res) => {
   const { handle } = req.body || {};
-  const visitorIp = req.ip === '::1' ? '127.0.0.1' : req.ip;
-  if (!handle) return res.status(400).json({ error: 'Handle required' });
+  const visitorIp = getClientIp(req);
+  const handleCheck = creatorSecurity.validateHandle(handle);
+  if (!handleCheck.ok) return res.status(400).json({ error: handleCheck.error });
   try {
     let creator = null;
     if (supabase) {
-      const { data } = await supabase.from('creators').select('*').eq('handle_name', handle).single();
+      const { data } = await supabase.from('creators').select('*').ilike('handle_name', handleCheck.handle).maybeSingle();
       creator = data;
     } else {
-      creator = localDb.creators.find(c => c.handle_name === handle);
+      creator = localDb.creators.find(c => c.handle_name.toLowerCase() === handleCheck.handle.toLowerCase());
     }
-    if (!creator) return res.status(404).json({ error: 'Creator not found' });
+    if (!creator || creator.status !== 'approved') return res.status(404).json({ error: 'Creator not found' });
 
     const ips = creator.follower_ips || [];
     if (ips.includes(visitorIp)) return res.json({ success: true, already_following: true, count: creator.followers_count });
@@ -1114,6 +1626,12 @@ app.post('/api/creators/follow', async (req, res) => {
       creator.followers_count = newCount;
       saveLocalDb();
     }
+    await creatorSecurity.logCreatorEvent(supabase, localDb, saveLocalDb, {
+      creatorId: creator.id,
+      eventType: 'follow',
+      amount: 0,
+      details: `New follower from ${visitorIp}`,
+    });
     res.json({ success: true, count: newCount });
   } catch (e) { res.status(500).json({ error: 'Follow failed' }); }
 });
@@ -1263,12 +1781,21 @@ app.get('/api/admin/overview', requireAdmin, async (req, res) => {
       uptimeSeconds: Math.floor(process.uptime()),
     },
     statsHistory,
-    roomsWithActivity: Array.from(rooms.values()).map(r => ({
+    roomsWithActivity: Array.from(rooms.values()).map((r) => ({
       id: r.id,
       interest: r.interest,
       mode: r.mode,
-      messages: r.messages?.slice(-5) || [],
-      users: Array.from(r.users).map(sid => users.get(sid)?.nickname)
+      sessionType: r.maxSize <= 2 && (r.mode === 'video' || r.mode === 'text') ? '1:1' : 'group',
+      participantCount: r.users.size,
+      maxSize: r.maxSize,
+      createdAt: r.createdAt,
+      participants: (r.participants || []).map((p) => ({
+        socketId: p.socketId,
+        nickname: p.nickname,
+        country: p.country,
+        isCreator: !!p.isCreator,
+      })),
+      messages: r.messages?.slice(-8) || [],
     })),
     memory: process.memoryUsage(),
   });
@@ -2337,15 +2864,55 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('peer-recording-status', { socketId: socket.id, recording: !!recording });
   });
 
-  socket.on('tip-creator', (data) => {
-    const { roomId, targetSocketId, amount } = data || {};
+  socket.on('tip-creator', async (data) => {
+    const { roomId, targetSocketId, amount: rawAmount } = data || {};
     const room = rooms.get(roomId);
     if (!room || !room.users.has(socket.id) || !targetSocketId) return;
     const sender = users.get(socket.id);
+    const target = users.get(targetSocketId);
+    if (!target?.isCreator || !target.creatorData?.id) {
+      return socket.emit('error', { message: 'Tip target is not a verified creator.' });
+    }
+    const amount = Math.min(Math.max(Math.floor(Number(rawAmount) || 0), 1), 500);
+    if (amount <= 0) return;
+
+    const cUser = await getCoinUser(ip);
+    if ((cUser.coins || 0) < amount) {
+      return socket.emit('error', { message: 'Insufficient coins' });
+    }
+
+    const nextBalance = (cUser.coins || 0) - amount;
+    await updateCoinUser(ip, { coins: nextBalance });
+    for (const [sid, user] of users.entries()) {
+      if (user.ip === ip) {
+        io.to(sid).emit('coins-updated', { coins: nextBalance, reason: 'creator-tip' });
+      }
+    }
+
+    const creator = target.creatorData;
+    const tipTotal = (creator.tips_received_total || 0) + amount;
+    const credited = await creatorSecurity.creditCreatorCoins(supabase, localDb, saveLocalDb, creator, amount, {
+      type: 'tip',
+      details: `Tip from ${sender?.nickname || 'Anonymous'}`,
+      metadata: { from_ip: ip, from_nickname: sender?.nickname, room_id: roomId },
+    });
+
+    if (supabase) {
+      await supabase.from('creators').update({ tips_received_total: tipTotal }).eq('id', creator.id);
+    } else {
+      creator.tips_received_total = tipTotal;
+      saveLocalDb();
+    }
+    creator.tips_received_total = tipTotal;
+    target.creatorData = { ...creator, ...credited, tips_received_total: tipTotal };
+
     io.to(targetSocketId).emit('creator-tip-received', {
       fromNickname: sender?.nickname || 'Someone',
-      amount: Math.min(Math.max(Number(amount) || 0, 0), 500),
+      amount,
     });
+    if (credited) {
+      io.to(targetSocketId).emit('creator-balance-updated', credited);
+    }
   });
 
   socket.on('video-style', (data) => {
