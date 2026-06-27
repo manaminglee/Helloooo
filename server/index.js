@@ -24,6 +24,20 @@ const { registerPayments } = require('./payments');
 const creatorSecurity = require('./creatorSecurity');
 const creatorEmail = require('./creatorEmail');
 
+/** Normalize ADMIN_KEY from env (trim whitespace / optional quotes). Never log the value. */
+function getAdminKey() {
+  const raw = process.env.ADMIN_KEY;
+  if (raw == null || typeof raw !== 'string') return null;
+  let key = raw.trim();
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1).trim();
+  }
+  return key || null;
+}
+
 // Persistence Strategy: Supabase (Cloud) or Local JSON (Node)
 const supabaseUrl = (process.env.SUPABASE_URL || '').trim();
 // Use service role key to bypass RLS for server-side admin operations.
@@ -96,7 +110,7 @@ const persistence = createPersistence({
   supabase,
   localDb,
   saveLocalDb,
-  adminKey: process.env.ADMIN_KEY,
+  adminKey: getAdminKey(),
 });
 
 const PORT = process.env.PORT || 3000;
@@ -104,9 +118,9 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Validate sensitive config at startup (never log secret values)
 function validateEnv() {
-  const adminKey = process.env.ADMIN_KEY;
+  const adminKey = getAdminKey();
   if (NODE_ENV === 'production') {
-    if (!adminKey || typeof adminKey !== 'string' || adminKey.length < 16) {
+    if (!adminKey || adminKey.length < 16) {
       console.warn(
         '[SECURITY] In production, set a strong ADMIN_KEY (min 16 chars) in .env to enable the admin panel. ' +
         'See .env.example.'
@@ -1683,13 +1697,13 @@ app.post('/api/verify-turnstile', async (req, res) => {
 
 // Admin auth: timing-safe comparison so key is not leaked by response time
 function requireAdmin(req, res, next) {
-  const adminKey = process.env.ADMIN_KEY;
-  if (!adminKey || typeof adminKey !== 'string') {
+  const adminKey = getAdminKey();
+  if (!adminKey) {
     return res.status(503).json({ error: 'Admin panel not configured' });
   }
   const provided = (req.header('x-admin-key') || '').toString().trim();
   try {
-    const a = Buffer.from(adminKey.trim(), 'utf8');
+    const a = Buffer.from(adminKey, 'utf8');
     const b = Buffer.from(provided, 'utf8');
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -2796,7 +2810,7 @@ io.on('connection', (socket) => {
 
   socket.on('admin-end-room', (data) => {
     const { roomId, adminKey: providedKey } = data || {};
-    const adminKey = process.env.ADMIN_KEY;
+    const adminKey = getAdminKey();
     if (!adminKey || providedKey !== adminKey) return;
     const room = rooms.get(roomId);
     if (room) {

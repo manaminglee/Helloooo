@@ -7,7 +7,8 @@ import { API_BASE } from '../config/apiBase';
  */
 export function AdminDashboard({ onJoinRoom }) {
   const [key, setKey] = useState(sessionStorage.getItem('mm_admin_key') || '');
-  const [isLogged, setIsLogged] = useState(!!sessionStorage.getItem('mm_admin_key'));
+  const [isLogged, setIsLogged] = useState(false);
+  const [authRestoring, setAuthRestoring] = useState(() => !!sessionStorage.getItem('mm_admin_key'));
   const [stats, setStats] = useState(null);
   const [error, setError] = useState('');
   const [ipInput, setIpInput] = useState('');
@@ -381,6 +382,16 @@ export function AdminDashboard({ onJoinRoom }) {
     }
   }, [toast]);
 
+  // Restore session once on load (avoid treating stale sessionStorage as logged-in)
+  useEffect(() => {
+    const stored = sessionStorage.getItem('mm_admin_key')?.trim();
+    if (!stored) {
+      setAuthRestoring(false);
+      return;
+    }
+    fetchStats(stored).finally(() => setAuthRestoring(false));
+  }, []);
+
   // On login: immediately load all data in parallel
   useEffect(() => {
     if (isLogged) {
@@ -471,6 +482,9 @@ export function AdminDashboard({ onJoinRoom }) {
             <h1 className="text-2xl font-black uppercase tracking-[0.2em] italic">Admin <span className="text-cyan-400">Dashboard</span></h1>
             <p className="text-[10px] text-white/20 mt-2 font-black uppercase tracking-[0.3em]">Authorized Access Required</p>
           </div>
+          {authRestoring ? (
+            <p className="text-center text-[10px] text-white/30 font-black uppercase tracking-widest animate-pulse">Checking saved session…</p>
+          ) : (
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <input
@@ -478,21 +492,33 @@ export function AdminDashboard({ onJoinRoom }) {
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
                 placeholder="Enter Admin Key..."
+                autoComplete="current-password"
                 className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:outline-none focus:border-cyan-500/50 transition-all text-center tracking-widest font-mono text-sm"
               />
+              <p className="text-[9px] text-white/25 text-center mt-3 leading-relaxed">
+                Must exactly match <span className="text-cyan-400/80">ADMIN_KEY</span> on Render → Environment. After changing it, wait for redeploy.
+              </p>
             </div>
             <button className="w-full py-4 bg-cyan-500 text-black rounded-2xl font-black uppercase tracking-widest text-[11px] shadow-xl shadow-cyan-600/20 hover:scale-[1.02] active:scale-95 transition-all">
               Login to Dashboard
             </button>
             <button
               type="button"
+              onClick={() => { sessionStorage.removeItem('mm_admin_key'); setKey(''); setError(''); }}
+              className="w-full text-[9px] text-white/15 hover:text-white/35 transition-colors uppercase tracking-[0.3em] font-black"
+            >
+              Clear saved key
+            </button>
+            <button
+              type="button"
               onClick={() => window.location.href = '/'}
-              className="w-full text-[10px] text-white/20 hover:text-white/40 transition-colors uppercase tracking-[0.4em] font-black mt-6"
+              className="w-full text-[10px] text-white/20 hover:text-white/40 transition-colors uppercase tracking-[0.4em] font-black mt-2"
             >
               ← Back to Site
             </button>
             {error && <p className="text-rose-400 text-[10px] text-center font-black uppercase mt-4 animate-shake">{error}</p>}
           </form>
+          )}
         </div>
       </div>
     );
