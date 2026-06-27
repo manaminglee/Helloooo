@@ -15,6 +15,7 @@ import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream } from '.
 import { MiniChatGamePanel } from './MiniChatGamePanel';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { useUniqueSession } from '../hooks/useUniqueSession';
+import { useAdminMonitorFrames } from '../hooks/useAdminMonitorFrames';
 import {
   AiStatusPill,
   CalmModeToggle,
@@ -340,6 +341,15 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const peerCreatorsRef = useRef(new Map());
   const hasJoinedRef = useRef(false);
   const hasAutoLeftRef = useRef(false);
+
+  const getMonitorRoomId = useCallback(() => roomIdRef.current || roomIdProp, [roomIdProp]);
+
+  useAdminMonitorFrames(socket, {
+    active: !isQueuing,
+    getRoomId: getMonitorRoomId,
+    mode: 'group_video',
+    localVideoRef,
+  });
   const chatEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -1163,9 +1173,14 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     };
 
     const onSystemMsg = (data) => setMessages((m) => [...m, { id: Date.now(), system: true, text: `📢 ADMIN: ${data.message}`, ts: Date.now() }]);
-    const onRoomEndedByAdmin = () => {
-      setToast('⚠️ This session was terminated by administrative protocol.');
+    const onRoomEndedByAdmin = (data) => {
+      setToast(data?.message || '⚠️ This session was terminated by administrative protocol.');
       setTimeout(() => handleLeaveRoom(), 2000);
+    };
+
+    const onSessionTerminatedByAdmin = (data) => {
+      setToast(data?.message || '⚠️ Your session was terminated by a moderator.');
+      setTimeout(() => handleLeaveRoom(), 2500);
     };
 
     const onGroupRenamed = (data) => {
@@ -1182,6 +1197,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     socket.on('webrtc-signal', onSignal);
     socket.on('system-announcement', onSystemMsg);
     socket.on('room-ended-by-admin', onRoomEndedByAdmin);
+    socket.on('session-terminated-by-admin', onSessionTerminatedByAdmin);
     socket.on('group-renamed', onGroupRenamed);
     const onSignalRateLimited = (data) => {
       const msg = data?.message || 'Too many WebRTC signals. Please wait.';
@@ -1199,6 +1215,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       socket.off('webrtc-signal', onSignal);
       socket.off('system-announcement', onSystemMsg);
       socket.off('room-ended-by-admin', onRoomEndedByAdmin);
+      socket.off('session-terminated-by-admin', onSessionTerminatedByAdmin);
       socket.off('group-renamed', onGroupRenamed);
       socket.off('signal-rate-limited', onSignalRateLimited);
     };

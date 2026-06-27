@@ -29,6 +29,10 @@ export function AdminDashboard({ onJoinRoom }) {
     chat_sidebar: '',
   });
   const [manualGrantIp, setManualGrantIp] = useState('');
+  const [livePanels, setLivePanels] = useState(null);
+  const [modAction, setModAction] = useState(null);
+  const [modMessage, setModMessage] = useState('');
+  const [modBlockIp, setModBlockIp] = useState(false);
   const socketRef = useRef(null);
 
   const fetchStats = async (adminKey) => {
@@ -226,23 +230,74 @@ export function AdminDashboard({ onJoinRoom }) {
     }
   };
 
-  const handleEndRoom = async (roomId) => {
-    if (!window.confirm(`⚠️ Terminate user session ${roomId}?`)) return;
+  const handleEndRoom = async (roomId, message) => {
+    const defaultMsg = 'This session was terminated by administrative protocol.';
+    const confirmMsg = message || defaultMsg;
+    if (!window.confirm(`⚠️ Terminate session ${roomId}? All users will see your warning.`)) return;
     try {
-      // We use the socket event directly via the server listener I added
-      // But we can also use an API endpoint. For simplicity, we can just emit if we had socket here.
-      // However, AdminDashboard is an API-first component. I'll add an API endpoint in server soon if needed.
-      // For now, let's assume we use an endpoint I'll add.
       const res = await fetch(`${API_BASE}/api/admin/end-room`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
-        body: JSON.stringify({ roomId }),
+        body: JSON.stringify({ roomId, message: confirmMsg }),
       });
       if (res.ok) {
         setToast(`💥 Room ${roomId} terminated.`);
         fetchStats(key);
+        fetchLivePanels();
       }
     } catch (e) { }
+  };
+
+  const fetchLivePanels = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/live-panels`, {
+        headers: { 'x-admin-key': key },
+      });
+      if (res.ok) setLivePanels(await res.json());
+    } catch (e) { }
+  };
+
+  const openModeration = (type, participant, roomId) => {
+    setModAction({ type, socketId: participant.socketId, ip: participant.ip, nickname: participant.nickname, roomId });
+    setModMessage(
+      type === 'warn'
+        ? '⚠️ WARNING: A moderator has flagged your behavior. Please follow community rules or your session will be terminated.'
+        : 'Your session was terminated by a moderator for violating community guidelines.'
+    );
+    setModBlockIp(false);
+  };
+
+  const confirmModeration = async () => {
+    if (!modAction) return;
+    try {
+      if (modAction.type === 'warn') {
+        const res = await fetch(`${API_BASE}/api/admin/warn-user`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
+          body: JSON.stringify({ socketId: modAction.socketId, message: modMessage }),
+        });
+        if (res.ok) {
+          setToast(`⚠️ Warning sent to ${modAction.nickname || modAction.ip}`);
+          fetchStats(key);
+          fetchLivePanels();
+        } else setToast('⚠️ Warn failed');
+      } else {
+        const res = await fetch(`${API_BASE}/api/admin/terminate-user`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
+          body: JSON.stringify({ socketId: modAction.socketId, message: modMessage, blockIp: modBlockIp }),
+        });
+        if (res.ok) {
+          setToast(`💥 ${modAction.nickname || modAction.ip} terminated${modBlockIp ? ' + IP blocked' : ''}`);
+          fetchStats(key);
+          fetchLivePanels();
+        } else setToast('⚠️ Terminate failed');
+      }
+    } catch (e) {
+      setToast('⚠️ Network error');
+    }
+    setModAction(null);
+    setModMessage('');
   };
 
   const handleBlockIp = async (e, ipArg) => {
@@ -406,6 +461,13 @@ export function AdminDashboard({ onJoinRoom }) {
     return () => clearInterval(statsInterval);
   }, [isLogged, key]);
 
+  useEffect(() => {
+    if (!isLogged || activeTab !== 'room-monitoring') return;
+    fetchLivePanels();
+    const liveInterval = setInterval(fetchLivePanels, 3000);
+    return () => clearInterval(liveInterval);
+  }, [isLogged, activeTab, key]);
+
   // Real-time socket connection for live admin notifications
   useEffect(() => {
     if (!isLogged) return;
@@ -560,7 +622,7 @@ export function AdminDashboard({ onJoinRoom }) {
     { id: 'overview', label: 'Overview', icon: '📊' },
     { id: 'users', label: 'Users', icon: '👤' },
     { id: 'creators', label: 'Creators', icon: '⭐', badge: creators.filter(c => c.status === 'pending').length },
-    { id: 'room-monitoring', label: 'Rooms', icon: '👁️' },
+    { id: 'room-monitoring', label: 'Live Monitor', icon: '👁️' },
     { id: 'economy', label: 'Economy', icon: '🪙' },
     { id: 'security', label: 'Security', icon: '🛡️' },
     { id: 'ads', label: 'Ads', icon: '💰' },
@@ -862,16 +924,51 @@ export function AdminDashboard({ onJoinRoom }) {
             <div className="space-y-10 animate-fade-in select-none">
               <div className="flex flex-wrap items-center justify-between gap-4 px-2">
                 <p className="text-[10px] font-black uppercase tracking-[0.35em] text-white/30">
-                  Live sessions · {(stats?.roomsWithActivity || stats?.roomList || []).length} active
+                  Live video monitor · {(livePanels?.rooms || stats?.roomsWithActivity || []).length} active video rooms
                 </p>
-                <button type="button" onClick={() => fetchStats(key)} className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white/50 hover:text-white">
-                  Refresh
+                <button type="button" onClick={() => { fetchStats(key); fetchLivePanels(); }} className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white/50 hover:text-white">
+                  Refresh feeds
                 </button>
               </div>
+
+              {/* All live user video panels */}
+              {(livePanels?.rooms || []).some((r) => r.panels?.length > 0) && (
+                <div className="p-8 rounded-[40px] bg-gradient-to-br from-indigo-500/5 to-transparent border border-indigo-500/10">
+                  <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400 italic mb-6">📹 All live user feeds</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {(livePanels?.rooms || []).flatMap((r) =>
+                      (r.panels || []).map((p) => (
+                        <div key={`${r.id}-${p.socketId}`} className="rounded-2xl overflow-hidden border border-white/10 bg-black aspect-video relative group/panel shadow-xl">
+                          {p.frame ? (
+                            <img src={p.frame} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex flex-col items-center justify-center text-white/20 bg-white/[0.02]">
+                              <span className="text-2xl mb-2 opacity-30">📷</span>
+                              <span className="text-[9px] font-black uppercase tracking-widest">{p.stale ? 'Waiting for feed…' : 'Camera off'}</span>
+                            </div>
+                          )}
+                          <div className="absolute top-2 left-2 px-2 py-0.5 rounded-lg bg-black/70 text-[8px] font-black uppercase text-emerald-400 border border-emerald-500/20">LIVE</div>
+                          <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black via-black/80 to-transparent p-3 pt-8">
+                            <div className="text-[10px] font-black text-white truncate">{p.isCreator ? `@${p.nickname}` : (p.nickname || 'Anonymous')}</div>
+                            <div className="text-[8px] text-white/40 font-mono truncate">{p.ip || 'unknown ip'} · {p.country || '??'}</div>
+                            <div className="text-[8px] text-white/25 truncate">#{r.interest} · {r.mode}</div>
+                          </div>
+                          <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/panel:opacity-100 transition-opacity">
+                            <button type="button" onClick={() => openModeration('warn', p, r.id)} className="px-2 py-1 rounded-lg bg-amber-500/90 text-black text-[8px] font-black uppercase">Warn</button>
+                            <button type="button" onClick={() => openModeration('terminate', p, r.id)} className="px-2 py-1 rounded-lg bg-rose-500/90 text-white text-[8px] font-black uppercase">Kick</button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                {(stats?.roomsWithActivity || stats?.roomList || []).map((r) => {
+                {(livePanels?.rooms || stats?.roomsWithActivity || stats?.roomList || []).filter((r) => r.mode?.includes('video')).map((r) => {
                   const typeLabel = r.sessionType === '1:1' ? '1:1' : 'Group';
-                  const modeLabel = r.mode === 'group_video' ? 'Group Video' : r.mode === 'video' ? 'Video Chat' : r.mode === 'group_text' ? 'Group Text' : r.mode === 'text' ? 'Text Chat' : r.mode;
+                  const modeLabel = r.mode === 'group_video' ? 'Group Video' : r.mode === 'video' ? 'Video Chat' : r.mode;
+                  const participants = r.panels || r.participants || [];
                   return (
                   <div key={r.id} className="group p-8 rounded-[40px] bg-white/[0.02] border border-white/5 hover:border-indigo-500/30 transition-all relative overflow-hidden flex flex-col min-h-[400px] shadow-2xl">
                     <div className="absolute top-0 right-0 p-6 flex items-center gap-2">
@@ -883,23 +980,38 @@ export function AdminDashboard({ onJoinRoom }) {
                       <div className="text-xl font-black italic uppercase tracking-tighter mb-1 text-white group-hover:text-indigo-400 transition-colors">#{r.interest}</div>
                       <div className="text-[9px] text-white/20 font-black uppercase tracking-widest leading-relaxed">ID: {r.id}</div>
                       <div className="text-[9px] text-white/25 font-bold mt-1">
-                        {r.participantCount ?? r.participants?.length ?? 0}/{r.maxSize || '?'} participants
+                        {r.participantCount ?? participants.length ?? 0}/{r.maxSize || '?'} participants
                       </div>
                     </div>
 
                     <div className="flex-1 space-y-4">
-                       <div className="text-[10px] font-black text-indigo-400/60 uppercase tracking-widest italic mb-2">Live Participants</div>
-                       <div className="space-y-2">
-                          {(r.participants || []).map((p) => (
-                            <div key={p.socketId || p.nickname} className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/5 text-[9px] font-bold text-white/50">
-                              <span>{p.isCreator ? `@${p.nickname}` : (p.nickname || 'Anonymous')}</span>
-                              {p.country && <span className="text-white/30 uppercase">{p.country}</span>}
-                              {p.isCreator && <span className="text-violet-400">★</span>}
+                       <div className="text-[10px] font-black text-indigo-400/60 uppercase tracking-widest italic mb-2">Live video panels</div>
+                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {participants.map((p) => (
+                            <div key={p.socketId || p.nickname} className="rounded-2xl overflow-hidden border border-white/10 bg-black aspect-video relative">
+                              {p.frame ? (
+                                <img src={p.frame} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-[9px] font-black uppercase text-white/20 bg-white/[0.02]">
+                                  {p.frameStale || p.stale ? 'Waiting…' : 'No feed'}
+                                </div>
+                              )}
+                              <div className="absolute bottom-0 inset-x-0 bg-black/80 p-2">
+                                <div className="text-[9px] font-bold text-white truncate flex items-center gap-1">
+                                  {p.isCreator ? `@${p.nickname}` : (p.nickname || 'Anonymous')}
+                                  {p.isCreator && <span className="text-violet-400">★</span>}
+                                </div>
+                                <div className="text-[8px] text-white/40 font-mono truncate">{p.ip || '—'} · {p.country || '??'}</div>
+                              </div>
+                              <div className="absolute top-1.5 right-1.5 flex flex-col gap-1">
+                                <button type="button" onClick={() => openModeration('warn', p, r.id)} className="px-2 py-0.5 rounded-md bg-amber-500/90 text-black text-[7px] font-black uppercase">Warn</button>
+                                <button type="button" onClick={() => openModeration('terminate', p, r.id)} className="px-2 py-0.5 rounded-md bg-rose-500/90 text-white text-[7px] font-black uppercase">Kick</button>
+                              </div>
                             </div>
                           ))}
-                          {(!r.participants || r.participants.length === 0) && (r.users || []).map((nick, i) => (
-                            <span key={i} className="inline-block px-3 py-1 rounded-full bg-white/5 border border-white/5 text-[9px] font-bold text-white/40">{nick}</span>
-                          ))}
+                          {participants.length === 0 && (
+                            <div className="col-span-2 text-[9px] text-white/10 uppercase font-black italic py-6 text-center">No participants</div>
+                          )}
                        </div>
 
                        <div className="mt-6 pt-6 border-t border-white/5">
@@ -934,13 +1046,47 @@ export function AdminDashboard({ onJoinRoom }) {
                     </div>
                   </div>
                 );})}
-                {(!stats?.roomsWithActivity || stats.roomsWithActivity.length === 0) && (!stats?.roomList || stats.roomList.length === 0) && (
+                {(!livePanels?.rooms?.length && !stats?.roomsWithActivity?.length && !stats?.roomList?.length) && (
                   <div className="lg:col-span-3 py-48 text-center bg-white/[0.01] border border-white/5 rounded-[60px] shadow-inner">
                     <div className="text-5xl mb-6 opacity-20">🍃</div>
-                    <p className="text-[11px] font-black uppercase tracking-[0.4em] text-white/20">No active signal rooms found</p>
+                    <p className="text-[11px] font-black uppercase tracking-[0.4em] text-white/20">No active video sessions</p>
                   </div>
                 )}
               </div>
+
+              {modAction && (
+                <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                  <div className="w-full max-w-md rounded-[32px] bg-zinc-950 border border-white/10 p-8 shadow-2xl">
+                    <h3 className="text-lg font-black uppercase italic text-white mb-1">
+                      {modAction.type === 'warn' ? '⚠️ Send warning' : '💥 Terminate user'}
+                    </h3>
+                    <p className="text-[10px] text-white/30 font-black uppercase tracking-widest mb-4">
+                      {modAction.nickname || 'User'} · {modAction.ip || modAction.socketId}
+                    </p>
+                    <textarea
+                      value={modMessage}
+                      onChange={(e) => setModMessage(e.target.value)}
+                      rows={4}
+                      className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm text-white focus:outline-none focus:border-cyan-500/40 resize-none mb-4"
+                      placeholder="Message shown to the user…"
+                    />
+                    {modAction.type === 'terminate' && (
+                      <label className="flex items-center gap-2 text-[10px] font-black uppercase text-rose-400 mb-6 cursor-pointer">
+                        <input type="checkbox" checked={modBlockIp} onChange={(e) => setModBlockIp(e.target.checked)} className="rounded" />
+                        Also block IP address
+                      </label>
+                    )}
+                    <div className="flex gap-3">
+                      <button type="button" onClick={() => setModAction(null)} className="flex-1 py-3 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black uppercase text-white/50 hover:text-white">
+                        Cancel
+                      </button>
+                      <button type="button" onClick={confirmModeration} className={`flex-1 py-3 rounded-2xl text-[10px] font-black uppercase text-white ${modAction.type === 'warn' ? 'bg-amber-500 hover:bg-amber-400 text-black' : 'bg-rose-500 hover:bg-rose-400'}`}>
+                        {modAction.type === 'warn' ? 'Send warning' : 'Terminate session'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

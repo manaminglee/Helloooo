@@ -28,6 +28,7 @@ import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream } from '.
 import { ChatInputWithEmoji } from './ChatInputWithEmoji';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { useUniqueSession } from '../hooks/useUniqueSession';
+import { useAdminMonitorFrames } from '../hooks/useAdminMonitorFrames';
 import {
   AiStatusPill,
   CalmModeToggle,
@@ -504,6 +505,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     }
   }, []);
 
+  useAdminMonitorFrames(socket, {
+    active: status === 'connected' && !!roomId,
+    roomId,
+    mode: 'video',
+    localVideoRef,
+  });
+
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 640 : false);
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 640);
@@ -688,6 +696,21 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   }, [unique.consentComplete]);
 
   const desktopLayout = !isMobile;
+  const [deskLayoutMode, setDeskLayoutMode] = useState(() => {
+    try {
+      return sessionStorage.getItem('mm_video_desk_layout') === 'sidebar' ? 'sidebar' : 'horizontal';
+    } catch {
+      return 'horizontal';
+    }
+  });
+  const isSidebarDesk = deskLayoutMode === 'sidebar';
+
+  const setDeskLayout = (mode) => {
+    setDeskLayoutMode(mode);
+    try {
+      sessionStorage.setItem('mm_video_desk_layout', mode);
+    } catch { /* ignore */ }
+  };
 
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -1647,9 +1670,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       setTimeout(() => setPartnerLeft(false), 5000);
     };
 
-    const onRoomEndedByAdmin = () => {
-      setToast('⚠️ This session was terminated by administrative protocol.');
+    const onRoomEndedByAdmin = (data) => {
+      setToast(data?.message || '⚠️ This session was terminated by administrative protocol.');
       setTimeout(() => handleBack(), 2000);
+    };
+
+    const onSessionTerminatedByAdmin = (data) => {
+      setToast(data?.message || '⚠️ Your session was terminated by a moderator.');
+      setTimeout(() => handleBack(), 2500);
     };
 
     const onWaiting = () => setStatus('searching');
@@ -1713,6 +1741,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     socket.on('stranger-video-style', onStrangerVideoStyle);
     socket.on('system-maintenance', onMaintenance);
     socket.on('room-ended-by-admin', onRoomEndedByAdmin);
+    socket.on('session-terminated-by-admin', onSessionTerminatedByAdmin);
     socket.on('content-flagged', (data) => {
       setMessages(m => [...m, { id: Date.now(), system: true, text: `🛡️ ${data.message}`, ts: Date.now() }]);
       playDisconnectSound();
@@ -1762,6 +1791,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       socket.off('stranger-video-style', onStrangerVideoStyle);
       socket.off('system-maintenance', onMaintenance);
       socket.off('room-ended-by-admin', onRoomEndedByAdmin);
+      socket.off('session-terminated-by-admin', onSessionTerminatedByAdmin);
       socket.off('content-flagged');
       socket.off('error');
       socket.off('signal-rate-limited', onSignalRateLimited);
@@ -1968,6 +1998,87 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const chatMyCountry = myCountry || country;
   const chatPeerCountry = peer?.country;
 
+  const renderDeskToolbar = (extraClass = '') => {
+    const Wrapper = extraClass.includes('inline') ? 'div' : 'footer';
+    return (
+    <Wrapper className={`mm-desk-toolbar${extraClass ? ` ${extraClass}` : ''}`}>
+      <button type="button" onClick={toggleMute} className={`mm-desk-tool ${muted ? 'mm-desk-tool--off' : ''}`}>
+        <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+        Mic
+        <span className="mm-desk-tool__chev" onClick={(e) => { e.stopPropagation(); setShowDevicePicker(true); }} role="presentation">▾</span>
+      </button>
+      <button type="button" onClick={toggleCamera} className={`mm-desk-tool ${cameraOff ? 'mm-desk-tool--off' : ''}`}>
+        <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+        Camera
+        <span className="mm-desk-tool__chev" onClick={(e) => { e.stopPropagation(); setShowDevicePicker(true); }} role="presentation">▾</span>
+      </button>
+      <button type="button" onClick={toggleFlip} className="mm-desk-tool" title={isMobile ? 'Switch camera' : 'Flip mirror'}>
+        <svg className="w-4 h-4 text-violet-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>
+        Flip
+      </button>
+      {PHASE_4_UNIQUE.liveCaptions && (
+        <button
+          type="button"
+          onClick={() => unique.setCaptionsOn((v) => !v)}
+          className={`mm-desk-tool ${unique.captionsOn ? 'mm-desk-tool--next' : ''}`}
+          title="Toggle live captions panel"
+        >
+          CC
+        </button>
+      )}
+      {!isSidebarDesk && (
+        <button type="button" onClick={scrollToChat} className="mm-desk-tool">
+          <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+          Chat
+        </button>
+      )}
+      <button type="button" onClick={handleSkip} className="mm-desk-tool mm-desk-tool--next">
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
+        Next
+      </button>
+      <button type="button" onClick={handleStop} className="mm-desk-tool mm-desk-tool--end">
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.516l2.257-1.13a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.28 3H5z" /></svg>
+        End Call
+      </button>
+    </Wrapper>
+    );
+  };
+
+  const renderDeskChatPanel = (sidebar = false) => (
+    <div ref={chatPanelRef} className={`mm-desk-chat${sidebar ? ' mm-desk-chat--sidebar' : ''}`} id="video-chat-messages-wrap">
+      <div className="mm-desk-chat__banner">
+        <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+        You&apos;re chatting anonymously
+      </div>
+      <div className="mm-desk-chat__messages custom-scrollbar" id="video-chat-messages">
+        {messages.filter((m) => !m.system || m.isIntro).map((m, i) => (
+          <DeskChatBubble key={m.id || i} m={m} isMe={m.socketId === socket?.id} myCountry={chatMyCountry} peerCountry={chatPeerCountry} onViewCreator={setShowProfileHandle} />
+        ))}
+        <div ref={chatEndRef} />
+      </div>
+      {strangerTyping && (
+        <div className="mm-desk-chat__typing">
+          Stranger is typing…
+          <span className="mm-desk-chat__typing-dots"><span /><span /><span /></span>
+        </div>
+      )}
+      <div className="mm-desk-chat__input-row">
+        <input
+          ref={inputRef}
+          type="text"
+          value={input}
+          onChange={(e) => handleInputChange(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); sendMsg(); } }}
+          placeholder="Type a message..."
+          className="mm-desk-chat__input"
+        />
+        <button type="button" onClick={sendMsg} className="mm-desk-chat__send" aria-label="Send">
+          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className={`${desktopLayout ? 'mm-desk-shell' : 'mm-mobile-shell'} h-[100dvh] min-h-0 flex flex-col text-white overflow-hidden font-sans select-none`}>
       {desktopLayout ? (
@@ -1977,6 +2088,35 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             {(typeof onlineCount === 'object' ? onlineCount?.count : onlineCount || 0).toLocaleString()} users online
           </div>
           <div className="mm-desk-header__actions">
+            <div className="mm-desk-layout-toggle" role="group" aria-label="Layout">
+              <button
+                type="button"
+                className={`mm-desk-layout-btn${!isSidebarDesk ? ' mm-desk-layout-btn--active' : ''}`}
+                onClick={() => setDeskLayout('horizontal')}
+                title="Side-by-side panels, chat below"
+                aria-label="Horizontal layout"
+                aria-pressed={!isSidebarDesk}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                  <rect x="1" y="4" width="8" height="12" rx="1.5" opacity="0.9" />
+                  <rect x="11" y="4" width="8" height="12" rx="1.5" opacity="0.9" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className={`mm-desk-layout-btn${isSidebarDesk ? ' mm-desk-layout-btn--active' : ''}`}
+                onClick={() => setDeskLayout('sidebar')}
+                title="Stacked panels left, chat and controls right"
+                aria-label="Sidebar layout"
+                aria-pressed={isSidebarDesk}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                  <rect x="1" y="2" width="7" height="7.5" rx="1.2" opacity="0.9" />
+                  <rect x="1" y="10.5" width="7" height="7.5" rx="1.2" opacity="0.9" />
+                  <rect x="10" y="2" width="9" height="16" rx="1.5" opacity="0.55" />
+                </svg>
+              </button>
+            </div>
             <button type="button" className="mm-desk-icon-btn" onClick={() => setShowReportModal(true)} title="Safety" aria-label="Safety">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
             </button>
@@ -2045,10 +2185,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
       <main className={desktopLayout ? 'mm-desk-main' : `mm-mobile-main ${status !== 'connected' ? 'mm-mobile-main--solo' : ''}`}>
         {desktopLayout ? (
-          <div className="mm-desk-card">
-            <div className="mm-desk-body">
-              <div className="mm-desk-media">
-                <div className="mm-desk-video-row">
+          <div className={`mm-desk-card${isSidebarDesk ? ' mm-desk-card--sidebar' : ''}`}>
+            <div className={`mm-desk-body${isSidebarDesk ? ' mm-desk-body--sidebar' : ''}`}>
+              <div className={`mm-desk-media${isSidebarDesk ? ' mm-desk-media--sidebar' : ''}`}>
+                <div className={isSidebarDesk ? 'mm-desk-video-col' : 'mm-desk-video-row'}>
               <div className="mm-desk-pane">
                 <div className="mm-desk-pane__tag mm-desk-pane__tag--you">
                   <span className="mm-desk-dot mm-desk-dot--green" aria-hidden /> You
@@ -2138,48 +2278,30 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               </div>
                 </div>
               </div>
-              {PHASE_4_UNIQUE.liveCaptions && unique.captionsOn && (
+              {PHASE_4_UNIQUE.liveCaptions && unique.captionsOn && !isSidebarDesk && (
                 <LiveCaptionsPanel
                   caption={unique.caption}
                   enabled={unique.captionsOn}
                   onToggle={() => unique.setCaptionsOn(false)}
                 />
               )}
+              {isSidebarDesk && (
+                <div className="mm-desk-sidebar">
+                  {status === 'connected' ? (
+                    renderDeskChatPanel(true)
+                  ) : (
+                    <div className="mm-desk-sidebar__idle">
+                      <p className="text-sm font-semibold text-white/50 mb-1">
+                        {status === 'searching' ? 'Looking for someone…' : status === 'idle' ? 'Start a chat to message' : 'Connect to chat'}
+                      </p>
+                      <p className="text-xs text-white/30">Chat appears here when matched</p>
+                    </div>
+                  )}
+                  {renderDeskToolbar('mm-desk-toolbar--inline')}
+                </div>
+              )}
             </div>
-            {status === 'connected' && (
-              <div ref={chatPanelRef} className="mm-desk-chat" id="video-chat-messages-wrap">
-                <div className="mm-desk-chat__banner">
-                  <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-                  You&apos;re chatting anonymously
-                </div>
-                <div className="mm-desk-chat__messages custom-scrollbar" id="video-chat-messages">
-                  {messages.filter((m) => !m.system || m.isIntro).map((m, i) => (
-                    <DeskChatBubble key={m.id || i} m={m} isMe={m.socketId === socket?.id} myCountry={chatMyCountry} peerCountry={chatPeerCountry} onViewCreator={setShowProfileHandle} />
-                  ))}
-                  <div ref={chatEndRef} />
-                </div>
-                {strangerTyping && (
-                  <div className="mm-desk-chat__typing">
-                    Stranger is typing…
-                    <span className="mm-desk-chat__typing-dots"><span /><span /><span /></span>
-                  </div>
-                )}
-                <div className="mm-desk-chat__input-row">
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={input}
-                    onChange={(e) => handleInputChange(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); sendMsg(); } }}
-                    placeholder="Type a message..."
-                    className="mm-desk-chat__input"
-                  />
-                  <button type="button" onClick={sendMsg} className="mm-desk-chat__send" aria-label="Send">
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
-                  </button>
-                </div>
-              </div>
-            )}
+            {!isSidebarDesk && status === 'connected' && renderDeskChatPanel(false)}
           </div>
         ) : (
           <>
@@ -2338,46 +2460,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         )}
       </main>
 
-      {desktopLayout ? (
-        <footer className="mm-desk-toolbar">
-          <button type="button" onClick={toggleMute} className={`mm-desk-tool ${muted ? 'mm-desk-tool--off' : ''}`}>
-            <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
-            Mic
-            <span className="mm-desk-tool__chev" onClick={(e) => { e.stopPropagation(); setShowDevicePicker(true); }} role="presentation">▾</span>
-          </button>
-          <button type="button" onClick={toggleCamera} className={`mm-desk-tool ${cameraOff ? 'mm-desk-tool--off' : ''}`}>
-            <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-            Camera
-            <span className="mm-desk-tool__chev" onClick={(e) => { e.stopPropagation(); setShowDevicePicker(true); }} role="presentation">▾</span>
-          </button>
-          <button type="button" onClick={toggleFlip} className="mm-desk-tool" title={isMobile ? 'Switch camera' : 'Flip mirror'}>
-            <svg className="w-4 h-4 text-violet-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>
-            Flip
-          </button>
-          {PHASE_4_UNIQUE.liveCaptions && (
-            <button
-              type="button"
-              onClick={() => unique.setCaptionsOn((v) => !v)}
-              className={`mm-desk-tool ${unique.captionsOn ? 'mm-desk-tool--next' : ''}`}
-              title="Toggle live captions panel"
-            >
-              CC
-            </button>
-          )}
-          <button type="button" onClick={scrollToChat} className="mm-desk-tool">
-            <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-            Chat
-          </button>
-          <button type="button" onClick={handleSkip} className="mm-desk-tool mm-desk-tool--next">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
-            Next
-          </button>
-          <button type="button" onClick={handleStop} className="mm-desk-tool mm-desk-tool--end">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.516l2.257-1.13a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.28 3H5z" /></svg>
-            End Call
-          </button>
-        </footer>
-      ) : (
+      {desktopLayout && !isSidebarDesk ? (
+        renderDeskToolbar()
+      ) : desktopLayout ? null : (
       <footer className="mm-mobile-bar">
         <button type="button" onClick={toggleMute} className={`mm-mobile-bar__item ${muted ? 'mm-mobile-bar__item--off' : ''}`}>
           <span className="mm-mobile-bar__icon mm-mobile-bar__icon--green">

@@ -2106,6 +2106,123 @@ h1, h2, h3, .font-display {
 .mm-desk-tool--end:hover { background: rgba(185, 28, 28, 0.55); color: #fff; }
 .mm-desk-tool__chev { opacity: 0.45; font-size: 0.65rem; margin-left: 0.15rem; }
 
+/* Desktop layout toggle */
+.mm-desk-layout-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border-radius: 0.625rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.mm-desk-layout-btn {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.45rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.4);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.mm-desk-layout-btn:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.85); }
+.mm-desk-layout-btn--active {
+  background: rgba(59, 130, 246, 0.22);
+  color: #93c5fd;
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.35);
+}
+
+/* Sidebar layout: stacked videos left, chat + controls right */
+.mm-desk-card--sidebar { max-width: min(98vw, 96rem); }
+.mm-desk-body--sidebar {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0.75rem;
+  min-height: 0;
+}
+.mm-desk-media--sidebar {
+  flex: 0 0 42%;
+  max-width: 42%;
+  min-width: 14rem;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mm-desk-video-col {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 0.75rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+.mm-desk-card--sidebar .mm-desk-pane {
+  min-height: 0;
+  height: 100%;
+}
+.mm-desk-sidebar {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  overflow: hidden;
+}
+.mm-desk-sidebar__idle {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2rem 1.5rem;
+  border-radius: 0.85rem;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+}
+.mm-desk-chat--sidebar {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  height: auto;
+  border-top: none;
+  border-radius: 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.mm-desk-toolbar--inline {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.85rem;
+  background: rgba(8, 10, 18, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.mm-desk-toolbar--inline .mm-desk-tool {
+  padding: 0 0.85rem;
+  min-height: 2.5rem;
+  font-size: 0.75rem;
+}
+.mm-desk-toolbar--inline .mm-desk-tool--end {
+  max-width: none;
+  flex: 1 1 100%;
+  margin-top: 0.15rem;
+}
+
+@media (max-width: 900px) {
+  .mm-desk-body--sidebar { flex-direction: column; }
+  .mm-desk-media--sidebar { flex: 0 0 auto; max-width: 100%; width: 100%; min-height: min(50vh, 480px); }
+  .mm-desk-video-col { min-height: min(48vh, 460px); }
+}
+
 /* ============================================================
    GROUP VIDEO — Desktop layout (2×2 grid + chat sidebar)
    ============================================================ */

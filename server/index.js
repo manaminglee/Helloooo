@@ -24,6 +24,7 @@ const { registerPayments } = require('./payments');
 const creatorSecurity = require('./creatorSecurity');
 const creatorEmail = require('./creatorEmail');
 const creatorNotifications = require('./creatorNotifications');
+const adminLiveMonitor = require('./adminLiveMonitor');
 
 /** Normalize ADMIN_KEY from env (trim whitespace / optional quotes). Never log the value. */
 function getAdminKey() {
@@ -492,6 +493,37 @@ function addUserToRoom(room, socketId, userData) {
   return true;
 }
 
+function terminateUserSession(socketId, message, io, { blockIp = false } = {}) {
+  const userData = users.get(socketId);
+  if (!userData) return { ok: false, error: 'User not found' };
+
+  const ip = userData.ip;
+  const msg = message || 'Your session was terminated by a moderator for violating community guidelines.';
+
+  for (const roomId of [...(userData.rooms || [])]) {
+    removeUserFromRoom(socketId, roomId, io);
+    io.sockets.sockets.get(socketId)?.leave(roomId);
+    userData.rooms.delete(roomId);
+  }
+
+  pairQueues.text = pairQueues.text.filter((e) => e.socketId !== socketId);
+  pairQueues.video = pairQueues.video.filter((e) => e.socketId !== socketId);
+  for (const [key, q] of groupQueues.entries()) {
+    groupQueues.set(key, q.filter((e) => e.socketId !== socketId));
+  }
+
+  adminLiveMonitor.clearMonitorPanel(socketId);
+  io.to(socketId).emit('session-terminated-by-admin', { message: msg });
+
+  if (blockIp && ip) blockedIps.add(ip);
+
+  setTimeout(() => {
+    io.sockets.sockets.get(socketId)?.disconnect(true);
+  }, 2000);
+
+  return { ok: true, ip };
+}
+
 function removeUserFromRoom(socketId, roomId, io) {
   const room = rooms.get(roomId);
   if (!room) return;
@@ -710,14 +742,15 @@ app.post('/api/admin/coins/update', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/end-room', requireAdmin, async (req, res) => {
-  const { roomId } = req.body || {};
+  const { roomId, message } = req.body || {};
   if (!roomId) return res.status(400).json({ error: 'Room ID required' });
   const room = rooms.get(roomId);
   if (room) {
-    io.to(roomId).emit('room-ended-by-admin');
-    [...room.users].forEach(sid => {
-      const s = io.sockets.sockets.get(sid);
-      if (s) s.leave(roomId);
+    const msg = message || 'This session was terminated by administrative protocol.';
+    io.to(roomId).emit('room-ended-by-admin', { message: msg });
+    [...room.users].forEach((sid) => {
+      adminLiveMonitor.clearMonitorPanel(sid);
+      io.sockets.sockets.get(sid)?.leave(roomId);
     });
     rooms.delete(roomId);
     if (room.interestKey) interestToRoom.delete(room.interestKey);
@@ -725,6 +758,30 @@ app.post('/api/admin/end-room', requireAdmin, async (req, res) => {
   } else {
     res.status(404).json({ error: 'Room not found' });
   }
+});
+
+app.get('/api/admin/live-panels', requireAdmin, (req, res) => {
+  res.json(adminLiveMonitor.buildLivePanelsSnapshot(users, rooms));
+});
+
+app.post('/api/admin/warn-user', requireAdmin, (req, res) => {
+  const { socketId, message } = req.body || {};
+  if (!socketId) return res.status(400).json({ error: 'socketId required' });
+  const user = users.get(socketId);
+  if (!user) return res.status(404).json({ error: 'User not online' });
+  if (user.ip) warnedIps.add(user.ip);
+  io.to(socketId).emit('content-flagged', {
+    message: message || '⚠️ WARNING: Your behavior has been flagged by a moderator. Please follow community rules.',
+  });
+  res.json({ success: true, ip: user.ip });
+});
+
+app.post('/api/admin/terminate-user', requireAdmin, (req, res) => {
+  const { socketId, message, blockIp } = req.body || {};
+  if (!socketId) return res.status(400).json({ error: 'socketId required' });
+  const result = terminateUserSession(socketId, message, io, { blockIp: !!blockIp });
+  if (!result.ok) return res.status(404).json({ error: result.error });
+  res.json({ success: true, ip: result.ip });
 });
 
 // Debug: Supabase connection status (safe - no secrets exposed)
@@ -1939,6 +1996,12 @@ app.get('/api/admin/overview', requireAdmin, async (req, res) => {
 
   const totalCoins = economyList.reduce((sum, u) => sum + (u.coins || 0), 0);
 
+  const liveSnapshot = adminLiveMonitor.buildLivePanelsSnapshot(users, rooms);
+  const livePanelBySocket = new Map();
+  for (const lr of liveSnapshot.rooms) {
+    for (const panel of lr.panels) livePanelBySocket.set(panel.socketId, panel);
+  }
+
   const turnUrl = (process.env.TURN_URL || '').trim();
   const turnUser = (process.env.TURN_USERNAME || '').trim();
   const turnPass = (process.env.TURN_PASSWORD || '').trim();
@@ -1985,12 +2048,19 @@ app.get('/api/admin/overview', requireAdmin, async (req, res) => {
       participantCount: r.users.size,
       maxSize: r.maxSize,
       createdAt: r.createdAt,
-      participants: (r.participants || []).map((p) => ({
-        socketId: p.socketId,
-        nickname: p.nickname,
-        country: p.country,
-        isCreator: !!p.isCreator,
-      })),
+      participants: (r.participants || []).map((p) => {
+        const u = users.get(p.socketId);
+        const panel = livePanelBySocket.get(p.socketId);
+        return {
+          socketId: p.socketId,
+          nickname: p.nickname,
+          country: p.country,
+          isCreator: !!p.isCreator,
+          ip: u?.ip || null,
+          frame: panel?.frame || null,
+          frameStale: panel?.stale ?? true,
+        };
+      }),
       messages: r.messages?.slice(-8) || [],
     })),
     memory: process.memoryUsage(),
@@ -2978,15 +3048,16 @@ io.on('connection', (socket) => {
   });
 
   socket.on('admin-end-room', (data) => {
-    const { roomId, adminKey: providedKey } = data || {};
+    const { roomId, adminKey: providedKey, message } = data || {};
     const adminKey = getAdminKey();
     if (!adminKey || providedKey !== adminKey) return;
     const room = rooms.get(roomId);
     if (room) {
-      io.to(roomId).emit('room-ended-by-admin');
-      [...room.users].forEach(sid => {
-        const s = io.sockets.sockets.get(sid);
-        if (s) s.leave(roomId);
+      const msg = message || 'This session was terminated by administrative protocol.';
+      io.to(roomId).emit('room-ended-by-admin', { message: msg });
+      [...room.users].forEach((sid) => {
+        adminLiveMonitor.clearMonitorPanel(sid);
+        io.sockets.sockets.get(sid)?.leave(roomId);
       });
       rooms.delete(roomId);
       if (room.interestKey) interestToRoom.delete(room.interestKey);
@@ -3228,6 +3299,10 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('media-message', { id: generateId('med'), roomId, type, content, nickname: u?.nickname || 'Someone', ts: Date.now(), socketId: socket.id });
   });
 
+  socket.on('admin-monitor-frame', (data) => {
+    adminLiveMonitor.ingestMonitorFrame(socket.id, data, users, rooms);
+  });
+
   socket.on('webrtc-signal', (data) => {
     if (isSignalRateLimited(socket.id, socket)) return;
     const { roomId, targetSocketId, type, signal } = data || {};
@@ -3263,6 +3338,7 @@ io.on('connection', (socket) => {
       });
     }
     users.delete(socket.id);
+    adminLiveMonitor.clearMonitorPanel(socket.id);
     signalCount.delete(socket.id);
     rateLimitNotifyAt.delete(socket.id);
     emitOnlineCount();
