@@ -12,7 +12,7 @@ const COMMUNITY_EVENTS = [
 ];
 
 function registerUniqueFeatures(app, io, deps) {
-  const { rooms, users, reports, sanitize, countryFromIP } = deps;
+  const { rooms, users, reports, sanitize, countryFromIP, persistence } = deps;
 
   const trustByHash = new Map();
   const vibePrefs = new Map();
@@ -28,6 +28,11 @@ function registerUniqueFeatures(app, io, deps) {
     const h = ipHash(ip);
     if (!trustByHash.has(h)) {
       trustByHash.set(h, { score: 50, sessions: 0, badges: [], reports: 0 });
+      if (persistence?.loadTrust) {
+        persistence.loadTrust(ip).then((t) => {
+          if (t) trustByHash.set(h, { ...t });
+        }).catch(() => {});
+      }
     }
     return trustByHash.get(h);
   }
@@ -37,6 +42,7 @@ function registerUniqueFeatures(app, io, deps) {
     t.score = Math.max(0, Math.min(100, t.score + delta));
     t.sessions += delta > 0 ? 1 : 0;
     if (badge && !t.badges.includes(badge)) t.badges.push(badge);
+    if (persistence?.saveTrust) persistence.saveTrust(ip, t).catch(() => {});
     return t;
   }
 

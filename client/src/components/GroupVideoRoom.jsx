@@ -4,14 +4,13 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { countryToFlag } from '../utils/countryFlag';
-import { AdSlot } from './AdSlot';
 import { useIceServers } from '../hooks/useIceServers';
 import { CoinBadge } from './CoinBadge';
 import { ReportSafetyModal } from './ReportSafetyModal';
 import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNotify';
 import { playConnectSound, playMessageSound, playDisconnectSound, playWaveSound } from '../utils/sounds';
 import { mmDebug } from '../utils/mmDebug';
-import { DraggableVideoPip } from './DraggableVideoPip';
+import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream } from '../utils/webrtcMedia';
 import { MiniChatGamePanel } from './MiniChatGamePanel';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { useUniqueSession } from '../hooks/useUniqueSession';
@@ -23,8 +22,6 @@ import {
   TrustScoreChip,
 } from './unique/UniqueSessionUI';
 import {
-  CollapsibleMobileChatHeader,
-  ConnectionQualityBadge,
   ConversationRatingModal,
   DevicePickerSheet,
   FloatingVideoReactions,
@@ -75,23 +72,6 @@ function MessageSpark({ x, y }) {
   );
 }
 
-function SecurityShield() {
-  return (
-    <div className="absolute top-4 right-4 z-[100] group cursor-pointer">
-      <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 backdrop-blur-md flex items-center justify-center text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:bg-emerald-500 hover:text-black transition-all">
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-      </div>
-      <div className="absolute top-10 right-0 w-48 p-3 rounded-2xl bg-black/90 border border-white/10 backdrop-blur-3xl text-[9px] font-black uppercase tracking-widest text-emerald-400 opacity-0 group-hover:opacity-100 transition-all pointer-events-none shadow-2xl">
-        <div className="flex items-center gap-2 mb-1">
-          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span>E2EE Active</span>
-        </div>
-        <p className="text-white/40 leading-relaxed font-bold">This session is secured via Peer-to-Peer AES-256 encryption. Signal data is not stored.</p>
-      </div>
-    </div>
-  );
-}
-
 function RecordingIndicator() {
   return (
     <div className="absolute top-4 left-4 z-[100] flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-600/20 border border-rose-500/30 backdrop-blur-md animate-pulse">
@@ -101,7 +81,81 @@ function RecordingIndicator() {
   );
 }
 
-function VideoTile({ stream, label, flag, isMe, isEmpty, isSearching, isCreator = false, isActiveSpeaker = false, quality = 'good', handRaised = false }) {
+function formatChatTime(ts) {
+  if (!ts) return '';
+  try {
+    return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  } catch {
+    return '';
+  }
+}
+
+function avatarColor(name = '') {
+  const hues = [220, 260, 200, 330, 280, 190];
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h += name.charCodeAt(i);
+  return hues[h % hues.length];
+}
+
+function GroupDeskChatRow({ m, isMe }) {
+  if (m.system) {
+    return (
+      <div className="mm-group-desk-chat__system">{m.text}</div>
+    );
+  }
+  const name = isMe ? 'You' : (m.nickname || 'Stranger');
+  const initial = (m.nickname || 'S').charAt(0).toUpperCase();
+  return (
+    <div className={`mm-group-desk-chat__msg ${isMe ? 'mm-group-desk-chat__msg--me' : ''}`}>
+      {!isMe && (
+        <div
+          className="mm-group-desk-chat__avatar"
+          style={{ background: `hsl(${avatarColor(m.nickname)} 55% 42%)` }}
+          aria-hidden
+        >
+          {initial}
+        </div>
+      )}
+      <div className="mm-group-desk-chat__bubble-wrap">
+        <div className="mm-group-desk-chat__meta">
+          <span className="mm-group-desk-chat__name">{name}</span>
+          {m.ts && <span className="mm-group-desk-chat__time">{formatChatTime(m.ts)}</span>}
+        </div>
+        <div className={`mm-group-desk-chat__bubble ${isMe ? 'mm-group-desk-chat__bubble--me' : ''}`}>
+          {m.text}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeskSignalBars({ level = 4 }) {
+  return (
+    <span className="mm-group-desk-signal" aria-hidden>
+      {[1, 2, 3, 4].map((i) => (
+        <span key={i} className={`mm-group-desk-signal__bar ${i <= level ? 'mm-group-desk-signal__bar--on' : ''}`} style={{ height: `${0.35 + i * 0.22}rem` }} />
+      ))}
+    </span>
+  );
+}
+
+function TileMicIcon({ muted }) {
+  if (muted) {
+    return (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+    </svg>
+  );
+}
+
+function VideoTile({ stream, label, flag, isMe, isEmpty, isSearching, isCreator = false, isActiveSpeaker = false, quality = 'good', handRaised = false, deskStyle = false, isMuted = false, hideTileMic = false }) {
   const ref = useRef(null);
   useEffect(() => {
     const el = ref.current;
@@ -144,7 +198,7 @@ function VideoTile({ stream, label, flag, isMe, isEmpty, isSearching, isCreator 
   }
 
   return (
-    <div className={`video-tile min-h-0 min-w-0 transition-all duration-500 overflow-hidden ${isMe ? 'mirror' : ''} ${isActiveSpeaker ? 'ring-4 ring-violet-500/40 ring-inset shadow-[0_0_30px_rgba(167,139,250,0.2)] scale-[1.02] z-10' : 'brightness-90 hover:brightness-100'}`}>
+    <div className={`video-tile min-h-0 min-w-0 transition-all duration-500 overflow-hidden ${deskStyle ? 'mm-group-desk-tile' : ''} ${isMe ? 'mirror' : ''} ${isActiveSpeaker && !deskStyle ? 'ring-4 ring-violet-500/40 ring-inset shadow-[0_0_30px_rgba(167,139,250,0.2)] scale-[1.02] z-10' : deskStyle && isActiveSpeaker ? 'mm-group-desk-tile--speaking' : 'brightness-90 hover:brightness-100'}`}>
       {stream ? (
         <video ref={ref} autoPlay playsInline muted={isMe} className="w-full h-full object-cover" />
       ) : (
@@ -162,6 +216,22 @@ function VideoTile({ stream, label, flag, isMe, isEmpty, isSearching, isCreator 
         </div>
       )}
 
+      {deskStyle && <span className="mm-group-desk-tile__live" aria-hidden />}
+
+      {deskStyle && !hideTileMic && (
+        <div className={`mm-group-desk-tile__mic ${isMuted ? 'mm-group-desk-tile__mic--off' : ''}`} title={isMuted ? 'Muted' : 'Mic on'}>
+          <TileMicIcon muted={isMuted} />
+        </div>
+      )}
+
+      {deskStyle ? (
+        <div className="mm-group-desk-tile__tag">
+          <span className="mm-desk-dot mm-desk-dot--green" aria-hidden />
+          <span className="truncate">{isMe ? 'You' : (isCreator ? `@${label}` : label)}</span>
+          {isCreator && <BlueTick />}
+          {!isMe && flag && <span className="ml-0.5">{flag}</span>}
+        </div>
+      ) : (
       <div className={`tile-label flex items-center justify-between gap-4 ${isCreator ? 'border border-violet-500/30 bg-violet-950/40 text-violet-400 font-black tracking-widest' : ''}`}>
         <div className="flex items-center gap-1.5">
           {flag && <span className="mr-1">{flag}</span>}
@@ -177,8 +247,9 @@ function VideoTile({ stream, label, flag, isMe, isEmpty, isSearching, isCreator 
           </div>
         )}
       </div>
+      )}
 
-      {isActiveSpeaker && (
+      {isActiveSpeaker && !deskStyle && (
         <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-500 text-black text-[7px] font-black uppercase tracking-widest animate-pulse shadow-lg">
           <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" /><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" /></svg>
           Speaking
@@ -245,6 +316,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const [connectedSecs, setConnectedSecs] = useState(0);
   const [showWave, setShowWave] = useState(false);
   const [moodEmoji, setMoodEmoji] = useState(null);
+  const [p2pHealth, setP2pHealth] = useState('good');
   const [strangerTyping, setStrangerTyping] = useState(false);
   const [goodVibesSent, setGoodVibesSent] = useState(false);
   const [goodVibesMatch, setGoodVibesMatch] = useState(false);
@@ -294,6 +366,11 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    setShowChat(true);
+    setChatCollapsed(false);
+  }, [isMobile]);
 
   useChatSwipeCollapse(chatPanelRef, () => isMobile && setChatCollapsed(true));
 
@@ -497,6 +574,12 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     const m = Math.floor(s / 60);
     const sec = s % 60;
     return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  const formatTimerLong = (s) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
   };
 
   // Wave / Good Vibes listeners
@@ -711,24 +794,20 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
     pc.ontrack = (e) => {
       let stream = e.streams && e.streams[0];
-      if (!stream) stream = new MediaStream([e.track]);
+      const track = e.track;
+      if (!stream && track) stream = new MediaStream([track]);
 
       setPeers((prev) => {
         const existing = prev.find((p) => p.socketId === remoteId);
         const nick = peerNicksRef.current.get(remoteId) || 'Stranger';
         const ctry = peerCountriesRef.current.get(remoteId);
         const isCr = !!peerCreatorsRef.current.get(remoteId);
+        const merged = mergeTrackIntoStream(existing?.stream, track) || stream;
 
-        if (existing?.stream) {
-          if (!existing.stream.getTracks().find((t) => t.id === e.track.id)) {
-            try { existing.stream.addTrack(e.track); } catch (_) { /* duplicate */ }
-          }
-          return prev.map((p) => (p.socketId === remoteId ? { ...p, nickname: nick, country: ctry, isCreator: isCr } : p));
-        }
         if (existing) {
-          return prev.map((p) => (p.socketId === remoteId ? { ...p, stream, nickname: nick, country: ctry, isCreator: isCr } : p));
+          return prev.map((p) => (p.socketId === remoteId ? { ...p, stream: merged, nickname: nick, country: ctry, isCreator: isCr } : p));
         }
-        return [...prev, { socketId: remoteId, stream, nickname: nick, country: ctry, isCreator: isCr }];
+        return [...prev, { socketId: remoteId, stream: merged, nickname: nick, country: ctry, isCreator: isCr }];
       });
 
       if (e.track.kind === 'audio' && !audioAnalyzersRef.current.has(remoteId)) {
@@ -745,11 +824,14 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       const state = pc.iceConnectionState;
       mmDebug('grp-ice', remoteId, state);
       if (state === 'failed' || state === 'disconnected') {
+        setP2pHealth('poor');
         setReconnectingPeers(prev => new Set(prev).add(remoteId));
         setTimeout(() => {
           if (pc.iceConnectionState === 'connected') {
             setReconnectingPeers(prev => { const n = new Set(prev); n.delete(remoteId); return n; });
-          } else {
+            setP2pHealth('good');
+          } else if (pc.iceConnectionState === 'failed') {
+            setP2pHealth('failed');
             setPeers((p) => p.filter((x) => x.socketId !== remoteId));
             peerConnectionsRef.current.delete(remoteId);
             audioAnalyzersRef.current.delete(remoteId);
@@ -757,6 +839,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           }
         }, 5000);
       } else if (state === 'connected') {
+        setP2pHealth('good');
         setReconnectingPeers(prev => { const n = new Set(prev); n.delete(remoteId); return n; });
       }
     };
@@ -810,6 +893,23 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     for (const c of pend) await add(c);
     pendingCandidatesRef.current.set(remoteId, []);
   };
+
+  const retryAllIce = useCallback(async () => {
+    const rid = roomIdRef.current || roomId;
+    if (!rid || !socket) return;
+    for (const [remoteId, pc] of peerConnectionsRef.current.entries()) {
+      if (pc.signalingState === 'closed') continue;
+      try {
+        if (typeof pc.restartIce === 'function') pc.restartIce();
+        const offer = await pc.createOffer({ iceRestart: true });
+        await pc.setLocalDescription(offer);
+        socket.emit('webrtc-signal', { roomId: rid, targetSocketId: remoteId, type: 'offer', signal: pc.localDescription });
+      } catch (e) {
+        mmDebug('grp-ice-restart.err', remoteId, e);
+      }
+    }
+    setToast('Reconnecting group video links…');
+  }, [roomId, socket]);
 
   const sendMessage = (overrideText) => {
     const t = (overrideText ?? chatInput).trim();
@@ -1261,57 +1361,6 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   }, [handleLeaveRoom]);
 
   // Build adaptive tile array: [local, ...peers, ...empty/searching]
-  const prioritizedPeers = [...peers].sort((a, b) => {
-    if (a.socketId === pinnedId) return -1;
-    if (b.socketId === pinnedId) return 1;
-    return 0;
-  });
-
-  const remotePeers = prioritizedPeers.slice(0, 3);
-  const tiles = [];
-
-  // Local tile
-  tiles.push({ type: 'local', isPinned: pinnedId === 'local' });
-
-  for (let i = 0; i < 3; i++) {
-    const peer = remotePeers[i];
-    if (isQueuing && i === 0 && peers.length === 0) {
-      tiles.push({ type: 'searching' });
-    } else if (peer) {
-      tiles.push({ type: 'peer', peer, isPinned: peer.socketId === pinnedId });
-    } else {
-      tiles.push({ type: 'empty' });
-    }
-  }
-
-  // PERSISTENT 2x2 GRID: Always show 4 panels
-  const displayTiles = tiles;
-  const gridClass = 'grid-cols-2 grid-rows-2';
-
-  const localStream = localStreamRef.current;
-  const mobileShowLocalPip = isMobile && localStreamReady && (
-    viewMode === 'grid' || (viewMode === 'speaker' && activeSpeakerId && activeSpeakerId !== 'local')
-  );
-
-  const mobileLocalPip = mobileShowLocalPip ? (
-    <DraggableVideoPip
-      position={pipPos}
-      onPositionChange={setPipPos}
-      onCycleCorner={cyclePipCorner}
-      size={pipSize}
-      hidden={pipHidden}
-      label="Your camera — drag to a corner"
-    >
-      <video
-        ref={localVideoRef}
-        autoPlay
-        muted
-        playsInline
-        className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
-      />
-    </DraggableVideoPip>
-  ) : null;
-
   const submitGroupReport = ({ reason, block }) => {
     const rid = roomIdRef.current || roomId;
     const target = reportTargetSid || peers.find((p) => p.socketId !== socket?.id)?.socketId;
@@ -1346,8 +1395,40 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     </div>
   ) : null;
 
+  const desktopLayout = !isMobile;
+  const roomTitle = (displayInterest || 'general').replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const connLevel = p2pHealth === 'failed' ? 1 : p2pHealth !== 'good' ? 2 : [...connectionQuality.values()].some((q) => q === 'poor') ? 2 : 4;
+  const connLabel = connLevel >= 4 ? 'Good Connection' : connLevel >= 2 ? 'Fair Connection' : 'Poor Connection';
+
+  const statusBanners = (
+    <>
+      {reconnectingPeers.size > 0 && (
+        <div className="shrink-0 px-3 py-2 text-center text-[10px] font-bold uppercase tracking-widest bg-amber-500/10 border-b border-amber-500/20 text-amber-100" role="status">
+          Some peer links are reconnecting — your session stays anonymous.
+        </div>
+      )}
+      {p2pHealth !== 'good' && !isQueuing && (
+        <div className={`shrink-0 px-3 py-2 flex flex-wrap items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest border-b ${p2pHealth === 'failed' ? 'bg-rose-500/15 border-rose-500/25 text-rose-100' : 'bg-amber-500/10 border-amber-500/25 text-amber-100'}`} role="status">
+          <span>{p2pHealth === 'failed' ? 'Group video link lost' : 'Unstable group network'}</span>
+          <button type="button" onClick={retryAllIce} className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25">Retry links</button>
+        </div>
+      )}
+      <VideoSessionBanners
+        showSafetyNudge={showSafetyNudge}
+        onDismissSafety={dismissSafetyNudge}
+        peerRecording={peerRecording}
+        matchedInterests={[displayInterest].filter(Boolean)}
+      />
+      {PHASE_4_UNIQUE.structuredModes && unique.modePrompt && !isQueuing && (
+        <div className="shrink-0 px-4 py-2 bg-[#76B900]/5 border-b border-[#76B900]/20 text-center">
+          <p className="text-[11px] text-white/70 italic">&ldquo;{unique.modePrompt}&rdquo;</p>
+        </div>
+      )}
+    </>
+  );
+
   return (
-    <div className="h-[100dvh] min-h-0 flex flex-col bg-realm-void text-white overflow-hidden font-sans select-none selection:bg-violet-500/25 pt-[env(safe-area-inset-top)]">
+    <div className={`h-[100dvh] min-h-0 flex flex-col text-white overflow-hidden font-sans select-none selection:bg-violet-500/25 ${desktopLayout ? 'mm-group-desk-shell' : 'mm-group-mobile-shell'}`}>
 
       {/* 3D EMOJI OVERLAY */}
       {active3dEmoji && (
@@ -1396,272 +1477,350 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         </div>
       )}
 
-      {/* HEADER: PREMIUM GLASS */}
-      <header className="mm-design-panel-header flex-shrink-0 min-h-[4rem] sm:h-20 px-3 sm:px-6 py-2 sm:py-0 flex flex-wrap items-center justify-between gap-x-2 gap-y-2 bg-black/40 backdrop-blur-2xl z-50">
-        <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1 basis-[min(100%,12rem)] sm:basis-auto">
-          <div className="w-9 h-9 sm:w-12 sm:h-12 shrink-0 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-black text-base sm:text-lg shadow-lg shadow-indigo-500/20">M</div>
-          <div className="min-w-0">
-            <h1 className="text-[10px] sm:text-sm font-black tracking-tighter text-white/90 truncate">POD: #{displayInterest}</h1>
-            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-              <ConnectionQualityBadge quality={connectionQuality.get(peers[0]?.socketId) || 'good'} />
-              <span className="text-[9px] text-white/30 tabular-nums">{formatTimer(connectedSecs)}</span>
-              {PHASE_4_UNIQUE.trustScore && <TrustScoreChip trust={unique.trust} />}
-              {PHASE_4_UNIQUE.nvidiaCopilot && <AiStatusPill online={unique.aiOnline} />}
-              {PHASE_4_UNIQUE.coOpStreak && <CoOpStreakBadge minutes={unique.coOpMinutes} />}
-              {PHASE_4_UNIQUE.calmMode && <CalmModeToggle enabled={calmMode} onToggle={() => setCalmMode((c) => !c)} />}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1.5 sm:gap-4 flex-wrap justify-end w-full sm:w-auto">
-          <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
-            <button
-              type="button"
-              onClick={() => setViewMode('grid')}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[8px] sm:text-[9px] font-black uppercase tracking-widest transition-all ${viewMode === 'grid' ? 'bg-indigo-500 text-white shadow-lg' : 'text-white/40 hover:text-white/60'}`}
-            >Grid</button>
-            <button
-              type="button"
-              onClick={() => setViewMode('speaker')}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[8px] sm:text-[9px] font-black uppercase tracking-widest transition-all ${viewMode === 'speaker' ? 'bg-indigo-500 text-white shadow-lg' : 'text-white/40 hover:text-white/60'}`}
-            >Speaker</button>
-          </div>
-
-          {isCreator && (
-            <CoinBadge balance={balance} streak={streak} canClaim={canClaim} nextClaim={nextClaim ?? 0} claimCoins={claimCoins} registered={registered} currentActiveSeconds={currentActiveSeconds} isCreator={isCreator} />
-          )}
-          <button type="button" onClick={() => setShowReportModal(true)} className="px-3 sm:px-4 py-2 bg-white/5 border border-white/15 hover:bg-white/10 text-white/80 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all">Report</button>
-          <button onClick={handleLeaveRoom} className="px-3 sm:px-4 py-2 bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500 text-rose-500 hover:text-white rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all">Leave</button>
-        </div>
-      </header>
-
-      {reconnectingPeers.size > 0 && (
-        <div className="shrink-0 px-3 py-2 text-center text-[10px] font-bold uppercase tracking-widest bg-amber-500/10 border-b border-amber-500/20 text-amber-100" role="status">
-          Some peer links are reconnecting — your session stays anonymous.
-        </div>
-      )}
-
-      <div className="shrink-0 px-2 sm:px-3 border-b border-white/5 bg-black/20">
-        <AdSlot slotKey="chat_banner" script={adScripts?.chat_banner} adsEnabled={adsEnabled} compact />
-      </div>
-
-      <VideoSessionBanners
-        showSafetyNudge={showSafetyNudge}
-        onDismissSafety={dismissSafetyNudge}
-        peerRecording={peerRecording}
-        matchedInterests={[displayInterest].filter(Boolean)}
-      />
-
-      {PHASE_4_UNIQUE.structuredModes && unique.modePrompt && !isQueuing && (
-        <div className="shrink-0 px-4 py-2 bg-[#76B900]/5 border-b border-[#76B900]/20 text-center">
-          <p className="text-[11px] text-white/70 italic">&ldquo;{unique.modePrompt}&rdquo;</p>
-        </div>
-      )}
-
-      {/* MAIN VIEWPORT */}
-      <main className={`flex-1 flex min-h-0 relative p-1.5 sm:p-2 gap-2 ${showChat ? 'max-sm:flex-col' : ''}`}>
-        <div className={`video-grid-container mm-design-panel mm-video-stage-mobile flex-1 min-h-0 min-w-0 bg-black p-1.5 sm:p-4 relative overflow-hidden mm-group-video-grid-mobile ${showChat && !chatCollapsed ? 'mm-group-video-grid-mobile--chat-open max-sm:flex-[1_1_0]' : ''} ${viewMode === 'grid' ? 'grid gap-2 sm:gap-4 grid-cols-2 grid-rows-2 sm:pb-4' : 'flex flex-col sm:pb-4'}`}>
-          <SecurityShield />
-          {isRecording && <RecordingIndicator />}
-          <FloatingVideoReactions reactions={localReactions.map((r) => ({ id: r.id, emoji: r.emoji, x: r.x, y: r.y }))} />
-
-          {viewMode === 'speaker' ? (
-            <div className="flex-1 flex flex-col sm:flex-row gap-4 h-full min-h-0">
-              {/* LARGE SPEAKER */}
-              <div className="flex-[3] relative h-full min-h-0">
-                {activeSpeakerId === 'local' ? (
-                  <VideoTile isMe stream={localStreamRef.current} label={nickname || 'Anonymous'} flag={countryToFlag(myCountry)} isCreator={isCreator} isActiveSpeaker handRaised={handRaised} />
-                ) : (
-                  peers.find(p => p.socketId === activeSpeakerId) ? (
-                    <VideoTile
-                      stream={peers.find(p => p.socketId === activeSpeakerId).stream}
-                      label={peers.find(p => p.socketId === activeSpeakerId).nickname}
-                      flag={countryToFlag(peers.find(p => p.socketId === activeSpeakerId).country)}
-                      isActiveSpeaker quality={connectionQuality.get(activeSpeakerId) || 'good'}
-                      handRaised={remoteRaisedHands.has(activeSpeakerId)}
-                    />
-                  ) : (
-                    <VideoTile isMe stream={localStreamRef.current} label={nickname || 'Anonymous'} flag={countryToFlag(myCountry)} isCreator={isCreator} isActiveSpeaker handRaised={handRaised} />
-                  )
-                )}
-                {mobileLocalPip}
+      {desktopLayout ? (
+        <>
+          <header className="mm-group-desk-header">
+            <div className="mm-group-desk-header__left">
+              <div className="mm-group-desk-header__room">
+                <span className="mm-group-desk-header__room-icon" aria-hidden>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                </span>
+                <h1 className="mm-group-desk-header__title">Room: {roomTitle}</h1>
               </div>
-              {/* SMALL PEERS LIST */}
-              <div className="flex-1 flex flex-row sm:flex-col gap-2 overflow-x-auto sm:overflow-y-auto custom-scrollbar pr-1 min-h-0 pb-2">
-                {activeSpeakerId !== 'local' && !isMobile && (
-                  <div className="w-40 sm:w-full aspect-video shrink-0">
-                    <VideoTile isMe stream={localStreamRef.current} label={nickname || 'Anonymous'} flag={countryToFlag(myCountry)} isCreator={isCreator} handRaised={handRaised} />
-                  </div>
-                )}
-                {peers.filter(p => p.socketId !== activeSpeakerId).map(p => (
-                  <div key={p.socketId} className="w-40 sm:w-full aspect-video shrink-0">
-                    <VideoTile stream={p.stream} label={p.nickname} flag={countryToFlag(p.country)} quality={connectionQuality.get(p.socketId) || 'good'} handRaised={remoteRaisedHands.has(p.socketId)} />
-                  </div>
+              <div className="mm-group-desk-header__meta">
+                <span className="mm-group-desk-header__meta-item">
+                  <svg className="w-4 h-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                  {participantCount} Participants
+                </span>
+                <span className="mm-group-desk-header__meta-item">
+                  <DeskSignalBars level={connLevel} />
+                  {connLabel}
+                </span>
+              </div>
+            </div>
+            <div className="mm-group-desk-header__actions">
+              {isCreator && (
+                <CoinBadge balance={balance} streak={streak} canClaim={canClaim} nextClaim={nextClaim ?? 0} claimCoins={claimCoins} registered={registered} currentActiveSeconds={currentActiveSeconds} isCreator={isCreator} />
+              )}
+              <button type="button" className="mm-group-desk-header__btn" onClick={() => setShowReportModal(true)}>
+                <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                Safety
+              </button>
+              <button type="button" className="mm-group-desk-header__btn" onClick={() => setShowDevicePicker(true)}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                Settings
+              </button>
+              <button type="button" className="mm-desk-icon-btn" onClick={() => setShowMoreMenu(true)} title="More" aria-label="More">⋯</button>
+            </div>
+          </header>
+
+          {statusBanners}
+
+          <main className="mm-group-desk-body">
+            <div className="mm-group-desk-stage">
+              {isRecording && <RecordingIndicator />}
+              <FloatingVideoReactions reactions={localReactions.map((r) => ({ id: r.id, emoji: r.emoji, x: r.x, y: r.y }))} />
+              <div className="mm-group-desk-grid">
+                <VideoTile
+                  deskStyle
+                  isMe
+                  stream={localStreamRef.current}
+                  label={nickname || 'Anonymous'}
+                  flag={countryToFlag(myCountry)}
+                  isCreator={isCreator}
+                  isActiveSpeaker={activeSpeakerId === 'local'}
+                  handRaised={handRaised}
+                  isMuted={muted}
+                />
+                {peers.slice(0, 3).map((p) => (
+                  <VideoTile
+                    key={p.socketId}
+                    deskStyle
+                    stream={p.stream}
+                    label={p.nickname}
+                    flag={countryToFlag(p.country)}
+                    isCreator={p.isCreator}
+                    isActiveSpeaker={activeSpeakerId === p.socketId}
+                    quality={connectionQuality.get(p.socketId) || 'good'}
+                    handRaised={remoteRaisedHands.has(p.socketId)}
+                  />
                 ))}
                 {Array.from({ length: Math.max(0, 3 - peers.length) }).map((_, i) => (
-                  <div key={`empty-${i}`} className="w-40 sm:w-full aspect-video shrink-0">
-                    <VideoTile isEmpty />
-                  </div>
+                  <VideoTile key={`empty-${i}`} deskStyle isEmpty />
                 ))}
               </div>
             </div>
-          ) : (
-            <>
-              {!isMobile && (
-                <VideoTile isMe stream={localStreamRef.current} label={nickname || 'Anonymous'} flag={countryToFlag(myCountry)} isCreator={isCreator} isActiveSpeaker={activeSpeakerId === 'local'} handRaised={handRaised} />
+
+            <aside ref={chatPanelRef} className="mm-group-desk-chat">
+              <div className="mm-group-desk-chat__head">
+                <span className="mm-group-desk-chat__head-title">Group Chat</span>
+                <div className="mm-group-desk-chat__head-actions">
+                  <span className="inline-flex items-center gap-1">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    {participantCount}
+                  </span>
+                  <button type="button" onClick={generateAiSpark} disabled={isAiGenerating} className="opacity-60 hover:opacity-100" title="Icebreaker">📌</button>
+                </div>
+              </div>
+              <div id="group-video-chat-messages" className="mm-group-desk-chat__messages custom-scrollbar">
+                {messages.map((m, i) => (
+                  <GroupDeskChatRow key={m.id || i} m={m} isMe={!m.system && m.socketId === socket?.id} />
+                ))}
+                <div ref={chatEndRef} />
+              </div>
+              {PHASE_3_PRO.miniChatGames && (roomIdRef.current || roomId) && (
+                <div className="px-3 pb-2">
+                  <MiniChatGamePanel onSendPrompt={(text) => { setChatInput(text); sendMessage(text); }} />
+                </div>
               )}
-              {peers.slice(0, isMobile ? 4 : 3).map((p) => (
-                <VideoTile key={p.socketId} stream={p.stream} label={p.nickname} flag={countryToFlag(p.country)} isCreator={p.isCreator} isActiveSpeaker={activeSpeakerId === p.socketId} quality={connectionQuality.get(p.socketId) || 'good'} handRaised={remoteRaisedHands.has(p.socketId)} />
-              ))}
-              {Array.from({ length: Math.max(0, (isMobile ? 4 : 3) - peers.length) }).map((_, i) => (
-                <VideoTile key={`empty-${i}`} isEmpty />
-              ))}
-              {mobileLocalPip}
-            </>
-          )}
-        </div>
+              <div className="mm-group-desk-chat__input-row">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                  className="mm-group-desk-chat__input"
+                  placeholder="Type a message..."
+                />
+                <button type="button" className="mm-group-desk-chat__emoji" onClick={() => setShowEmojiPicker((v) => !v)} aria-label="Emoji">😊</button>
+                <button type="button" onClick={sendMessage} className="mm-group-desk-chat__send" aria-label="Send">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
+                </button>
+              </div>
+            </aside>
+          </main>
 
-        <div className="hidden xl:flex w-48 shrink-0 flex-col border-l border-white/5 bg-black/20 p-2 overflow-y-auto custom-scrollbar">
-          <AdSlot slotKey="chat_sidebar" script={adScripts?.chat_sidebar} adsEnabled={adsEnabled} compact />
-        </div>
-
-        {/* CHAT PANEL */}
-        {showChat && isMobile && chatCollapsed && (
-          <CollapsibleMobileChatHeader collapsed onToggle={() => setChatCollapsed(false)} unread={chatUnread} title="Pod Chat" />
-        )}
-        {showChat && !chatCollapsed && (
-          <aside ref={chatPanelRef} className="mm-design-panel chat-panel shrink-0 z-[60] w-full sm:w-80 sm:max-w-[85vw] sm:h-full bg-[#0a0c16]/95 backdrop-blur-3xl flex flex-col animate-slide-left max-sm:relative max-sm:h-[40vh] max-sm:max-h-[42vh] max-sm:border-t max-sm:border-white/10 max-sm:pb-[env(safe-area-inset-bottom)]">
-            {isMobile && (
-              <CollapsibleMobileChatHeader collapsed={chatCollapsed} onToggle={() => setChatCollapsed((c) => !c)} unread={chatUnread} title="Pod Chat" />
-            )}
-            <div className="p-4 border-b border-white/5 flex items-center justify-between">
-              <span className="text-[10px] font-black uppercase tracking-widest text-white/40 hidden sm:block">Pod Chat</span>
-              <div className="flex items-center gap-2 ml-auto">
-                <button type="button" onClick={generateAiSpark} disabled={isAiGenerating} className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">✨ Spark</button>
-                <button onClick={() => setShowChat(false)} className="text-white/20 hover:text-white">✕</button>
+          <footer className="mm-group-desk-toolbar">
+            <button type="button" className={`mm-group-desk-tool ${muted ? 'mm-group-desk-tool--off' : ''}`} onClick={toggleMute}>
+              <TileMicIcon muted={muted} />
+              Mic
+              <span className="mm-group-desk-tool__chev">▾</span>
+            </button>
+            <button type="button" className={`mm-group-desk-tool ${cameraOff ? 'mm-group-desk-tool--off' : ''}`} onClick={toggleCamera}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+              Camera
+              <span className="mm-group-desk-tool__chev">▾</span>
+            </button>
+            <button type="button" className={`mm-group-desk-tool ${isScreenSharing ? 'mm-group-desk-tool--active' : ''}`} onClick={startScreenShare}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+              Share
+              <span className="mm-group-desk-tool__chev">▾</span>
+            </button>
+            <button type="button" className="mm-group-desk-tool mm-group-desk-tool--active" onClick={() => chatPanelRef.current?.querySelector('.mm-group-desk-chat__input')?.focus()}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+              Chat
+              {chatUnread > 0 && <span className="mm-group-desk-tool__dot" />}
+            </button>
+            <button type="button" className="mm-group-desk-tool" title={`${participantCount} participants`}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+              Participants
+              <span className="mm-group-desk-tool__badge">{participantCount}</span>
+            </button>
+            <button type="button" className="mm-group-desk-tool mm-group-desk-tool--leave" onClick={handleLeaveRoom}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" /></svg>
+              Leave
+            </button>
+            <button
+              type="button"
+              className={`mm-group-desk-tool mm-group-desk-tool--rec ${isRecording ? 'mm-group-desk-tool--rec-on' : ''}`}
+              onClick={isRecording ? stopRecording : startRecording}
+            >
+              <span className={`w-2.5 h-2.5 rounded-full ${isRecording ? 'bg-rose-500 animate-pulse' : 'border-2 border-current'}`} />
+              Record
+            </button>
+          </footer>
+        </>
+      ) : (
+        <>
+          <header className="mm-group-mobile-header">
+            <button type="button" className="mm-group-mobile-header__back" onClick={handleLeaveRoom} aria-label="Leave room">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <div className="mm-group-mobile-header__brand">
+              <img src="/apple-touch-icon.png" alt="" className="mm-group-mobile-header__logo" />
+              <div className="mm-group-mobile-header__titles">
+                <span className="mm-group-mobile-header__name">ManaMingle</span>
+                <span className="mm-group-mobile-header__sub">2×2 Group Video Chat</span>
               </div>
             </div>
-            <div id="group-video-chat-messages" className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-              {messages.map((m, i) => (
-                <div key={m.id || i} className={`flex flex-col ${m.system ? 'items-center py-2' : m.socketId === socket.id ? 'items-end' : 'items-start'}`}>
-                  {m.system ? (
-                    <span className="text-[9px] font-bold text-white/20 uppercase text-center">{m.text}</span>
-                  ) : (
-                    <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-xs ${m.socketId === socket.id ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white/5 text-white/90 rounded-tl-none border border-white/5'}`}>
-                      {!m.system && <div className="text-[8px] font-black uppercase text-white/40 mb-1">{m.nickname || 'Stranger'}</div>}
-                      {m.text}
+            <div className="mm-group-mobile-header__actions">
+              <button type="button" className="mm-group-mobile-header__icon" onClick={() => setShowReportModal(true)} aria-label="Safety">
+                <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+              </button>
+              <button type="button" className="mm-group-mobile-header__icon" onClick={() => setShowMoreMenu(true)} aria-label="More">⋯</button>
+            </div>
+            <div className="mm-group-mobile-header__status">
+              <span className="mm-desk-dot mm-desk-dot--green" aria-hidden />
+              Connected
+              <span className="mm-group-mobile-header__timer">{formatTimerLong(connectedSecs)}</span>
+            </div>
+          </header>
+
+          {reconnectingPeers.size > 0 && (
+            <div className="shrink-0 px-3 py-1.5 text-center text-[9px] font-bold uppercase tracking-widest bg-amber-500/10 border-b border-amber-500/20 text-amber-100" role="status">
+              Reconnecting peers…
+            </div>
+          )}
+          {p2pHealth !== 'good' && !isQueuing && (
+            <div className={`shrink-0 px-3 py-1.5 flex items-center justify-center gap-2 text-[9px] font-bold uppercase tracking-widest border-b ${p2pHealth === 'failed' ? 'bg-rose-500/15 border-rose-500/25 text-rose-100' : 'bg-amber-500/10 border-amber-500/25 text-amber-100'}`} role="status">
+              <span>{p2pHealth === 'failed' ? 'Link lost' : 'Unstable network'}</span>
+              <button type="button" onClick={retryAllIce} className="px-2 py-0.5 rounded bg-white/15">Retry</button>
+            </div>
+          )}
+
+          <main className="mm-group-mobile-main">
+            <div className="mm-group-mobile-grid">
+              {isRecording && <RecordingIndicator />}
+              <FloatingVideoReactions reactions={localReactions.map((r) => ({ id: r.id, emoji: r.emoji, x: r.x, y: r.y }))} />
+              <VideoTile
+                deskStyle
+                hideTileMic
+                isMe
+                stream={localStreamRef.current}
+                label={nickname || 'Anonymous'}
+                flag={countryToFlag(myCountry)}
+                isCreator={isCreator}
+                isActiveSpeaker={activeSpeakerId === 'local'}
+                handRaised={handRaised}
+                isMuted={muted}
+              />
+              {peers.slice(0, 3).map((p) => (
+                <VideoTile
+                  key={p.socketId}
+                  deskStyle
+                  hideTileMic
+                  stream={p.stream}
+                  label={p.nickname}
+                  flag={countryToFlag(p.country)}
+                  isCreator={p.isCreator}
+                  isActiveSpeaker={activeSpeakerId === p.socketId}
+                  quality={connectionQuality.get(p.socketId) || 'good'}
+                  handRaised={remoteRaisedHands.has(p.socketId)}
+                />
+              ))}
+              {Array.from({ length: Math.max(0, 3 - peers.length) }).map((_, i) => (
+                <VideoTile key={`mob-empty-${i}`} deskStyle hideTileMic isEmpty />
+              ))}
+            </div>
+
+            <div ref={chatPanelRef} className={`mm-group-mobile-chat ${chatCollapsed ? 'mm-group-mobile-chat--collapsed' : ''}`}>
+              <button
+                type="button"
+                className="mm-group-mobile-chat__head"
+                onClick={() => setChatCollapsed((c) => !c)}
+                aria-expanded={!chatCollapsed}
+              >
+                <span className="mm-group-mobile-chat__head-left">
+                  <svg className="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                  Group Chat
+                  <span className="mm-group-mobile-chat__count">
+                    <svg className="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    {participantCount}
+                  </span>
+                  {chatUnread > 0 && <span className="mm-group-mobile-chat__unread">{chatUnread > 9 ? '9+' : chatUnread}</span>}
+                </span>
+                <span className={`mm-group-mobile-chat__chev ${chatCollapsed ? '' : 'mm-group-mobile-chat__chev--open'}`}>⌃</span>
+              </button>
+
+              {!chatCollapsed && (
+                <>
+                  <div id="group-video-chat-messages" className="mm-group-mobile-chat__messages custom-scrollbar">
+                    {messages.map((m, i) => (
+                      <GroupDeskChatRow key={m.id || i} m={m} isMe={!m.system && m.socketId === socket?.id} />
+                    ))}
+                    {strangerTyping && (
+                      <div className="mm-group-mobile-chat__typing">
+                        Someone is typing
+                        <span className="mm-desk-chat__typing-dots"><span /><span /><span /></span>
+                      </div>
+                    )}
+                    <div ref={chatEndRef} />
+                  </div>
+                  {PHASE_3_PRO.miniChatGames && (roomIdRef.current || roomId) && (
+                    <div className="px-3 pb-1">
+                      <MiniChatGamePanel onSendPrompt={(text) => { setChatInput(text); sendMessage(text); }} />
                     </div>
                   )}
-                </div>
+                  <div className="mm-group-mobile-chat__input-row">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                      className="mm-group-mobile-chat__input"
+                      placeholder="Type a message..."
+                    />
+                    <button type="button" className="mm-group-mobile-chat__emoji" onClick={() => setShowEmojiPicker((v) => !v)} aria-label="Emoji">😊</button>
+                    <button type="button" onClick={sendMessage} className="mm-group-mobile-chat__send" aria-label="Send">
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </main>
+
+          <footer className="mm-mobile-bar">
+            <button type="button" onClick={toggleMute} className={`mm-mobile-bar__item ${muted ? 'mm-mobile-bar__item--off' : ''}`}>
+              <span className="mm-mobile-bar__icon mm-mobile-bar__icon--green relative">
+                <TileMicIcon muted={muted} />
+                {!muted && <span className="mm-group-mobile-bar__dot" />}
+              </span>
+              <span className="mm-mobile-bar__label">Mic</span>
+            </button>
+            <button type="button" onClick={toggleCamera} className={`mm-mobile-bar__item ${cameraOff ? 'mm-mobile-bar__item--off' : ''}`}>
+              <span className="mm-mobile-bar__icon mm-mobile-bar__icon--green relative">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                {!cameraOff && <span className="mm-group-mobile-bar__dot" />}
+              </span>
+              <span className="mm-mobile-bar__label">Camera</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => { setChatCollapsed(false); setShowChat(true); chatPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }}
+              className={`mm-mobile-bar__item ${!chatCollapsed ? 'mm-mobile-bar__item--active' : ''}`}
+            >
+              <span className="mm-mobile-bar__icon mm-mobile-bar__icon--blue relative">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                {chatUnread > 0 && <span className="mm-mobile-bar__badge">{chatUnread > 9 ? '9+' : chatUnread}</span>}
+              </span>
+              <span className="mm-mobile-bar__label">Chat</span>
+            </button>
+            <button type="button" className="mm-mobile-bar__item" title={`${participantCount} participants`}>
+              <span className="mm-mobile-bar__icon mm-mobile-bar__icon--blue relative">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                <span className="mm-mobile-bar__badge" style={{ background: '#3b82f6' }}>{participantCount}</span>
+              </span>
+              <span className="mm-mobile-bar__label">Participants</span>
+            </button>
+            <button type="button" onClick={handleLeaveRoom} className="mm-mobile-bar__item">
+              <span className="mm-mobile-bar__icon mm-mobile-bar__icon--red">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" /></svg>
+              </span>
+              <span className="mm-mobile-bar__label">End</span>
+            </button>
+          </footer>
+
+          {isCreator && (
+            <div className="mm-group-mobile-creator-bar">
+              {EMOJIS_3D.slice(0, 4).map((e) => (
+                <button
+                  key={e.char}
+                  type="button"
+                  onClick={() => {
+                    if (balance < 5) return alert('Requires 5 Mana (Coins)');
+                    socket.emit('send-3d-emoji', { emoji: e, roomId: roomIdProp || roomIdRef.current });
+                  }}
+                  className="mm-group-mobile-creator-bar__btn"
+                  title={`${e.char} (5 Mana)`}
+                >
+                  <img src={e.url} className="w-6 h-6" alt={e.char} />
+                </button>
               ))}
-              <div ref={chatEndRef} />
             </div>
-            {PHASE_3_PRO.miniChatGames && (roomIdRef.current || roomId) && (
-              <div className="px-4 pb-2">
-                <MiniChatGamePanel onSendPrompt={(text) => { setChatInput(text); sendMessage(text); }} />
-              </div>
-            )}
-            <div className="p-4 bg-black/40 border-t border-white/5 flex gap-2">
-              <input
-                type="text"
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && sendMessage()}
-                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs outline-none focus:border-indigo-500 transition-all"
-                placeholder="Message pod..."
-              />
-              <button onClick={sendMessage} className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white">🚀</button>
-            </div>
-          </aside>
-        )}
-      </main>
-
-      {/* Creator: paid 3D emoji + rename pod */}
-      {isCreator && (
-      <div className="mm-design-panel mm-design-panel--xl fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] sm:bottom-24 left-1/2 -translate-x-1/2 flex max-w-[96vw] overflow-x-auto items-center gap-1.5 p-1.5 rounded-2xl bg-black/40 backdrop-blur-3xl z-[140] animate-fade-in [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-    {EMOJIS_3D.map(e => (
-      <button
-        key={e.char}
-        type="button"
-        onClick={() => {
-          if (balance < 5) return alert("Requires 5 Mana (Coins)");
-          socket.emit('send-3d-emoji', { emoji: e, roomId: roomIdProp || roomIdRef.current });
-        }}
-        className="w-10 h-10 sm:w-11 sm:h-11 flex-shrink-0 bg-white/5 border border-white/5 rounded-xl flex items-center justify-center hover:bg-white/10 hover:scale-110 transition-all active:scale-95"
-        title={`${e.char} (5 Mana)`}
-      >
-        <img src={e.url} className="w-7 h-7 sm:w-8 sm:h-8" alt={e.char} />
-      </button>
-    ))}
-    <div className="w-[1px] h-6 bg-white/10 mx-1" />
-    <button
-      type="button"
-      onClick={() => {
-        setRenameInput(displayInterest);
-        setShowRenameModal(true);
-      }}
-      className="w-10 h-10 flex-shrink-0 bg-amber-500/10 border border-amber-500/10 text-amber-500 rounded-xl flex items-center justify-center text-xs hover:bg-amber-500 hover:text-black transition-all"
-      title="Rename Realm"
-    >
-      ✎
-    </button>
-  </div>
+          )}
+        </>
       )}
-
-  {/* BOTTOM CONTROL BAR — min 44px tap targets, safe-area for notched phones */ }
-  <footer className="mm-design-panel mm-design-panel--pill fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] sm:bottom-6 left-1/2 -translate-x-1/2 flex max-w-[100vw] flex-wrap items-center justify-center gap-2 sm:gap-4 px-3 sm:px-4 py-3 rounded-full bg-black/60 backdrop-blur-2xl z-[150]">
-    <button onClick={toggleCamera} title={cameraOff ? 'Turn camera on' : 'Turn camera off'} aria-label={cameraOff ? 'Turn camera on' : 'Turn camera off'} className={`min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-black/60 ${cameraOff ? 'bg-rose-500 text-white shadow-lg shadow-rose-500/30' : 'bg-white/10 text-white hover:bg-white/20'}`}>
-      {cameraOff ? (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 15v2a2 2 0 01-2 2h-2v-4l-3-3" /></svg>
-      ) : (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-      )}
-    </button>
-    <button onClick={() => setCameraBlur(b => !b)} title={cameraBlur ? 'Remove blur' : 'Blur background'} aria-label={cameraBlur ? 'Remove background blur' : 'Blur background'} className={`min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-black/60 ${cameraBlur ? 'bg-indigo-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}>
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-    </button>
-    <button onClick={toggleMute} title={muted ? 'Unmute' : 'Mute'} aria-label={muted ? 'Unmute microphone' : 'Mute microphone'} className={`min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-black/60 ${muted ? 'bg-rose-500 text-white shadow-lg shadow-rose-500/30' : 'bg-white/10 text-white hover:bg-white/20'}`}>
-      {muted ? (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" /></svg>
-      ) : (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
-      )}
-    </button>
-    <button
-      onClick={() => setFacingMode(prev => prev === 'user' ? 'environment' : 'user')}
-      title="Flip camera"
-      aria-label="Flip camera"
-      className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-black/60"
-    >
-      🔄
-    </button>
-    <button onClick={handleLeaveRoom} title="Leave call" aria-label="Leave call" className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-500/30 transition-all focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 focus:ring-offset-black/60">
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" /></svg>
-    </button>
-    {isCreator && (
-      <button
-        onClick={isRecording ? stopRecording : startRecording}
-        className={`min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full transition-all ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-violet-500/20 text-violet-400 border border-violet-500/40'}`}
-      >
-        {isRecording ? '⏹️' : 'REC'}
-      </button>
-    )}
-    <button
-      onClick={() => {
-        if (chatCollapsed) { setChatCollapsed(false); setShowChat(true); }
-        else setShowChat(!showChat);
-      }}
-      className={`relative min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full transition-all ${showChat && !chatCollapsed ? 'bg-indigo-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}
-    >
-      💬
-      {chatUnread > 0 && (
-        <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-rose-500 text-[8px] font-black text-white flex items-center justify-center">{chatUnread > 9 ? '9+' : chatUnread}</span>
-      )}
-    </button>
-    <button type="button" onClick={toggleHandRaise} className={`min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full transition-all ${handRaised ? 'bg-amber-500 text-black' : 'bg-white/10 text-white hover:bg-white/20'}`} title="Raise hand">✋</button>
-    <div className="hidden sm:flex"><VideoReactionBar onReact={sendReaction} /></div>
-    <button type="button" onClick={() => setShowMoreMenu(true)} className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20" title="More">⋯</button>
-  </footer>
 
   {/* MINIMAL RENAME OVERLAY — Inline focus */ }
   {

@@ -3,7 +3,7 @@
  */
 const crypto = require('crypto');
 
-const RECONNECT_TTL_MS = 60000;
+const RECONNECT_TTL_MS = Number(process.env.RECONNECT_TTL_MS) || 180000;
 const MESSAGE_RATE_WINDOW_MS = 10000;
 const MESSAGE_RATE_MAX = 12;
 
@@ -43,7 +43,7 @@ function registerEnhancements(app, io, deps) {
     return bucket.count <= MESSAGE_RATE_MAX;
   }
 
-  function smartMatchScore(entry, interest, region, language) {
+  function smartMatchScore(entry, interest, region, language, reputationBoost = 0) {
     let score = 0;
     const eInterest = String(entry.interest || 'general').toLowerCase();
     const want = String(interest || 'general').toLowerCase();
@@ -53,14 +53,22 @@ function registerEnhancements(app, io, deps) {
     if (region && u?.region && u.region === region) score += 4;
     if (language && u?.language && u.language === language) score += 4;
     if (u?.country && region && u.country === region) score += 2;
+    score += Number(reputationBoost) || 0;
     return score;
   }
 
-  function pickSmartMatch(queue, interest, region, language, canMatch) {
+  async function pickSmartMatch(queue, interest, region, language, canMatch, getReputationBoost) {
     const eligible = queue.filter((e) => canMatch(e));
     if (!eligible.length) return null;
-    eligible.sort((a, b) => smartMatchScore(b, interest, region, language) - smartMatchScore(a, interest, region, language));
-    return eligible[0];
+    const scored = await Promise.all(
+      eligible.map(async (e) => {
+        const otherIp = users.get(e.socketId)?.ip;
+        const rep = getReputationBoost ? await getReputationBoost(otherIp) : 0;
+        return { entry: e, score: smartMatchScore(e, interest, region, language, rep) };
+      })
+    );
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0].entry;
   }
 
   // --- REST ---
@@ -142,16 +150,6 @@ function registerEnhancements(app, io, deps) {
     }
   });
 
-  app.post('/api/payment/unblock-intent', (req, res) => {
-    const stripeUrl = (process.env.STRIPE_UNBLOCK_URL || '').trim();
-    if (stripeUrl) {
-      return res.json({ checkoutUrl: stripeUrl, message: 'Redirecting to secure checkout...' });
-    }
-    res.json({
-      message: 'Online payment is not configured. Email manaminglee@gmail.com with your blocked IP to appeal or pay manually.',
-    });
-  });
-
   app.post('/api/referral/click', async (req, res) => {
     const { code } = req.body || {};
     const visitorIp = req.ip === '::1' ? '127.0.0.1' : req.ip;
@@ -202,11 +200,24 @@ function registerEnhancements(app, io, deps) {
       socket.emit('reconnect-success', { roomId: entry.roomId, mode: entry.mode, interest: room.interest });
     });
 
-    socket.on('rate-conversation', (data) => {
+    socket.on('rate-conversation', async (data) => {
       const rating = Number(data?.rating);
       if (!rating || rating < 1 || rating > 5) return;
       conversationRatings.push({ rating, roomId: data?.roomId, ip, ts: Date.now() });
       if (conversationRatings.length > 500) conversationRatings.shift();
+
+      let targetIp = null;
+      const room = rooms.get(data?.roomId);
+      if (room) {
+        for (const sid of room.users) {
+          if (sid === socket.id) continue;
+          const ou = users.get(sid);
+          if (ou?.ip) { targetIp = ou.ip; break; }
+        }
+      }
+      if (deps.saveRating) {
+        await deps.saveRating({ raterIp: ip, targetIp, rating, roomId: data?.roomId });
+      }
     });
 
     socket.on('mute-user', (data) => {

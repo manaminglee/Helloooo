@@ -25,6 +25,9 @@ let state = {
   isBlocked: false,
   registered: false,
   activeSeconds: 0,
+  isPro: false,
+  subscription: null,
+  proUntil: null,
 };
 
 const listeners = new Set();
@@ -74,6 +77,9 @@ async function ensureSocket() {
         isCreator: !!data?.isCreator,
         registered: !!data?.registered,
         activeSeconds: data?.activeSeconds || 0,
+        isPro: !!data?.isPro,
+        subscription: data?.subscription || null,
+        proUntil: data?.proUntil || null,
       });
       if (data?.settings) {
         patchState({
@@ -120,6 +126,18 @@ async function ensureSocket() {
         registered: data.registered !== undefined ? !!data.registered : state.registered,
         activeSeconds: data.activeSeconds !== undefined ? data.activeSeconds : state.activeSeconds,
       });
+    });
+
+    s.on('pro-activated', (data) => {
+      patchState({
+        isPro: !!data?.isPro,
+        subscription: data?.isPro ? 'pro' : state.subscription,
+        proUntil: data?.proUntil || null,
+      });
+    });
+
+    s.on('ip-unblocked', () => {
+      patchState({ isBlocked: false });
     });
 
     return s;

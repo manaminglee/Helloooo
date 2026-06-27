@@ -19,6 +19,8 @@ const { createClient } = require('@supabase/supabase-js');
 const { registerEnhancements } = require('./enhancements');
 const nvidiaAi = require('./nvidiaAi');
 const { registerUniqueFeatures } = require('./uniqueFeatures');
+const { createPersistence } = require('./persistence');
+const { registerPayments } = require('./payments');
 
 // Persistence Strategy: Supabase (Cloud) or Local JSON (Node)
 const supabaseUrl = (process.env.SUPABASE_URL || '').trim();
@@ -29,14 +31,33 @@ let supabase = null;
 
 // Local DB State (Fallback)
 const LOCAL_DB_PATH = path.join(__dirname, 'data', 'manadb.json');
-let localDb = { creators: [], referral_logs: [], withdrawals: [], admin_history: [] };
+let localDb = {
+  creators: [],
+  referral_logs: [],
+  withdrawals: [],
+  admin_history: [],
+  trust_scores: {},
+  moderation_reports: [],
+  conversation_ratings: [],
+  pro_users: {},
+};
 
 function loadLocalDb() {
   try {
     if (!fs.existsSync(path.dirname(LOCAL_DB_PATH))) fs.mkdirSync(path.dirname(LOCAL_DB_PATH), { recursive: true });
     if (fs.existsSync(LOCAL_DB_PATH)) {
       const parsed = JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
-      localDb = { creators: [], referral_logs: [], withdrawals: [], admin_history: [], ...parsed };
+      localDb = {
+        creators: [],
+        referral_logs: [],
+        withdrawals: [],
+        admin_history: [],
+        trust_scores: {},
+        moderation_reports: [],
+        conversation_ratings: [],
+        pro_users: {},
+        ...parsed,
+      };
       console.log('[DB] Local storage loaded.');
     }
   } catch (e) { console.error('[DB] Local DB load failed', e); }
@@ -63,8 +84,14 @@ if (supabaseUrl && supabaseKey && supabaseUrl.startsWith('http')) {
     });
 } else {
   console.warn('[DB] Supabase not configured. Using local JSON storage (data resets on restart).');
-  loadLocalDb();
 }
+loadLocalDb();
+const persistence = createPersistence({
+  supabase,
+  localDb,
+  saveLocalDb,
+  adminKey: process.env.ADMIN_KEY,
+});
 
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -521,27 +548,7 @@ app.post('/api/coins/activity-reward', async (req, res) => {
   }
 });
 
-// TURN server credentials endpoint — always served from env vars, NEVER hardcoded in client
-app.get('/api/turn', (req, res) => {
-  const iceServers = [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ];
-  const turnUrl = (process.env.TURN_URL || '').trim();
-  const turnUser = (process.env.TURN_USERNAME || '').trim();
-  const turnPass = (process.env.TURN_PASSWORD || '').trim();
-  if (turnUrl && turnUser && turnPass) {
-    iceServers.push({ urls: turnUrl, username: turnUser, credential: turnPass });
-    // Also provide TLS fallback (port 443 often gets through firewalls)
-    const tlsUrl = turnUrl.replace(/:\d+$/, ':443');
-    if (tlsUrl !== turnUrl) {
-      iceServers.push({ urls: tlsUrl, username: turnUser, credential: turnPass });
-    }
-  }
-  res.json({ iceServers });
-});
-
-// Debug: Supabase connection status (safe - no secrets exposed)
+// TURN credentials — see also consolidated handler below (line ~1391)
 // Primary Admin Hub consolidated further down at line 1068
 
 app.post('/api/admin/coins/update', requireAdmin, async (req, res) => {
@@ -1641,6 +1648,7 @@ const enhancements = registerEnhancements(app, io, {
   countryFromIP,
   addUserToRoom,
   removeUserFromRoom,
+  saveRating: (payload) => persistence.saveRating(payload),
 });
 
 const uniqueFeatures = registerUniqueFeatures(app, io, {
@@ -1649,7 +1657,39 @@ const uniqueFeatures = registerUniqueFeatures(app, io, {
   reports,
   sanitize,
   countryFromIP,
+  persistence,
 });
+
+app.get('/api/pro/status', async (req, res) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || (req.ip === '::1' ? '127.0.0.1' : req.ip);
+  const status = await persistence.getProStatus(ip);
+  res.json(status);
+});
+
+app.post('/api/pro/activate', async (req, res) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || (req.ip === '::1' ? '127.0.0.1' : req.ip);
+  const code = String(req.body?.code || '').trim();
+  if (!code) return res.status(400).json({ ok: false, error: 'Code required' });
+  const result = await persistence.activatePro(ip, { code });
+  if (!result.ok) return res.status(400).json(result);
+  for (const [sid, user] of users.entries()) {
+    if (user.ip === ip) {
+      io.to(sid).emit('pro-activated', { isPro: true, proUntil: result.proUntil });
+    }
+  }
+  res.json(result);
+});
+
+app.post('/api/vibe/session-summary', async (req, res) => {
+  const { topics, durationSec } = req.body || {};
+  if (!nvidiaAi.isConfigured()) {
+    return res.json({ summary: 'friendly social', offline: true });
+  }
+  const summary = await nvidiaAi.vibeSummary(Array.isArray(topics) ? topics : [], Number(durationSec) || 0);
+  res.json({ summary });
+});
+
+registerPayments(app, { persistence, blockedIps, io, users });
 
 // API 404 fallback — must be after registerEnhancements (rooms/public, creators, etc.)
 app.all('/api/*', (req, res) => {
@@ -1746,6 +1786,7 @@ io.on('connection', (socket) => {
     }
     // Ensure user has a coin profile and send persistent states
     const coinData = await getCoinUser(ip);
+    const proStatus = await persistence.getProStatus(ip);
     socket.emit('connected', {
       userId,
       nickname: finalNick,
@@ -1754,6 +1795,9 @@ io.on('connection', (socket) => {
       coins: coinData.coins || 0,
       registered: !!coinData.registered,
       activeSeconds: coinData.active_seconds || 0,
+      isPro: proStatus.isPro,
+      subscription: proStatus.subscription,
+      proUntil: proStatus.proUntil || null,
       settings: {
         adsEnabled: settings.adsEnabled,
         allowDevTools: settings.allowDevTools,
@@ -1809,6 +1853,9 @@ io.on('connection', (socket) => {
       reason: sanitize(String(data?.reason || 'unspecified'), 120),
       timestamp: Date.now()
     });
+    persistence.saveReport(reports[reports.length - 1]).catch(() => {});
+    uniqueFeatures.adjustTrust(ip, -2);
+    if (targetIp && targetIp !== 'unknown') uniqueFeatures.adjustTrust(targetIp, -8);
   });
 
   socket.on('block-user', (data) => {
@@ -1837,7 +1884,7 @@ io.on('connection', (socket) => {
   });
 
   // Find partner for 1:1 text or video
-  socket.on('find-partner', (data) => {
+  socket.on('find-partner', async (data) => {
     const userData = users.get(socket.id);
     if (!userData) return;
     const mode = data?.mode === 'video' ? 'video' : 'text';
@@ -1861,8 +1908,9 @@ io.on('connection', (socket) => {
       return true;
     };
     const queue = pairQueues[mode];
-    let match = enhancements.pickSmartMatch(queue.filter((e) => e.interest === interest), interest, region, language, canMatch);
-    if (!match) match = enhancements.pickSmartMatch(queue, interest, region, language, canMatch);
+    const repFn = (otherIp) => persistence.getReputationBoost(otherIp);
+    let match = await enhancements.pickSmartMatch(queue.filter((e) => e.interest === interest), interest, region, language, canMatch, repFn);
+    if (!match) match = await enhancements.pickSmartMatch(queue, interest, region, language, canMatch, repFn);
     if (match) {
       const idx = queue.indexOf(match);
       queue.splice(idx, 1);
@@ -2128,7 +2176,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('send-message', (data) => {
+  socket.on('send-message', async (data) => {
     const { roomId, text, replyTo } = data || {};
     const u = users.get(socket.id);
     if (!u) return socket.emit('error', { message: 'Session lost. Please refresh.' });
@@ -2176,6 +2224,17 @@ io.on('connection', (socket) => {
       });
       return;
     }
+
+    if (settings.safetyAiEnabled && nvidiaAi.isConfigured()) {
+      const mod = await nvidiaAi.moderate(msg);
+      if (!mod.safe) {
+        socket.emit('content-flagged', {
+          message: mod.warning || '⚠️ MESSAGE BLOCKED: Content flagged by AI safety review.',
+          reason: 'AI Moderation'
+        });
+        return;
+      }
+    }
     }
 
     stats.totalMessages++;
@@ -2185,6 +2244,7 @@ io.on('connection', (socket) => {
       ts: Date.now(),
       socketId: socket.id,
       isCreator: !!u.isCreator,
+      country: u.country || null,
       type: msgType,
     };
     if (msgType === 'voice') {

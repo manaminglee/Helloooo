@@ -35,6 +35,7 @@ export function DraggableVideoPip({
   onCycleCorner,
   size = 'md',
   hidden = false,
+  variant = 'default',
   children,
   className = '',
   label,
@@ -155,7 +156,7 @@ export function DraggableVideoPip({
       role="presentation"
       aria-label={label || 'Your camera preview — drag to move'}
     >
-      <div className="mm-video-pip-inner relative w-full h-full overflow-hidden bg-black shadow-[0_8px_32px_rgba(0,0,0,0.55)] ring-2 ring-violet-500/35">
+      <div className={`mm-video-pip-inner relative w-full h-full overflow-hidden bg-black shadow-[0_8px_32px_rgba(0,0,0,0.55)] ${variant === 'clean' ? 'mm-video-pip-inner--clean' : 'ring-2 ring-violet-500/35'}`}>
         {children}
       </div>
       <div className="mm-video-pip-grip absolute top-1 right-1 w-5 h-5 rounded-md bg-black/50 border border-white/15 flex items-center justify-center pointer-events-none">

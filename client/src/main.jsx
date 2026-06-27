@@ -28,8 +28,12 @@ class ErrorBoundary extends React.Component {
 
 const path = window.location.pathname || '/';
 
-// Service worker caused stale/broken JS on GitHub Pages — disabled until cache strategy is stable
-if ('serviceWorker' in navigator) {
+// Service worker: versioned cache (bump CACHE in public/sw.js when deploying breaking changes)
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+} else if ('serviceWorker' in navigator && import.meta.env.DEV) {
   navigator.serviceWorker.getRegistrations().then((regs) => {
     regs.forEach((reg) => reg.unregister());
   }).catch(() => {});

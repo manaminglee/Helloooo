@@ -4,6 +4,7 @@ import { AgeVerificationGate } from './components/AgeVerificationGate';
 import { CreatorPublicProfile } from './components/CreatorPublicProfile';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { UnblockPaymentModal } from './components/UnblockPaymentModal';
+import { verifyStripeReturn } from './utils/paymentCheckout';
 import { LowPowerProvider } from './context/LowPowerContext';
 import { useSocket } from './hooks/useSocket';
 import { useCoins } from './hooks/useCoins';
@@ -46,10 +47,11 @@ export default function App() {
     calmMode: false,
   });
   const [showUnblockPay, setShowUnblockPay] = useState(false);
+  const [paymentNotice, setPaymentNotice] = useState('');
   const [creatorHandle, setCreatorHandle] = useState(null);
   const [pendingJoinRoomId, setPendingJoinRoomId] = useState(null);
   const [isJoining, setIsJoining] = useState(false);
-  const { socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds } = useSocket();
+  const { socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds, isPro, subscription } = useSocket();
   const coinState = useCoins();
   const coinStateWithAds = useMemo(
     () => ({ ...coinState, adsEnabled, adScripts }),
@@ -67,6 +69,55 @@ export default function App() {
     const joinMatch = path.match(/^\/join\/([^/]+)/i);
     if (joinMatch) setPendingJoinRoomId(decodeURIComponent(joinMatch[1]));
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get('payment');
+    if (!payment) return;
+
+    const clearPaymentQuery = () => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('payment');
+      url.searchParams.delete('session_id');
+      url.searchParams.delete('product');
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    };
+
+    if (payment === 'cancel') {
+      setPaymentNotice('Payment cancelled.');
+      clearPaymentQuery();
+      return;
+    }
+
+    if (payment !== 'success') return;
+
+    let cancelled = false;
+    verifyStripeReturn(params)
+      .then((result) => {
+        if (cancelled || !result) return;
+        if (result.product === 'unblock') {
+          setPaymentNotice('Payment successful — access restored.');
+        } else if (result.product === 'pro') {
+          setPaymentNotice('Pro activated — enjoy your premium features!');
+        } else {
+          setPaymentNotice('Payment successful.');
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) setPaymentNotice(e.message || 'Payment verification failed.');
+      })
+      .finally(() => {
+        if (!cancelled) clearPaymentQuery();
+      });
+
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!paymentNotice) return;
+    const t = setTimeout(() => setPaymentNotice(''), 6000);
+    return () => clearTimeout(t);
+  }, [paymentNotice]);
 
   useEffect(() => {
     if (!socket || !connected || !pendingJoinRoomId) return;
@@ -244,9 +295,9 @@ export default function App() {
             </p>
             <div className="bg-black/40 p-5 rounded-2xl border border-white/5 mb-8">
               <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-400 mb-2">Unblock Account</h3>
-              <p className="text-[11px] text-white/40 mb-4">Pay the $5.00 unblock fee using cryptocurrency to verify intent and clear your IP reputation.</p>
+              <p className="text-[11px] text-white/40 mb-4">Pay the unblock fee via Stripe, Razorpay, or test mode (dev) to restore access.</p>
               <button className="btn w-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500 shadow-none hover:text-white py-3 rounded-xl font-bold text-xs min-h-[48px]" onClick={() => setShowUnblockPay(true)}>
-                Pay $5.00 to unblock
+                Pay to unblock
               </button>
             </div>
             <p className="text-[10px] text-white/20">Provide the Admin with your IP if this was a mistake.</p>
@@ -300,6 +351,8 @@ export default function App() {
             conversationMode={joinMeta.conversationMode}
             topicContract={joinMeta.topicContract}
             calmMode={joinMeta.calmMode}
+            isPro={isPro}
+            subscription={subscription}
           />
         </div>
       );
@@ -326,6 +379,8 @@ export default function App() {
             conversationMode={joinMeta.conversationMode}
             topicContract={joinMeta.topicContract}
             calmMode={joinMeta.calmMode}
+            isPro={isPro}
+            subscription={subscription}
           />
         </div>
       );
@@ -375,6 +430,7 @@ export default function App() {
             conversationMode={joinMeta.conversationMode}
             topicContract={joinMeta.topicContract}
             calmMode={joinMeta.calmMode}
+            isPro={isPro}
           />
         </div>
       );
@@ -416,6 +472,11 @@ export default function App() {
       {contentFlagged && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3 rounded-xl bg-amber-500/90 text-black font-semibold text-sm shadow-xl max-w-md text-center mm-mobile-safe">
           ⚠️ {String(contentFlagged)}
+        </div>
+      )}
+      {paymentNotice && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3 rounded-xl bg-emerald-500/90 text-black font-semibold text-sm shadow-xl max-w-md text-center mm-mobile-safe">
+          ✓ {paymentNotice}
         </div>
       )}
     </>

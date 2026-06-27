@@ -22,8 +22,8 @@ import { ReportSafetyModal } from './ReportSafetyModal';
 import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNotify';
 import { playConnectSound, playMessageSound, playDisconnectSound, playWaveSound } from '../utils/sounds';
 import { mmDebug } from '../utils/mmDebug';
+import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream } from '../utils/webrtcMedia';
 import { ChatInputWithEmoji } from './ChatInputWithEmoji';
-import { DraggableVideoPip } from './DraggableVideoPip';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { useUniqueSession } from '../hooks/useUniqueSession';
 import {
@@ -39,7 +39,6 @@ import {
 import { MiniChatGamePanel } from './MiniChatGamePanel';
 import {
   AudioOnlyFallback,
-  CollapsibleMobileChatHeader,
   ConnectionQualityBadge,
   ConversationRatingModal,
   DevicePickerSheet,
@@ -145,7 +144,83 @@ const VIDEO_FILTERS = [
   { id: 'contrast(150%) brightness(120%)', label: 'Intense' },
 ];
 
-function VanishingMessage({ m, isMe }) {
+function chatMessageCountry(m, isMe, myCountry, peerCountry) {
+  if (m?.country) return m.country;
+  return isMe ? myCountry : peerCountry;
+}
+
+function MobChatBubble({ m, isMe, myCountry, peerCountry }) {
+  if (m.system) {
+    return (
+      <div className="flex justify-center my-2">
+        <span className="text-[11px] text-white/35 font-medium">{m.text}</span>
+      </div>
+    );
+  }
+  if (m.type === 'voice' || m.media) {
+    return <VanishingMessage m={m} isMe={isMe} country={chatMessageCountry(m, isMe, myCountry, peerCountry)} />;
+  }
+  const time = m.ts
+    ? new Date(m.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : '';
+  const flag = countryToFlag(chatMessageCountry(m, isMe, myCountry, peerCountry));
+  return (
+    <div className={`mm-mobile-bubble-row ${isMe ? 'mm-mobile-bubble-row--me' : ''}`}>
+      {!isMe && flag && <span className="mm-chat-flag" title="Stranger's region">{flag}</span>}
+      <div className={`mm-mobile-bubble ${isMe ? 'mm-mobile-bubble--me' : 'mm-mobile-bubble--them'}`}>
+        <p className="mm-mobile-bubble__text">{m.text}</p>
+        <span className="mm-mobile-bubble__meta">
+          {isMe && flag && <span className="mm-chat-flag mm-chat-flag--inline" title="Your region">{flag}</span>}
+          {time}
+          {isMe && <span className="mm-mobile-bubble__read" aria-hidden> ✓✓</span>}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function MobSignalBars({ quality }) {
+  const level = quality === 'good' ? 4 : quality === 'fair' ? 3 : quality === 'poor' ? 2 : 1;
+  return (
+    <div className="mm-mobile-pip__signal" aria-hidden>
+      {[1, 2, 3, 4].map((i) => (
+        <span key={i} className={i <= level ? 'mm-mobile-pip__signal-bar mm-mobile-pip__signal-bar--on' : 'mm-mobile-pip__signal-bar'} />
+      ))}
+    </div>
+  );
+}
+
+function DeskChatBubble({ m, isMe, myCountry, peerCountry }) {
+  if (m.system) {
+    return (
+      <div className="flex justify-center my-2">
+        <span className="text-[11px] text-white/35 font-medium">{m.text}</span>
+      </div>
+    );
+  }
+  if (m.type === 'voice' || m.media) {
+    return <VanishingMessage m={m} isMe={isMe} country={chatMessageCountry(m, isMe, myCountry, peerCountry)} />;
+  }
+  const time = m.ts
+    ? new Date(m.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : '';
+  const flag = countryToFlag(chatMessageCountry(m, isMe, myCountry, peerCountry));
+  return (
+    <div className={`mm-desk-bubble-row ${isMe ? 'mm-desk-bubble-row--me' : ''}`}>
+      {!isMe && flag && <span className="mm-chat-flag" title="Stranger's region">{flag}</span>}
+      <div className={`mm-desk-bubble ${isMe ? 'mm-desk-bubble--me' : 'mm-desk-bubble--them'}`}>
+        <p className="mm-desk-bubble__text">{m.text}</p>
+        <span className="mm-desk-bubble__meta">
+          {isMe && flag && <span className="mm-chat-flag mm-chat-flag--inline" title="Your region">{flag}</span>}
+          {time}
+          {isMe && <span className="mm-desk-bubble__read" aria-hidden> ✓✓</span>}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function VanishingMessage({ m, isMe, country: countryCode }) {
   const [timeLeft, setTimeLeft] = useState(90);
 
   useEffect(() => {
@@ -182,6 +257,9 @@ function VanishingMessage({ m, isMe }) {
       <div className={`relative max-w-[85%] px-3 py-2 rounded-lg text-sm flex flex-col gap-1 transition-all ${isMe ? 'bg-[#1a7f37] text-white rounded-tr-none' : 'bg-white/10 text-white/90 rounded-tl-none border border-white/5'}`}>
         <div className="flex flex-col gap-0.5 mb-1">
           <div className="flex items-center gap-1">
+            {countryCode && (
+              <span className="mm-chat-flag mm-chat-flag--inline text-sm leading-none" title="Region">{countryToFlag(countryCode)}</span>
+            )}
             <span className={`text-[8px] font-black uppercase tracking-widest ${isMe ? 'text-violet-400' : 'text-white/40'}`}>
               {m.isCreator ? `@${m.nickname}` : (isMe ? 'You' : m.nickname || 'Stranger')}
             </span>
@@ -253,7 +331,7 @@ function RecordingIndicator() {
   );
 }
 
-export default function VideoChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', isCreator = false, adsEnabled = false, adScripts = {}, onBack, onJoined, onFindNewPartner, coinState, registered = false, currentActiveSeconds = 0, conversationMode = 'free', topicContract = 'chill', calmMode: calmModeProp = false }) {
+export default function VideoChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', isCreator = false, adsEnabled = false, adScripts = {}, onBack, onJoined, onFindNewPartner, coinState, registered = false, currentActiveSeconds = 0, conversationMode = 'free', topicContract = 'chill', calmMode: calmModeProp = false, isPro = false, subscription = null }) {
   const [coins, setCoins] = useState(coinState?.balance || 0);
   const [showProfileHandle, setShowProfileHandle] = useState(null);
 
@@ -261,7 +339,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (coinState?.balance !== undefined) setCoins(coinState.balance);
   }, [coinState?.balance]);
   const { balance, streak, canClaim, nextClaim, claimCoins, history, addHistory } = coinState || {};
-  const { iceServers } = useIceServers();
+  const { iceServers, loading: iceLoading } = useIceServers();
   const [messages, setMessages] = useState([]);
   const [sparks, setSparks] = useState([]);
   const [input, setInput] = useState('');
@@ -316,6 +394,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [strangerTyping, setStrangerTyping] = useState(false);
   const [countryBanner, setCountryBanner] = useState(null);
   const [showChat, setShowChat] = useState(true);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
   const [activeFilter, setActiveFilter] = useState('none');
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showCoinHistory, setShowCoinHistory] = useState(false);
@@ -352,6 +431,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const pendingCandidatesRef = useRef(new Map());
   const pendingOfferRef = useRef(null);
   const pendingAnswerRef = useRef(null);
+  const negotiationRetryRef = useRef(null);
+  const findPartnerEmittedRef = useRef(false);
   const peerInfoRef = useRef(new Map());
   const chatEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -360,6 +441,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   useEffect(() => {
     isMounted.current = true;
     return () => { isMounted.current = false; };
+  }, []);
+
+  const bindLocalVideo = useCallback((el) => {
+    localVideoRef.current = el;
+    if (el && localStreamRef.current) {
+      attachStreamToVideo(el, localStreamRef.current);
+    }
   }, []);
 
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 640 : false);
@@ -510,7 +598,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     setTimeout(() => stopRecording(), 30000);
   };
 
-  const [pipPos, setPipPos] = useState('br');
+  const [pipPos, setPipPos] = useState('tr');
   const [pipSize, setPipSize] = useState('md');
   const [pipHidden, setPipHidden] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -522,7 +610,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [autoStrangerBlur, setAutoStrangerBlur] = useState(() => localStorage.getItem('mm_auto_stranger_blur') !== '0');
   const [showStrangerReveal, setShowStrangerReveal] = useState(false);
   const [showSafetyNudge, setShowSafetyNudge] = useState(() => !sessionStorage.getItem('mm_video_safety_seen'));
-  const [chatCollapsed, setChatCollapsed] = useState(false);
   const [chatUnread, setChatUnread] = useState(0);
   const chatPanelRef = useRef(null);
   const [ultraLow, setUltraLow] = useState(false);
@@ -546,7 +633,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     }
   }, [unique.consentComplete]);
 
-  const mobilePipMode = isMobile && status === 'connected';
+  const desktopLayout = !isMobile;
 
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -595,6 +682,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     const m = Math.floor(s / 60);
     const sec = s % 60;
     return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  const formatTimerLong = (s) => {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
   };
 
   useEffect(() => {
@@ -698,7 +792,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         }
         localStreamRef.current = s;
         setLocalStream(s);
-        if (localVideoRef.current) localVideoRef.current.srcObject = s;
+        if (localVideoRef.current) attachStreamToVideo(localVideoRef.current, s);
       } catch (err) {
         console.error('Camera/mic error:', err);
         setCameraError('We could not access your camera or microphone. Please allow permissions and try again.');
@@ -745,11 +839,19 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     peerConnectionsRef.current.forEach((pc) => {
       if (pc.signalingState === 'closed') return;
       const senders = pc.getSenders();
-      const vs = senders.find(s => s.track?.kind === 'video');
-      const as = senders.find(s => s.track?.kind === 'audio');
+      const vs = senders.find((s) => s.track?.kind === 'video');
+      const as = senders.find((s) => s.track?.kind === 'audio');
 
-      if (vs && vt) vs.replaceTrack(vt).catch(() => { });
-      if (as && at) as.replaceTrack(at).catch(() => { });
+      if (!vs && vt) {
+        try { pc.addTrack(vt, localStream); } catch { /* already negotiating */ }
+      } else if (vs && vt) {
+        vs.replaceTrack(vt).catch(() => { });
+      }
+      if (!as && at) {
+        try { pc.addTrack(at, localStream); } catch { /* ignore */ }
+      } else if (as && at) {
+        as.replaceTrack(at).catch(() => { });
+      }
     });
   }, [localStream]);
 
@@ -764,8 +866,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   useEffect(() => {
     if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-      localVideoRef.current.play().catch(() => { });
+      attachStreamToVideo(localVideoRef.current, localStream);
     }
   }, [localStream, status]);
 
@@ -786,6 +887,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     pendingCandidatesRef.current.clear();
     pendingOfferRef.current = null;
     pendingAnswerRef.current = null;
+    findPartnerEmittedRef.current = false;
+    if (negotiationRetryRef.current) {
+      clearTimeout(negotiationRetryRef.current);
+      negotiationRetryRef.current = null;
+    }
     peerInfoRef.current.clear();
     setPeer(null);
     setRoomId(null);
@@ -798,17 +904,33 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (!socket || !connected) return;
     void ensureNotifyPermission();
     clearRoom();
+    findPartnerEmittedRef.current = false;
     setStatus('searching');
-    socket.emit('find-partner', {
-      mode: 'video',
-      interest: interest || 'general',
-      nickname: nickname || 'Anonymous',
-      conversationMode,
-      topicContract,
-    });
   };
 
+  const saveSessionVibe = useCallback(async () => {
+    if (connectedSecsRef.current < 20) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/vibe/session-summary`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ topics: selectedInterests, durationSec: connectedSecsRef.current }),
+      });
+      const data = await res.json();
+      if (data?.summary) {
+        await fetch(`${API_BASE}/api/vibe/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ tags: String(data.summary).split(/\s+/).filter(Boolean).slice(0, 6) }),
+        });
+      }
+    } catch { /* offline */ }
+  }, [selectedInterests]);
+
   const handleSkip = useCallback(() => {
+    if (statusRef.current === 'connected') saveSessionVibe();
     maybeShowRating();
     if (statusRef.current === 'connected' && connectedSecsRef.current >= 3 && selectedInterests.length > 0) {
       setToast(`Anonymous session ended (~${connectedSecsRef.current}s). Topics: ${selectedInterests.join(', ')} — not stored on our servers.`);
@@ -818,18 +940,15 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       else socket.emit('cancel-find-partner');
     }
     clearRoom();
+    findPartnerEmittedRef.current = false;
     setStatus('searching');
     setGoodVibesSent(false); setGoodVibesMatch(false); setCameraBlur(false);
     setStrangerFilter('none'); setStrangerBlur(false);
-    setTimeout(() => {
-      if (statusRef.current !== 'idle') {
-        socket?.emit('find-partner', { mode: 'video', interest: interest || 'general', nickname: nickname || 'Anonymous' });
-        onFindNewPartner?.();
-      }
-    }, 100);
-  }, [socket, interest, status, onFindNewPartner, clearRoom, selectedInterests, maybeShowRating]);
+    onFindNewPartner?.();
+  }, [socket, interest, status, onFindNewPartner, clearRoom, selectedInterests, maybeShowRating, saveSessionVibe]);
 
   const handleStop = useCallback(() => {
+    if (statusRef.current === 'connected') saveSessionVibe();
     maybeShowRating();
     if (statusRef.current === 'connected' && connectedSecsRef.current >= 3 && selectedInterests.length > 0) {
       setToast(`Anonymous session ended (~${connectedSecsRef.current}s). Topics: ${selectedInterests.join(', ')} — not stored on our servers.`);
@@ -845,7 +964,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     setStatus('idle');
     setGoodVibesSent(false); setGoodVibesMatch(false); setCameraBlur(false);
     setStrangerFilter('none'); setStrangerBlur(false);
-  }, [socket, clearRoom, selectedInterests, maybeShowRating]);
+  }, [socket, clearRoom, selectedInterests, maybeShowRating, saveSessionVibe]);
 
   const handleBack = () => { handleStop(); onBack?.(); };
 
@@ -973,21 +1092,68 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const handleEsc = useCallback(() => {
     if (status === 'connected' || status === 'searching' || status === 'disconnected') {
       handleStop();
+      setToast('Chat ended — press Esc twice quickly to find someone new');
     } else {
       handleBack();
     }
   }, [status, handleStop, handleBack]);
 
+  const escTimerRef = useRef(null);
+  const escArmedRef = useRef(false);
+
+  const handleEscapeKey = useCallback(() => {
+    if (escArmedRef.current) {
+      clearTimeout(escTimerRef.current);
+      escArmedRef.current = false;
+      if (status === 'connected') {
+        handleSkip();
+        setToast('Skipping — finding a new stranger…');
+      } else if (status === 'idle' || status === 'disconnected') {
+        handleStart();
+        setToast('Searching for someone new…');
+      } else if (status === 'searching') {
+        handleSkip();
+        setToast('Finding a new match…');
+      }
+      return;
+    }
+
+    escArmedRef.current = true;
+    escTimerRef.current = setTimeout(() => {
+      escArmedRef.current = false;
+      handleEsc();
+    }, 320);
+  }, [status, handleEsc, handleSkip, handleStart, handleStop]);
+
+  useEffect(() => () => clearTimeout(escTimerRef.current), []);
+
   useEffect(() => {
     const handleDown = (e) => {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
 
-      if (e.code === 'Space' || e.key === 'ArrowRight') {
+      if (e.key === 'ArrowRight') {
         e.preventDefault();
-        handleSkip();
+        if (status === 'connected') {
+          handleSkip();
+          setToast('Skipping — finding a new stranger…');
+        } else if (status === 'searching') {
+          handleSkip();
+          setToast('Finding a new match…');
+        }
         return;
       }
-      if (e.key === 'Escape' || e.key === 'ArrowLeft') {
+      if (e.key === 'Enter' && status === 'idle') {
+        e.preventDefault();
+        handleStart();
+        setToast('Searching for someone new…');
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleEscapeKey();
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
         e.preventDefault();
         handleEsc();
         return;
@@ -1001,7 +1167,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
     window.addEventListener('keydown', handleDown);
     return () => window.removeEventListener('keydown', handleDown);
-  }, [handleSkip, handleStop, toggleMute, toggleCamera, handleStart, handleEsc, status]);
+  }, [handleSkip, handleStop, toggleMute, toggleCamera, handleStart, handleEsc, handleEscapeKey, status]);
 
   const toggleInterestTag = (tag) => {
     setSelectedInterests(prev =>
@@ -1144,10 +1310,18 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   const createPeerConnection = useCallback((remoteId) => {
     if (peerConnectionsRef.current.has(remoteId)) return peerConnectionsRef.current.get(remoteId);
-    const pc = new RTCPeerConnection({ iceServers, iceCandidatePoolSize: 10 });
+    const pc = new RTCPeerConnection({
+      iceServers,
+      iceCandidatePoolSize: 10,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+    });
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current));
+    } else {
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
     }
 
     pc.onicecandidate = (e) => {
@@ -1159,22 +1333,19 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
     pc.ontrack = (e) => {
       const info = peerInfoRef.current.get(remoteId) || {};
-      const streams = e.streams;
-      let stream = null;
-      if (streams && streams[0]) {
-        stream = streams[0];
-      } else {
-        stream = new MediaStream([e.track]);
-      }
+      const track = e.track;
+      if (!track) return;
 
       setPeer((prev) => {
-        if (prev?.socketId === remoteId && prev?.stream) {
-          if (!prev.stream.getTracks().find(t => t.id === e.track.id)) {
-            prev.stream.addTrack(e.track);
-          }
-          return { ...prev, nickname: info.nickname || prev.nickname, country: info.country || prev.country };
-        }
-        return { socketId: remoteId, stream, nickname: info.nickname || prev?.nickname, country: info.country || prev?.country, isCreator: info.isCreator };
+        const base = prev?.socketId === remoteId ? prev.stream : null;
+        const stream = mergeTrackIntoStream(base, track);
+        return {
+          socketId: remoteId,
+          stream,
+          nickname: info.nickname || prev?.nickname,
+          country: info.country || prev?.country,
+          isCreator: typeof info.isCreator === 'boolean' ? info.isCreator : prev?.isCreator,
+        };
       });
     };
 
@@ -1204,11 +1375,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       }
 
       if (ice === 'failed' || ice === 'disconnected') {
-        setTimeout(() => {
-          if (pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') {
-            setPeer((p) => (p?.socketId === remoteId ? null : p));
-          }
-        }, 3000);
+        setP2pHealth('unstable');
       }
     };
 
@@ -1226,17 +1393,25 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     const pc = createPeerConnection(remoteId);
     try {
       makingOffer.current = true;
-      const offer = await pc.createOffer();
-      if (pc.signalingState !== 'stable') return;
+      const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
       await pc.setLocalDescription(offer);
       socket.emit('webrtc-signal', { roomId: rid, targetSocketId: remoteId, type: 'offer', signal: pc.localDescription });
-    } catch (err) { console.warn('[WEBRTC] Offer collision handled:', err); }
-    finally { makingOffer.current = false; }
+      mmDebug('offer', remoteId, pc.signalingState);
+    } catch (err) {
+      console.warn('[WEBRTC] Offer failed:', err);
+      pendingOfferRef.current = remoteId;
+    } finally {
+      makingOffer.current = false;
+    }
   }, [socket, createPeerConnection]);
 
   const doAnswer = useCallback(async (remoteId, offer) => {
+    if (!socket) return;
     const rid = roomIdRef.current;
-    if (!rid || !socket) return;
+    if (!rid) {
+      pendingAnswerRef.current = { from: remoteId, signal: offer };
+      return;
+    }
     const pc = createPeerConnection(remoteId);
     try {
       const isOffer = offer.type === 'offer';
@@ -1264,13 +1439,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       }
     } catch (err) {
       console.warn('[WEBRTC] Perfect Negotiation Error:', err);
+      pendingAnswerRef.current = { from: remoteId, signal: offer };
     }
   }, [socket, createPeerConnection]);
 
   useEffect(() => {
-    if (!localStream) return;
+    if (!localStream || !roomIdRef.current) return;
     const po = pendingOfferRef.current;
-    if (po && roomIdRef.current && peer?.socketId === po) {
+    if (po && peer?.socketId === po) {
       pendingOfferRef.current = null;
       doOffer(po);
     }
@@ -1280,6 +1456,43 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       doAnswer(pa.from, pa.signal);
     }
   }, [localStream, peer?.socketId, doOffer, doAnswer]);
+
+  // Wait for camera + ICE servers before matching (prevents black-screen negotiations).
+  useEffect(() => {
+    if (!socket || !connected || status !== 'searching' || roomIdRef.current || iceLoading) return;
+    if (!localStreamRef.current) return;
+    if (findPartnerEmittedRef.current) return;
+    findPartnerEmittedRef.current = true;
+    socket.emit('find-partner', {
+      mode: 'video',
+      interest: interest || 'general',
+      nickname: nickname || 'Anonymous',
+      conversationMode,
+      topicContract,
+    });
+  }, [socket, connected, status, localStream, iceLoading, interest, nickname, conversationMode, topicContract]);
+
+  // Auto-recover if connected but remote video never arrives.
+  useEffect(() => {
+    if (status !== 'connected' || !peer?.socketId) {
+      if (negotiationRetryRef.current) {
+        clearTimeout(negotiationRetryRef.current);
+        negotiationRetryRef.current = null;
+      }
+      return;
+    }
+    negotiationRetryRef.current = setTimeout(() => {
+      if (hasLiveRemoteVideo(peer?.stream)) return;
+      mmDebug('negotiationRetry', peer.socketId);
+      retryIce();
+    }, 7000);
+    return () => {
+      if (negotiationRetryRef.current) {
+        clearTimeout(negotiationRetryRef.current);
+        negotiationRetryRef.current = null;
+      }
+    };
+  }, [status, peer?.socketId, peer?.stream, retryIce]);
 
   const addIce = useCallback(async (remoteId, candidate) => {
     const pc = peerConnectionsRef.current.get(remoteId);
@@ -1320,6 +1533,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         if (socket.id < p.socketId) {
           if (localStreamRef.current) doOffer(p.socketId);
           else pendingOfferRef.current = p.socketId;
+        } else {
+          const pa = pendingAnswerRef.current;
+          if (pa?.from === p.socketId && localStreamRef.current) {
+            pendingAnswerRef.current = null;
+            doAnswer(pa.from, pa.signal);
+          }
         }
       }
       setStatus('connected');
@@ -1404,7 +1623,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         return { socketId: from, isCreator: !!data.fromIsCreator, nickname: data.fromNickname, country: data.fromCountry, stream: prev?.stream };
       });
       if (data.type === 'offer') {
-        if (localStreamRef.current) doAnswer(from, data.signal);
+        if (data.roomId && !roomIdRef.current) {
+          roomIdRef.current = data.roomId;
+          setRoomId(data.roomId);
+        }
+        if (localStreamRef.current && roomIdRef.current) doAnswer(from, data.signal);
         else pendingAnswerRef.current = { from, signal: data.signal };
       }
       else if (data.type === 'answer') {
@@ -1472,10 +1695,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         setMessages(m => [...m, { id: Date.now(), system: true, text: '⚠️ Connection lost. Reconnecting… stay on this screen.', ts: Date.now() }]);
       }
     });
-
-    if (socket && status === 'searching' && !roomIdRef.current) {
-      socket.emit('find-partner', { mode: 'video', interest: interest || 'general', nickname: 'Anonymous' });
-    }
 
     return () => {
       socket.off('partner-found', onPartnerFound);
@@ -1681,45 +1900,57 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     }, 2000);
   };
 
+  const scrollToChat = () => {
+    setShowChat(true);
+    setChatCollapsed(false);
+    chatPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+
+  const chatMyCountry = myCountry || country;
+  const chatPeerCountry = peer?.country;
+
   return (
-    <div className="h-[100dvh] min-h-0 flex flex-col bg-realm-void text-white overflow-hidden font-sans select-none pt-[env(safe-area-inset-top)]">
-      <header className={`mm-design-panel-header h-10 sm:h-12 px-2 sm:px-3 flex items-center gap-2 bg-realm-surface/95 z-[100] shrink-0 min-h-[2.5rem] ${isMobile ? 'backdrop-blur-sm' : 'backdrop-blur-md'}`}>
-        <button type="button" onClick={handleBack} className="p-1.5 -ml-0.5 sm:-ml-1 rounded-lg hover:bg-white/5 transition-colors shrink-0" aria-label="Back">
-          <svg className="w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-        </button>
-        <span className="flex-1 min-w-0 text-center text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-white/40 truncate px-1">
-          {status === 'connected' ? `Live · ${formatTimer(connectedSecs)}` : 'Mana Mingle Video'}
-        </span>
-        <div className="flex items-center justify-end gap-1 sm:gap-2 min-w-0 max-w-[min(52%,11rem)] sm:max-w-none shrink">
-          {status === 'connected' && (
-            <ConnectionQualityBadge quality={connectionQuality} latency={latency} />
-          )}
-          {PHASE_4_UNIQUE.trustScore && <TrustScoreChip trust={unique.trust} />}
-          {PHASE_4_UNIQUE.nvidiaCopilot && <AiStatusPill online={unique.aiOnline} />}
-          {PHASE_4_UNIQUE.coOpStreak && <CoOpStreakBadge minutes={unique.coOpMinutes} />}
-          {isCreator && (
-            <button type="button" onClick={() => setShowFilterMenu(true)} className="relative group px-1.5 sm:px-2 py-1 rounded-lg text-[8px] sm:text-[9px] font-black uppercase tracking-widest bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 transition-all border border-violet-500/20 flex flex-col items-center shrink-0">
-              <span>Filters</span>
-              {filterTimer > 0 && (
-                <span className="text-[8px] text-amber-500 animate-pulse">{filterTimer}s</span>
-              )}
+    <div className={`${desktopLayout ? 'mm-desk-shell' : 'mm-mobile-shell'} h-[100dvh] min-h-0 flex flex-col text-white overflow-hidden font-sans select-none`}>
+      {desktopLayout ? (
+        <header className="mm-desk-header">
+          <div className="mm-desk-header__online">
+            <span className="mm-desk-dot mm-desk-dot--green" aria-hidden />
+            {(typeof onlineCount === 'object' ? onlineCount?.count : onlineCount || 0).toLocaleString()} users online
+          </div>
+          <div className="mm-desk-header__actions">
+            <button type="button" className="mm-desk-icon-btn" onClick={() => setShowReportModal(true)} title="Safety" aria-label="Safety">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
             </button>
-          )}
-          {country && <span className="text-[13px] sm:text-[14px] leading-none opacity-80 shrink-0" title={`Location: ${country}`}>{countryToFlag(country)}</span>}
-          <span className="hidden sm:inline text-[10px] text-white/30 tabular-nums whitespace-nowrap shrink-0">{(typeof onlineCount === 'object' ? onlineCount?.count : onlineCount) || 0} online</span>
-          <span
-            className="sm:hidden text-[9px] text-white/30 tabular-nums shrink-0 min-w-[1.25rem] text-right"
-            title={`${(typeof onlineCount === 'object' ? onlineCount?.count : onlineCount) || 0} online`}
-          >
-            {(typeof onlineCount === 'object' ? onlineCount?.count : onlineCount) || 0}
-          </span>
-          {isCreator && (
-            <div className="shrink-0 scale-90 sm:scale-100 origin-right">
-              <CoinBadge balance={balance} streak={streak} canClaim={canClaim} nextClaim={nextClaim ?? 0} claimCoins={claimCoins} registered={registered} currentActiveSeconds={currentActiveSeconds} isCreator={isCreator} />
-            </div>
-          )}
+            <button type="button" className="mm-desk-icon-btn" onClick={() => setShowMoreMenu(true)} title="More options" aria-label="Menu">⋯</button>
+          </div>
+        </header>
+      ) : (
+      <header className="mm-mobile-header">
+        <button type="button" className="mm-mobile-header__icon" onClick={() => setShowReportModal(true)} title="Safety" aria-label="Safety">
+          <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+        </button>
+        <div className="mm-mobile-header__brand">
+          <img src="/apple-touch-icon.png" alt="" className="mm-mobile-header__logo" />
+          <div className="mm-mobile-header__titles">
+            <span className="mm-mobile-header__name">ManaMingle</span>
+            {status === 'connected' ? (
+              <span className="mm-mobile-header__status">
+                <span className="mm-desk-dot mm-desk-dot--green" aria-hidden />
+                Connected • {formatTimerLong(connectedSecs)}
+                {PHASE_3_PRO.aiMoodDetection && moodEmoji && (
+                  <span className="ml-1" title="Conversation mood">{moodEmoji}</span>
+                )}
+              </span>
+            ) : (
+              <span className="mm-mobile-header__status mm-mobile-header__status--muted">
+                {status === 'searching' ? 'Looking for someone…' : status === 'idle' ? 'Ready to connect' : 'Video chat'}
+              </span>
+            )}
+          </div>
         </div>
+        <button type="button" className="mm-mobile-header__icon" onClick={() => setShowMoreMenu(true)} title="More options" aria-label="Menu">⋯</button>
       </header>
+      )}
 
       {status === 'connected' && p2pHealth !== 'good' && (
         <div
@@ -1737,9 +1968,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         </div>
       )}
 
+      {!desktopLayout && status !== 'connected' && (
       <div className="shrink-0 px-2 sm:px-3">
         <AdSlot slotKey="chat_banner" script={adScripts?.chat_banner} adsEnabled={adsEnabled} compact />
       </div>
+      )}
 
       <VideoSessionBanners
         showSafetyNudge={showSafetyNudge}
@@ -1751,76 +1984,162 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         matchedInterests={status === 'connected' ? selectedInterests : []}
       />
 
-      <main className={`flex-1 flex min-h-0 relative p-1.5 sm:p-2 gap-1.5 sm:gap-2 mm-video-landscape-stage ${isMobile && showChat && status === 'connected' && !chatCollapsed ? 'flex-col' : ''}`}>
-        <div
-          className={`mm-design-panel mm-video-chat-split flex-1 flex min-h-0 min-w-0 relative overflow-hidden ${isMobile && showChat && status === 'connected' ? 'mm-video-chat-split--with-chat' : ''} ${isMobile ? 'flex-col' : 'flex-row'}`}
-        >
-          {/* PANEL 1: LOCAL — full panel on desktop / pre-connect mobile; PIP when connected on mobile */}
-          {!mobilePipMode && (
-          <div className={`relative bg-black overflow-hidden transition-all duration-500 ${isMobile ? 'w-full flex-1 min-h-0 shrink-0 border-b border-violet-500/15' : 'flex-1 border-r border-violet-500/15'}`}>
+      <main className={desktopLayout ? 'mm-desk-main' : `mm-mobile-main ${status !== 'connected' ? 'mm-mobile-main--solo' : ''}`}>
+        {desktopLayout ? (
+          <div className="mm-desk-card">
+            <div className="mm-desk-video-row">
+              <div className="mm-desk-pane">
+                <div className="mm-desk-pane__tag mm-desk-pane__tag--you">
+                  <span className="mm-desk-dot mm-desk-dot--green" aria-hidden /> You
+                </div>
+                {cameraError && !localStream && <AudioOnlyFallback nickname={nickname} onRetryCamera={retryMediaLocal} />}
+                <video
+                  ref={bindLocalVideo}
+                  autoPlay
+                  muted
+                  playsInline
+                  className={`${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
+                  style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }}
+                />
+                {status === 'idle' && (
+                  <div className="mm-desk-pane__placeholder">
+                    <p className="text-sm font-semibold text-white/80 mb-3">Ready to chat?</p>
+                    <button type="button" onClick={handleStart} disabled={!connected} className="mm-omegle-btn-new disabled:opacity-40">Start</button>
+                  </div>
+                )}
+              </div>
+              <div className="mm-desk-pane" ref={remoteStageRef}>
+                <div className="mm-desk-pane__tag mm-desk-pane__tag--stranger">
+                  <span className="mm-desk-dot mm-desk-dot--blue" aria-hidden /> Stranger
+                </div>
+                {status === 'searching' && (
+                  <div className="mm-desk-pane__placeholder">
+                    <div className="mm-omegle-search__spinner mb-3" aria-hidden />
+                    <p className="text-sm font-semibold text-white/80">Looking for someone…</p>
+                  </div>
+                )}
+                {status === 'idle' && (
+                  <div className="mm-desk-pane__placeholder">
+                    <p className="text-sm font-semibold text-white/50">Waiting for you to start</p>
+                  </div>
+                )}
+                {status === 'connected' && (
+                  <>
+                    <RemoteVideoComponent stream={peer?.stream} muted={mutedStranger} strangerFilter={strangerFilter} strangerBlur={strangerBlur || (!unique.consentComplete && autoStrangerBlur)} />
+                    <StrangerRevealOverlay show={showStrangerReveal && (strangerBlur || !unique.consentComplete) && !unique.consentComplete} onReveal={() => { revealStranger(); unique.markReady(); }} />
+                    <FloatingVideoReactions reactions={localReactions} />
+                    {strangerCameraOff && (
+                      <div className="mm-desk-pane__placeholder">
+                        <span className="text-xs text-white/50 uppercase tracking-wider">Camera off</span>
+                      </div>
+                    )}
+                    <ConsentSessionGate
+                      visible={PHASE_4_UNIQUE.mutualConsent && !unique.consentComplete}
+                      partnerReady={unique.partnerReady}
+                      totalPartners={unique.totalPartners}
+                      topicContract={topicContract}
+                      conversationMode={conversationMode}
+                      modePrompt={unique.modePrompt}
+                      onReady={unique.markReady}
+                      onAudioReady={unique.markAudioIntroReady}
+                      audioIntroDone={unique.audioIntroComplete}
+                      aiOnline={unique.aiOnline}
+                    />
+                  </>
+                )}
+                {status !== 'connected' && status !== 'searching' && status !== 'idle' && (
+                  <div className="mm-desk-pane__placeholder">
+                    <p className="text-xs text-white/40">Waiting for match…</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            {status === 'connected' && (
+              <div ref={chatPanelRef} className="mm-desk-chat" id="video-chat-messages-wrap">
+                <div className="mm-desk-chat__banner">
+                  <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                  You&apos;re chatting anonymously
+                </div>
+                <div className="mm-desk-chat__messages custom-scrollbar" id="video-chat-messages">
+                  {messages.filter((m) => !m.system).map((m, i) => (
+                    <DeskChatBubble key={m.id || i} m={m} isMe={m.socketId === socket?.id} myCountry={chatMyCountry} peerCountry={chatPeerCountry} />
+                  ))}
+                  <div ref={chatEndRef} />
+                </div>
+                {strangerTyping && (
+                  <div className="mm-desk-chat__typing">
+                    Stranger is typing…
+                    <span className="mm-desk-chat__typing-dots"><span /><span /><span /></span>
+                  </div>
+                )}
+                <div className="mm-desk-chat__input-row">
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={input}
+                    onChange={(e) => handleInputChange(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); sendMsg(); } }}
+                    placeholder="Type a message..."
+                    className="mm-desk-chat__input"
+                  />
+                  <button type="button" onClick={sendMsg} className="mm-desk-chat__send" aria-label="Send">
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+          <div ref={remoteStageRef} className={`mm-mobile-video ${status !== 'connected' ? 'mm-mobile-video--solo' : ''}`}>
             {status === 'idle' && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center p-6 z-20 bg-black/60 backdrop-blur-md">
+              <div className="mm-omegle-idle">
                 {cameraError && (
-                  <div className="mb-4 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[10px] uppercase font-black tracking-widest text-center">
+                  <div className="mb-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs text-center max-w-xs">
                     {cameraError}
                   </div>
                 )}
-                <p className="text-white font-black uppercase tracking-[0.4em] text-[10px] mb-8 animate-pulse text-center">Start Meeting Someone</p>
-                <div className="flex flex-wrap gap-2 justify-center max-w-sm mb-10">
-                  {interestTags.map(tag => (
-                    <button key={tag} onClick={() => toggleInterestTag(tag)} className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all border ${selectedInterests.includes(tag) ? 'bg-violet-600 border-violet-600 text-white shadow-lg' : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'}`}>#{tag}</button>
+                <p className="text-sm font-semibold text-white/90 mb-2">Ready to meet someone new?</p>
+                <p className="text-xs text-white/45 mb-6 text-center max-w-xs">Allow camera access, then start. You can skip anytime.</p>
+                <div className="flex flex-wrap gap-2 justify-center max-w-sm mb-6">
+                  {interestTags.map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => toggleInterestTag(tag)}
+                      className={`px-3 py-1 rounded-full text-[10px] font-bold border transition-colors ${selectedInterests.includes(tag) ? 'bg-emerald-600/90 border-emerald-500 text-white' : 'bg-white/5 border-white/15 text-white/45 hover:border-white/30'}`}
+                    >
+                      #{tag}
+                    </button>
                   ))}
                 </div>
-                <button onClick={handleStart} disabled={!connected} className="px-12 py-4 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-black uppercase tracking-widest text-xs transition-all shadow-2xl active:scale-95 shadow-violet-600/30">Start Connecting</button>
+                <button type="button" onClick={handleStart} disabled={!connected} className="mm-omegle-btn-new disabled:opacity-40 disabled:cursor-not-allowed">
+                  Start
+                </button>
               </div>
             )}
-            {cameraError && !localStream && (
-              <AudioOnlyFallback nickname={nickname} onRetryCamera={retryMediaLocal} />
-            )}
-            <video ref={localVideoRef} autoPlay muted playsInline className={`w-full h-full object-cover transition-opacity duration-300 ${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`} style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }} />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none" />
-            <div className="absolute bottom-4 left-4 flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]" />
-              <span className="text-[9px] font-black uppercase tracking-widest text-white/40 italic">Your Camera</span>
-            </div>
-            {isCreator && filterTimer > 0 && <div className="absolute top-4 left-4 px-2 py-1 rounded bg-amber-500 text-black text-[8px] font-black animate-pulse shadow-2xl uppercase">Premium: {filterTimer}s</div>}
-          </div>
-          )}
-
-          {/* PANEL 2: REMOTE / SEARCHING — full stage on mobile when connected */}
-          <div
-            ref={remoteStageRef}
-            className={`relative bg-realm-surface overflow-hidden mm-video-stage-mobile ${isMobile ? `flex-1 min-h-0 w-full ${mobilePipMode ? '' : 'border-t border-violet-500/15'}` : 'flex-1 border-l border-violet-500/15'}`}
-          >
             {status === 'searching' && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-realm-void/95 backdrop-blur-[2px] z-50 animate-fade-in">
-                <div className="absolute top-10 flex items-center gap-3 px-4 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-400 text-[10px] font-black uppercase tracking-[0.4em] animate-pulse">
-                  <div className="w-2 h-2 rounded-full bg-violet-500 shadow-[0_0_10px_rgba(167,139,250,0.8)]" />
-                  Turbo Matching Mode
-                </div>
-                <div className="relative w-28 h-28 mb-8">
-                  <div className="absolute inset-0 border-4 border-violet-500/10 rounded-full" />
-                  <div className="absolute inset-0 border-4 border-t-violet-500 rounded-full animate-spin" />
-                  <div className="absolute inset-6 border border-dashed border-violet-500/20 rounded-full animate-pulse-slow" />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-[10px] font-black text-white/10 uppercase tracking-widest">P2P Link...</span>
-                  </div>
-                </div>
-                <p className="text-white font-black uppercase tracking-[0.5em] text-base mb-2 animate-pulse">Accelerating Network</p>
-                <div className="flex gap-2">
-                  {[...Array(4)].map((_, i) => (
-                    <div key={i} className="w-2 h-2 bg-violet-500 rounded-full animate-bounce" style={{ animationDelay: `${i * 150}ms`, boxShadow: '0 0 10px rgba(167,139,250,0.5)' }} />
-                  ))}
-                </div>
-                <div className="mt-8 text-[10px] text-white/20 font-bold uppercase tracking-widest text-center max-w-[200px] leading-relaxed">
-                  Synchronizing with global P2P nodes for immediate match.
-                </div>
-                <button onClick={handleStop} className="absolute bottom-12 px-10 py-3 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-rose-500/60 hover:text-rose-400 hover:bg-rose-500/10 transition-all z-[60] active:scale-95">Cancel Blast</button>
+              <div className="mm-omegle-search">
+                <div className="mm-omegle-search__spinner" aria-hidden />
+                <p className="text-sm font-semibold text-white mb-1">Looking for someone…</p>
+                <p className="text-xs text-white/45 text-center max-w-[16rem]">Matching you with a random stranger.</p>
               </div>
             )}
-
-            {status === 'connected' ? (
-              <div className="relative w-full h-full animate-fade-in group">
+            {(status === 'idle' || status === 'searching') && (
+              <>
+                {cameraError && !localStream && <AudioOnlyFallback nickname={nickname} onRetryCamera={retryMediaLocal} />}
+                <video
+                  ref={bindLocalVideo}
+                  autoPlay
+                  muted
+                  playsInline
+                  className={`absolute inset-0 w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
+                  style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }}
+                />
+              </>
+            )}
+            {status === 'connected' && (
+              <div className="relative w-full h-full">
                 <SecurityShield />
                 {isRecording && <RecordingIndicator />}
                 <div
@@ -1833,235 +2152,172 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   {PHASE_4_UNIQUE.liveCaptions && (
                     <LiveCaptionsBar caption={unique.caption} enabled={unique.captionsOn} onToggle={() => unique.setCaptionsOn((v) => !v)} />
                   )}
-
-                  {/* WATERMARKS & AI STATUS */}
-                  <div className="absolute top-4 left-4 z-50 flex items-center gap-3 pointer-events-none">
-                    <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse shadow-[0_0_8px_#c4b5fd]" />
-                    <div className="px-2 py-1 bg-black/40 backdrop-blur-md rounded border border-white/5 text-[8px] font-black text-white/30 uppercase tracking-widest italic">Safety Active</div>
-                  </div>
-
-                  <div className={`absolute z-50 pointer-events-none px-2 py-1 bg-black/20 rounded text-[8px] font-black text-white/10 uppercase tracking-widest bottom-4 right-4`}>Mana Mingle</div>
-
                   {peer?.isCreator && (
-                    <div className="absolute inset-0 bg-violet-500/0 group-hover:bg-violet-500/10 transition-colors flex items-center justify-center pointer-events-none">
-                      <span className="opacity-0 group-hover:opacity-100 bg-violet-500 text-black px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest shadow-2xl transition-all translate-y-4 group-hover:translate-y-0">Explore Creator Content</span>
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center pointer-events-none">
+                      <span className="opacity-0 group-hover:opacity-100 bg-white text-black px-4 py-1.5 rounded-full text-[10px] font-bold shadow-lg transition-all">View creator</span>
                     </div>
                   )}
                 </div>
-
                 {strangerCameraOff && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-black/60 backdrop-blur-xl z-20">
-                    <span className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 bg-white/5 px-4 py-1.5 rounded-full border border-white/5">Video Hidden</span>
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/70 z-20">
+                    <span className="text-xs font-semibold text-white/50 uppercase tracking-wider">Stranger&apos;s camera is off</span>
                   </div>
                 )}
-
-                <div className={`absolute bottom-4 px-3 py-1.5 rounded-xl bg-black/60 text-[10px] font-black uppercase tracking-widest border border-white/10 flex items-center gap-2 z-40 backdrop-blur-md left-4 max-sm:bottom-3 max-sm:left-3`}>
-                  {countryToFlag(peer?.country)}
-                  <span className={peer?.isCreator ? 'text-violet-400 flex items-center gap-1.5' : 'text-white'}>
-                    {peer?.nickname || 'Someone'}
-                    {peer?.isCreator && <BlueTick />}
-                  </span>
+                <ConsentSessionGate
+                  visible={PHASE_4_UNIQUE.mutualConsent && !unique.consentComplete}
+                  partnerReady={unique.partnerReady}
+                  totalPartners={unique.totalPartners}
+                  topicContract={topicContract}
+                  conversationMode={conversationMode}
+                  modePrompt={unique.modePrompt}
+                  onReady={unique.markReady}
+                  onAudioReady={unique.markAudioIntroReady}
+                  audioIntroDone={unique.audioIntroComplete}
+                  aiOnline={unique.aiOnline}
+                />
+                <div className="mm-mobile-pip">
+                  <video
+                    ref={bindLocalVideo}
+                    autoPlay
+                    muted
+                    playsInline
+                    className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
+                    style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }}
+                  />
+                  <div className="mm-mobile-pip__footer">
+                    <span>You</span>
+                    <MobSignalBars quality={connectionQuality} />
+                  </div>
+                  {isCreator && filterTimer > 0 && (
+                    <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-amber-500 text-black text-[7px] font-black uppercase">FX</div>
+                  )}
                 </div>
+              </div>
+            )}
+          </div>
 
-                {mobilePipMode && (
-                  <DraggableVideoPip
-                    position={pipPos}
-                    onPositionChange={setPipPos}
-                    onCycleCorner={cyclePipCorner}
-                    size={pipSize}
-                    hidden={pipHidden}
-                    label="Your camera — drag to a corner, double-tap to move"
-                  >
-                    <video
-                      ref={localVideoRef}
-                      autoPlay
-                      muted
-                      playsInline
-                      className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
-                      style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }}
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent pointer-events-none" />
-                    {isCreator && filterTimer > 0 && (
-                      <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-amber-500 text-black text-[7px] font-black uppercase">Premium</div>
+          {status === 'connected' && (
+            <div ref={chatPanelRef} className={`mm-mobile-chat ${chatCollapsed ? 'mm-mobile-chat--collapsed' : ''}`} id="video-chat-messages-wrap">
+              <button type="button" className="mm-mobile-chat__head" onClick={() => setChatCollapsed((c) => !c)} aria-expanded={!chatCollapsed}>
+                <span className="mm-mobile-chat__handle" aria-hidden />
+                <span className="mm-mobile-chat__title">
+                  <svg className="w-3.5 h-3.5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                  Chat
+                  {chatUnread > 0 && chatCollapsed && (
+                    <span className="mm-mobile-chat__badge">{chatUnread > 9 ? '9+' : chatUnread}</span>
+                  )}
+                </span>
+                <span className={`mm-mobile-chat__chev ${chatCollapsed ? '' : 'mm-mobile-chat__chev--open'}`} aria-hidden>⌄</span>
+              </button>
+              {!chatCollapsed && (
+                <>
+                  <div className="mm-mobile-chat__messages custom-scrollbar" id="video-chat-messages">
+                    {messages.filter((m) => !m.system).length === 0 && (
+                      <p className="text-center text-xs text-white/30 py-6">Say hi — messages are anonymous.</p>
                     )}
-                  </DraggableVideoPip>
-                )}
-                <div className="absolute top-3 right-3 z-[55] hidden sm:block">
-                  <VideoReactionBar onReact={sendVideoReaction} />
-                </div>
-              </div>
-            ) : (
-              status !== 'searching' && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-black/20 italic">
-                  <p className="text-[10px] font-black uppercase tracking-[0.4em] text-white/5 animate-pulse">Waiting for Match...</p>
-                </div>
-              )
-            )}
-
-          </div>
-        </div>
-
-        {showChat && status === 'connected' && isMobile && chatCollapsed && (
-          <CollapsibleMobileChatHeader collapsed onToggle={() => setChatCollapsed(false)} unread={chatUnread} />
-        )}
-        {showChat && status === 'connected' && !chatCollapsed && (
-          <div ref={chatPanelRef} className={`transition-all duration-300 mm-design-panel chat-panel mm-video-landscape-chat flex flex-col min-h-0 min-w-0 bg-realm-surface shrink-0 ${isMobile ? 'w-full h-[40vh] max-h-[42vh] border-t border-violet-500/15' : 'static w-80 animate-slide-left'}`}>
-            {!isMobile && null}
-            {isMobile && (
-              <CollapsibleMobileChatHeader
-                collapsed={chatCollapsed}
-                onToggle={() => setChatCollapsed((c) => !c)}
-                unread={chatUnread}
-              />
-            )}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar" id="video-chat-messages">
-              {messages.map((m, i) => (
-                <div key={m.id || i} className={`flex flex-col group ${m.socketId === socket.id ? 'items-end' : 'items-start'}`}>
-                  <VanishingMessage m={m} isMe={m.socketId === socket.id} />
-                </div>
-              ))}
-              <div ref={chatEndRef} />
+                    {messages.filter((m) => !m.system).map((m, i) => (
+                      <MobChatBubble key={m.id || i} m={m} isMe={m.socketId === socket?.id} myCountry={chatMyCountry} peerCountry={chatPeerCountry} />
+                    ))}
+                    <div ref={chatEndRef} />
+                  </div>
+                  {strangerTyping && (
+                    <div className="mm-mobile-chat__typing">
+                      Stranger is typing
+                      <span className="mm-desk-chat__typing-dots"><span /><span /><span /></span>
+                    </div>
+                  )}
+                  <div className="mm-mobile-chat__input-row">
+                    <ChatInputWithEmoji
+                      value={input}
+                      onChange={handleInputChange}
+                      onSend={sendMsg}
+                      placeholder="Type a message..."
+                      showVoice={PHASE_2.voiceMessages}
+                      onVoiceMessage={handleVoiceMessage}
+                      className="mm-mobile-chat__input-comp"
+                      inputClassName="mm-mobile-chat__input-field"
+                    />
+                  </div>
+                </>
+              )}
             </div>
-            {PHASE_3_PRO.miniChatGames && roomIdRef.current && (
-              <div className="px-3 pb-1">
-                <MiniChatGamePanel onSendPrompt={(text) => generateAiSpark(text, true)} />
-              </div>
-            )}
-            <div className="p-3 bg-white/[0.02] border-t border-violet-500/10">
-              <div className="flex gap-2 mb-2">
-                <button type="button" onClick={() => generateAiSpark()} disabled={isAiGenerating} className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-violet-500/15 text-violet-300 border border-violet-500/20 hover:bg-violet-500/25 disabled:opacity-40">
-                  {isAiGenerating ? '…' : '✨ Icebreaker'}
-                </button>
-                {isTranslatorActive && <span className="text-[9px] text-emerald-400/80 self-center uppercase font-bold tracking-widest">Translating</span>}
-              </div>
-              <ChatInputWithEmoji
-                value={input}
-                onChange={handleInputChange}
-                onSend={sendMsg}
-                placeholder="Type a message..."
-                showVoice={PHASE_2.voiceMessages}
-                onVoiceMessage={handleVoiceMessage}
-                inputClassName="bg-white/5 border-white/10 focus:border-violet-500/50 text-sm font-medium"
-              />
-            </div>
-          </div>
+          )}
+          </>
         )}
       </main>
 
-      <footer className="mm-design-panel-footer min-h-14 sm:min-h-16 px-1 sm:px-4 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 bg-realm-surface/95 backdrop-blur-md flex items-center justify-between gap-1 sm:gap-4 z-[120] shrink-0">
-
-        {/* Left Side: Stop Session */}
-        <div className="flex items-center gap-1 sm:gap-3 shrink-0">
-          {(status === 'connected' || status === 'searching' || status === 'disconnected') && (
-            <div className="flex flex-col items-center gap-0.5">
-              <button type="button" onClick={handleStop} className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-500 flex items-center justify-center hover:bg-rose-500 hover:text-white transition-all shadow-lg" title="Stop">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-              <span className="text-[7px] uppercase tracking-tighter text-white/20 font-bold hidden sm:block">ESC / ←</span>
-            </div>
-          )}
-        </div>
-
-        {/* Middle: Video/Audio Controls — scroll on very narrow screens */}
-        <div className="flex-1 min-w-0 flex justify-center overflow-x-auto overflow-y-hidden [scrollbar-width:thin] py-0.5">
-          <div className="flex items-center gap-1 sm:gap-3 bg-violet-950/30 px-1.5 sm:px-3 py-1 sm:py-1.5 rounded-xl border border-violet-500/15">
-            <div className="flex flex-col items-center gap-0.5">
-              <button type="button" onClick={toggleMute} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${muted ? 'bg-red-500/20 text-red-500' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title={muted ? 'Unmute' : 'Mute'}>
-                {muted ? <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" /></svg> : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>}
-              </button>
-              <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">M</span>
-            </div>
-            <div className="flex flex-col items-center gap-0.5">
-              <button type="button" onClick={toggleCamera} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${cameraOff ? 'bg-red-500/20 text-red-500' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title={cameraOff ? 'Camera on' : 'Camera off'}>
-                {cameraOff ? <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" /></svg> : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>}
-              </button>
-              <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">V</span>
-            </div>
-            <div className="flex flex-col items-center gap-0.5">
-              <button type="button" onClick={() => setCameraBlur(!cameraBlur)} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${cameraBlur ? 'bg-[#1a7f37]/30 text-[#2ea043]' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title="Blur">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-              </button>
-              <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">B</span>
-            </div>
-            {status === 'connected' && (
-              <>
-                <div className="flex flex-col items-center gap-0.5">
-                  <button type="button" onClick={() => {
-                      if (!showChat) { setShowChat(true); setChatCollapsed(false); }
-                      else if (chatCollapsed) setChatCollapsed(false);
-                      else { setShowChat(false); setChatCollapsed(false); }
-                    }} className={`relative w-8 h-8 rounded-full flex items-center justify-center transition-all ${showChat && !chatCollapsed ? 'bg-violet-500/30 text-violet-400' : 'bg-white/5 text-white/60 hover:bg-white/10'}`} title="Chat">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-                    {chatUnread > 0 && (
-                      <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-rose-500 text-[8px] font-black text-white flex items-center justify-center">{chatUnread > 9 ? '9+' : chatUnread}</span>
-                    )}
-                  </button>
-                  <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">C</span>
-                </div>
-                {isMobile && (
-                  <div className="flex flex-col items-center gap-0.5 sm:hidden">
-                    <button type="button" onClick={toggleFacingMode} className="w-8 h-8 rounded-full bg-white/5 text-white/60 hover:bg-white/10 flex items-center justify-center" title="Flip camera">🔄</button>
-                  </div>
-                )}
-                <div className="flex flex-col items-center gap-0.5 sm:hidden">
-                  <VideoReactionBar onReact={sendVideoReaction} disabled={!roomIdRef.current} />
-                </div>
-                <div className="flex flex-col items-center gap-0.5">
-                  <button type="button" onClick={() => setShowMoreMenu(true)} className="w-8 h-8 rounded-full bg-white/5 text-white/60 hover:bg-white/10 flex items-center justify-center" title="More options">⋯</button>
-                  <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">+</span>
-                </div>
-                <div className="flex flex-col items-center gap-0.5">
-                  <button type="button" onClick={sendWave} className="w-8 h-8 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center hover:bg-amber-500/20 transition-all" title="Wave">👋</button>
-                  <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">W</span>
-                </div>
-                <div className="flex flex-col items-center gap-0.5">
-                  <button type="button" onClick={sendGoodVibes} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${goodVibesSent ? 'bg-rose-500 text-white' : 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20'}`} title="Good Vibes">💖</button>
-                  <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">V</span>
-                </div>
-                <div className="flex flex-col items-center gap-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setShowReportModal(true)}
-                    className="w-8 h-8 rounded-full bg-white/5 text-rose-400/80 hover:bg-rose-500/20 flex items-center justify-center border border-white/10"
-                    title="Report or block"
-                  >
-                    🚩
-                  </button>
-                  <span className="text-[7px] text-white/10 font-bold uppercase hidden sm:block">R</span>
-                </div>
-              </>
+      {desktopLayout ? (
+        <footer className="mm-desk-toolbar">
+          <button type="button" onClick={toggleMute} className={`mm-desk-tool ${muted ? 'mm-desk-tool--off' : ''}`}>
+            <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+            Mic
+            <span className="mm-desk-tool__chev" onClick={(e) => { e.stopPropagation(); setShowDevicePicker(true); }} role="presentation">▾</span>
+          </button>
+          <button type="button" onClick={toggleCamera} className={`mm-desk-tool ${cameraOff ? 'mm-desk-tool--off' : ''}`}>
+            <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+            Camera
+            <span className="mm-desk-tool__chev" onClick={(e) => { e.stopPropagation(); setShowDevicePicker(true); }} role="presentation">▾</span>
+          </button>
+          <button type="button" onClick={scrollToChat} className="mm-desk-tool">
+            <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+            Chat
+          </button>
+          <button type="button" onClick={handleSkip} className="mm-desk-tool mm-desk-tool--next">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
+            Next
+          </button>
+          <button type="button" onClick={handleStop} className="mm-desk-tool mm-desk-tool--end">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.516l2.257-1.13a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.28 3H5z" /></svg>
+            End Call
+          </button>
+        </footer>
+      ) : (
+      <footer className="mm-mobile-bar">
+        <button type="button" onClick={toggleMute} className={`mm-mobile-bar__item ${muted ? 'mm-mobile-bar__item--off' : ''}`}>
+          <span className="mm-mobile-bar__icon mm-mobile-bar__icon--green">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+          </span>
+          <span className="mm-mobile-bar__label">Mic</span>
+        </button>
+        <button type="button" onClick={toggleCamera} className={`mm-mobile-bar__item ${cameraOff ? 'mm-mobile-bar__item--off' : ''}`}>
+          <span className="mm-mobile-bar__icon mm-mobile-bar__icon--green">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+          </span>
+          <span className="mm-mobile-bar__label">Camera</span>
+        </button>
+        <button
+          type="button"
+          onClick={scrollToChat}
+          className={`mm-mobile-bar__item ${status === 'connected' && !chatCollapsed ? 'mm-mobile-bar__item--active' : ''}`}
+          disabled={status !== 'connected'}
+        >
+          <span className="mm-mobile-bar__icon mm-mobile-bar__icon--blue relative">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+            {chatUnread > 0 && status === 'connected' && (
+              <span className="mm-mobile-bar__badge">{chatUnread > 9 ? '9+' : chatUnread}</span>
             )}
-          </div>
-        </div>
-
-        {/* Right Side: New/Skip */}
-        <div className="flex items-center gap-1 sm:gap-3 shrink-0">
-          {isCreator && status === 'connected' && (
-            <>
-            <button
-              type="button"
-              onClick={isRecording ? stopRecording : startRecording}
-              className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-all ${isRecording ? 'bg-rose-500 animate-pulse' : 'bg-white/5 border border-white/10 text-white/40 hover:text-white'}`}
-              title={isRecording ? 'Stop Recording' : 'Start Creator Production'}
-            >
-              <div className={`w-3 h-3 rounded-full ${isRecording ? 'bg-white' : 'bg-rose-500'}`} />
-            </button>
-            <button type="button" onClick={saveHighlightClip} className="hidden sm:flex w-9 h-9 rounded-full bg-amber-500/15 border border-amber-500/25 text-amber-400 items-center justify-center text-[9px] font-black" title="30s highlight clip">30s</button>
-            </>
-          )}
-          <div className="flex flex-col items-center gap-0.5">
-            <button type="button" onClick={handleSkip} className="relative px-3 sm:px-6 py-1.5 sm:py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black uppercase tracking-widest text-[9px] sm:text-[10px] transition-all active:scale-95 shadow-xl shadow-violet-500/20 whitespace-nowrap" aria-label="Skip">
-              {status === 'searching' ? 'Cancel' : (
-                <>
-                  <span className="sm:hidden">Next</span>
-                  <span className="hidden sm:inline">Next User</span>
-                </>
-              )}
-            </button>
-            <span className="text-[7px] uppercase tracking-tighter text-white/20 font-bold hidden sm:block">SPACE / →</span>
-          </div>
-        </div>
+          </span>
+          <span className="mm-mobile-bar__label">Chat</span>
+        </button>
+        <button
+          type="button"
+          onClick={status === 'idle' ? handleStart : status === 'searching' ? handleStop : handleSkip}
+          disabled={status === 'idle' && !connected}
+          className="mm-mobile-bar__item mm-mobile-bar__item--next"
+        >
+          <span className="mm-mobile-bar__icon mm-mobile-bar__icon--green">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
+          </span>
+          <span className="mm-mobile-bar__label">{status === 'idle' ? 'Start' : status === 'searching' ? 'Cancel' : 'Next'}</span>
+        </button>
+        <button type="button" onClick={status === 'idle' ? handleBack : handleStop} className="mm-mobile-bar__item mm-mobile-bar__item--end">
+          <span className="mm-mobile-bar__icon mm-mobile-bar__icon--red">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.516l2.257-1.13a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.28 3H5z" /></svg>
+          </span>
+          <span className="mm-mobile-bar__label">{status === 'idle' ? 'Back' : 'End'}</span>
+        </button>
       </footer>
+      )}
 
       <ReportSafetyModal
         open={showReportModal}
@@ -2240,52 +2496,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
 function RemoteVideoComponent({ stream, muted, strangerFilter, strangerBlur }) {
   const ref = useRef(null);
-  const playbackRetryRef = useRef(null);
-  const isMountedRef = useRef(true);
 
   useEffect(() => {
-    isMountedRef.current = true;
-    const el = ref.current;
-    if (!el || !stream) return;
-
-    el.srcObject = stream;
-
-    const playVideo = async () => {
-      try {
-        if (el.paused && stream?.active) {
-          await el.play();
-        }
-      } catch (e) {
-        // Fallback for browsers that block autoplay
-        const retry = () => {
-          if (playbackRetryRef.current) clearTimeout(playbackRetryRef.current);
-          if (!isMountedRef.current) return;
-          if (el) {
-            el.play().catch(() => {
-              playbackRetryRef.current = setTimeout(retry, 2000);
-            });
-          } else {
-            playbackRetryRef.current = setTimeout(retry, 1000);
-          }
-        };
-        retry();
-      }
-    };
-    playVideo();
-
-    // Forced-play listeners for stalled/waiting streams
-    const handleActive = () => { if (el.paused) el.play().catch(() => { }); };
-    el.addEventListener('stalled', handleActive);
-    el.addEventListener('waiting', handleActive);
-    el.addEventListener('canplay', handleActive);
-
-    return () => {
-      isMountedRef.current = false;
-      if (playbackRetryRef.current) clearTimeout(playbackRetryRef.current);
-      el.removeEventListener('stalled', handleActive);
-      el.removeEventListener('waiting', handleActive);
-      el.removeEventListener('canplay', handleActive);
-    };
+    return attachStreamToVideo(ref.current, stream);
   }, [stream]);
 
   return (
@@ -2298,7 +2511,7 @@ function RemoteVideoComponent({ stream, muted, strangerFilter, strangerBlur }) {
       style={{
         backgroundColor: '#000',
         filter: strangerBlur && strangerFilter === 'none' ? 'blur(20px)' : (strangerFilter !== 'none' ? strangerFilter : 'none'),
-        willChange: 'transform, opacity' // Hardware acceleration
+        willChange: 'transform, opacity',
       }}
     />
   );

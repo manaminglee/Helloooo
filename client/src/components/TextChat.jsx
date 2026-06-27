@@ -182,7 +182,7 @@ function VanishingMessage({ m, isMe, onReply }) {
   );
 }
 
-export default function TextChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', language = '', region = '', isCreator = false, onBack, onJoined, onFindNewPartner, adsEnabled = false, adScripts = {}, coinState, registered = false, currentActiveSeconds = 0, conversationMode = 'free', topicContract = 'chill', calmMode: calmModeProp = false }) {
+export default function TextChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', language = '', region = '', isCreator = false, onBack, onJoined, onFindNewPartner, adsEnabled = false, adScripts = {}, coinState, registered = false, currentActiveSeconds = 0, conversationMode = 'free', topicContract = 'chill', calmMode: calmModeProp = false, isPro = false, subscription = null }) {
   const { balance, streak, canClaim, nextClaim, claimCoins } = coinState;
   const [messages, setMessages] = useState([]);
   const [sparks, setSparks] = useState([]);
@@ -662,6 +662,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
         </div>
 
         <div className="flex items-center gap-4">
+          {PHASE_3_PRO.reconnectToken && <ProFeaturesMenu isProUser={isPro || subscription === 'pro'} />}
           {PHASE_4_UNIQUE.trustScore && <TrustScoreChip trust={unique.trust} />}
           {PHASE_4_UNIQUE.nvidiaCopilot && <AiStatusPill online={unique.aiOnline} />}
           {PHASE_4_UNIQUE.coOpStreak && <CoOpStreakBadge minutes={unique.coOpMinutes} />}

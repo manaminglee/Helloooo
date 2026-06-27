@@ -19,4 +19,10 @@ test.describe('Mana Mingle smoke (anonymous)', () => {
     await page.goto('/?debug=1');
     await expect(page.locator('#root')).toBeVisible();
   });
+
+  test('interest entry and text mode navigation', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /Start Text/i }).click();
+    await expect(page.locator('#text-back-btn')).toBeVisible({ timeout: 15000 });
+  });
 });

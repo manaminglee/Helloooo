@@ -1,5 +1,5 @@
 /* Mana Mingle - Service Worker (static assets only) */
-const CACHE = 'mana-mingle-static-v4';
+const CACHE = 'mana-mingle-static-v5';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
