@@ -299,4 +299,24 @@ ALTER TABLE creator_password_resets ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow full access" ON creator_password_resets;
 CREATE POLICY "Allow full access" ON creator_password_resets FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
+-- 11. Creator in-app notifications (admin actions, approvals, payouts)
+CREATE TABLE IF NOT EXISTS creator_notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_id TEXT REFERENCES creators(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  important BOOLEAN DEFAULT TRUE,
+  read BOOLEAN DEFAULT FALSE,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_creator_notifications_creator_created ON creator_notifications(creator_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_creator_notifications_unread ON creator_notifications(creator_id, read) WHERE read = FALSE;
+
+ALTER TABLE creator_notifications ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON creator_notifications;
+CREATE POLICY "Allow full access" ON creator_notifications FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
 -- End of ManaMingle Supabase Schema

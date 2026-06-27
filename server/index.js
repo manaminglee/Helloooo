@@ -23,6 +23,7 @@ const { createPersistence } = require('./persistence');
 const { registerPayments } = require('./payments');
 const creatorSecurity = require('./creatorSecurity');
 const creatorEmail = require('./creatorEmail');
+const creatorNotifications = require('./creatorNotifications');
 
 /** Normalize ADMIN_KEY from env (trim whitespace / optional quotes). Never log the value. */
 function getAdminKey() {
@@ -58,6 +59,7 @@ let localDb = {
   pro_users: {},
   creator_events: [],
   creator_password_resets: [],
+  creator_notifications: [],
 };
 
 function loadLocalDb() {
@@ -76,6 +78,7 @@ function loadLocalDb() {
         pro_users: {},
         creator_events: [],
         creator_password_resets: [],
+        creator_notifications: [],
         ...parsed,
       };
       console.log('[DB] Local storage loaded.');
@@ -320,6 +323,105 @@ async function getApprovedCreatorForRequest(req) {
     c2 = localDb.creators.find((x) => x.authorized_ips.includes(ip) && x.status === 'approved');
   }
   return { creator: c2 || null, ip, via: c2 ? 'ip' : null };
+}
+
+/** Resolve creator by referral token (any status) for notifications / status checks. */
+async function getCreatorForRequest(req) {
+  const ip = getClientIp(req);
+  const auth = req.headers.authorization || '';
+  const token = String(req.headers['x-creator-token'] || req.headers['x-creator-referral'] || '').trim()
+    || (auth.startsWith('Bearer ') ? auth.slice(7).trim() : '');
+
+  if (token) {
+    let c = null;
+    if (supabase) {
+      const { data } = await supabase.from('creators').select('*').eq('referral_code', token).maybeSingle();
+      c = data;
+    } else {
+      c = localDb.creators.find((x) => x.referral_code === token);
+    }
+    if (c) return { creator: c, ip, via: 'token' };
+  }
+
+  let c2 = null;
+  if (supabase) {
+    const { data } = await supabase.from('creators').select('*').contains('authorized_ips', [ip]).maybeSingle();
+    c2 = data;
+  } else {
+    c2 = localDb.creators.find((x) => x.authorized_ips.includes(ip));
+  }
+  return { creator: c2 || null, ip, via: c2 ? 'ip' : null };
+}
+
+const notifyCtx = () => ({ supabase, localDb, saveLocalDb, io });
+
+async function notifyCreatorAction(creator, payload) {
+  if (!creator?.id) return;
+  await creatorNotifications.pushCreatorNotification(notifyCtx(), {
+    creatorId: creator.id,
+    referralCode: creator.referral_code,
+    ...payload,
+  });
+}
+
+async function resolveCreatorIdentity(userData, data, ip) {
+  if (!userData) return;
+  const token = String(data?.creatorToken || data?.referralCode || '').trim();
+  if (token) {
+    let creator = null;
+    if (supabase) {
+      const { data: row } = await supabase.from('creators').select('*').eq('referral_code', token).eq('status', 'approved').maybeSingle();
+      creator = row;
+    } else {
+      creator = localDb.creators.find((c) => c.referral_code === token && c.status === 'approved');
+    }
+    if (creator) {
+      userData.isCreator = true;
+      userData.nickname = creator.handle_name;
+      userData.creatorData = creator;
+      await linkCreatorIpIfNeeded(creator, ip);
+    }
+  }
+  if (userData.isCreator) {
+    if (userData.creatorData?.handle_name) {
+      userData.nickname = userData.creatorData.handle_name;
+    } else if (userData.nickname && userData.nickname !== 'Anonymous') {
+      let creator = null;
+      if (supabase) {
+        const { data: row } = await supabase.from('creators').select('*').ilike('handle_name', userData.nickname).eq('status', 'approved').maybeSingle();
+        creator = row;
+      } else {
+        creator = localDb.creators.find((c) => c.handle_name.toLowerCase() === userData.nickname.toLowerCase() && c.status === 'approved');
+      }
+      if (creator) {
+        userData.creatorData = creator;
+        userData.nickname = creator.handle_name;
+      }
+    }
+  }
+}
+
+function buildCreatorIntroMessage(roomId, creatorSocketId, creatorUser) {
+  const handle = creatorUser.creatorData?.handle_name || creatorUser.nickname || 'Creator';
+  return {
+    id: generateId('msg'),
+    roomId,
+    socketId: creatorSocketId,
+    nickname: handle,
+    text: `Verified creator @${handle} connected. View their profile to follow and get updates.`,
+    ts: Date.now(),
+    isCreator: true,
+    isIntro: true,
+    creatorHandle: handle,
+    profilePath: `/creator/${encodeURIComponent(handle)}`,
+  };
+}
+
+function pushRoomChatMessage(room, entry) {
+  room.messages = room.messages || [];
+  room.messages.push(entry);
+  if (room.messages.length > MESSAGE_HISTORY) room.messages = room.messages.slice(-MESSAGE_HISTORY);
+  io.to(room.id).emit('chat-message', { roomId: room.id, ...entry });
 }
 
 async function linkCreatorIpIfNeeded(creator, ip) {
@@ -671,7 +773,7 @@ app.post('/api/validate-url', async (req, res) => {
 });
 
 app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
-  const { handle, platform, link, email } = req.body || {};
+  const { handle, platform, link, email, password } = req.body || {};
   const ip = getClientIp(req);
 
   const rate = creatorSecurity.checkRegisterRate(ip);
@@ -690,6 +792,11 @@ app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
 
   const emailCheck = creatorSecurity.validateEmail(email);
   if (!emailCheck.ok) return res.status(400).json({ error: emailCheck.error });
+
+  const passCheck = creatorSecurity.validatePassword(password);
+  if (!passCheck.ok) return res.status(400).json({ error: passCheck.error });
+
+  const password_hash = await creatorSecurity.hashPassword(passCheck.password);
 
   const pin = Math.floor(1000 + Math.random() * 9000);
   const referral_code = `${handleCheck.handle.replace(/\s+/g, '')}${pin}`;
@@ -712,7 +819,7 @@ app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
     avatar_url: null,
     bio: '',
     password: null,
-    password_hash: null,
+    password_hash,
     created_at: new Date().toISOString()
   };
   try {
@@ -728,7 +835,13 @@ app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
       localDb.creators.push(entry);
       saveLocalDb();
     }
-    res.json({ success: true, message: 'Application submitted. Save your access code.', accessCode: referral_code });
+    res.json({ success: true, message: 'Application submitted. Save your access code and use your password to log in after approval.', accessCode: referral_code });
+    await notifyCreatorAction(entry, {
+      type: 'application_submitted',
+      title: 'Application received',
+      message: 'Your creator application is pending review. You will be notified here when an admin updates your status.',
+      important: false,
+    });
     io.emit('creator-new-application', {
       id: entry.id,
       handle_name: entry.handle_name,
@@ -974,6 +1087,34 @@ app.get('/api/creators/status', async (req, res) => {
   } catch (e) { res.json({ data: null }); }
 });
 
+app.get('/api/creators/notifications', async (req, res) => {
+  try {
+    const { creator } = await getCreatorForRequest(req);
+    if (!creator) return res.status(403).json({ error: 'Unauthorized' });
+    const notifications = await creatorNotifications.listCreatorNotifications(notifyCtx(), creator.id);
+    const unreadCount = await creatorNotifications.countUnreadNotifications(notifyCtx(), creator.id);
+    res.json({ success: true, notifications, unreadCount });
+  } catch (e) {
+    res.status(500).json({ error: 'Could not load notifications' });
+  }
+});
+
+app.post('/api/creators/notifications/read', async (req, res) => {
+  try {
+    const { creator } = await getCreatorForRequest(req);
+    if (!creator) return res.status(403).json({ error: 'Unauthorized' });
+    const { ids, all } = req.body || {};
+    await creatorNotifications.markNotificationsRead(notifyCtx(), creator.id, {
+      ids: Array.isArray(ids) ? ids : ids ? [ids] : [],
+      all: !!all,
+    });
+    const unreadCount = await creatorNotifications.countUnreadNotifications(notifyCtx(), creator.id);
+    res.json({ success: true, unreadCount });
+  } catch (e) {
+    res.status(500).json({ error: 'Could not update notifications' });
+  }
+});
+
 app.post('/api/creators/withdraw', async (req, res) => {
   const { upi } = req.body || {};
   const upiCheck = creatorSecurity.validateUpi(upi);
@@ -1092,6 +1233,7 @@ app.post('/api/admin/creators/approve', requireAdmin, async (req, res) => {
         updates.password_hash = await creatorSecurity.hashPassword(creator.password);
         updates.password = null;
       }
+      // password_hash already set at registration — creator uses their chosen password
       updates.coins_earned = (creator.coins_earned || 0) + 500;
       updates.earnings_rs = creatorSecurity.computeEarningsRs(updates.coins_earned);
       updates.rejection_reason = null;
@@ -1138,8 +1280,23 @@ app.post('/api/admin/creators/approve', requireAdmin, async (req, res) => {
 
     const merged = { ...creator, ...updates };
     if (status === 'approved') {
+      await notifyCreatorAction(merged, {
+        type: 'approved',
+        title: 'Application approved',
+        message: plainPassword
+          ? `You're in! Admin assigned a temporary password — check your email or the approval screen. +500 bonus coins added.`
+          : `You're approved! Log in with the password you set during registration. +500 bonus coins added.`,
+        important: true,
+        metadata: { bonus_coins: 500 },
+      });
       creatorEmail.notifyCreatorApproved(merged, plainPassword).catch((e) => console.error('[EMAIL] approve notify', e.message));
     } else if (status === 'rejected') {
+      await notifyCreatorAction(merged, {
+        type: 'rejected',
+        title: 'Application rejected',
+        message: updates.rejection_reason || 'Your application was not approved at this time.',
+        important: true,
+      });
       creatorEmail.notifyCreatorRejected(merged, updates.rejection_reason).catch((e) => console.error('[EMAIL] reject notify', e.message));
     }
   } catch (e) { res.status(500).json({ error: 'Approval failed' }); }
@@ -1183,6 +1340,14 @@ app.post('/api/admin/creators/featured', requireAdmin, async (req, res) => {
       });
       saveLocalDb();
     }
+    await notifyCreatorAction(creator, {
+      type: featured ? 'featured_on' : 'featured_off',
+      title: featured ? 'Featured on homepage' : 'Removed from featured',
+      message: featured
+        ? 'An admin pinned your profile to the featured creators strip on the landing page.'
+        : 'An admin removed your profile from the featured creators strip.',
+      important: true,
+    });
     res.json({ success: true, featured });
   } catch (e) {
     res.status(500).json({ error: 'Failed to update featured status' });
@@ -1221,6 +1386,14 @@ app.post('/api/admin/creators/reset-password', requireAdmin, async (req, res) =>
     }
 
     creatorEmail.notifyPasswordResetByAdmin(creator, plainPassword).catch((e) => console.error('[EMAIL] admin reset', e.message));
+    await notifyCreatorAction(creator, {
+      type: 'password_reset',
+      title: 'Password reset by admin',
+      message: creator.email
+        ? 'An admin reset your login password. Check your email for the new credentials.'
+        : 'An admin reset your login password. Contact support if you did not receive new credentials.',
+      important: true,
+    });
     res.json({ success: true, password: plainPassword });
   } catch (e) {
     res.status(500).json({ error: 'Password reset failed' });
@@ -1318,6 +1491,15 @@ app.post('/api/admin/withdrawals/status', requireAdmin, async (req, res) => {
       creatorForEmail = localDb.creators.find((c) => c.id === withdrawal.creator_id);
     }
     if (creatorForEmail) {
+      await notifyCreatorAction(creatorForEmail, {
+        type: status === 'paid' ? 'withdrawal_paid' : 'withdrawal_rejected',
+        title: status === 'paid' ? 'Withdrawal paid' : 'Withdrawal rejected',
+        message: status === 'paid'
+          ? `Your payout of ₹${withdrawal.amount_rs || 0} to ${withdrawal.upi} was marked paid by admin.`
+          : `Your withdrawal was rejected${updates.admin_note ? `: ${updates.admin_note}` : ''}. Coins were restored to your balance.`,
+        important: true,
+        metadata: { withdrawal_id: withdrawalId, status },
+      });
       creatorEmail.notifyWithdrawalUpdate(creatorForEmail, withdrawal, status, updates.admin_note).catch((e) => console.error('[EMAIL] withdrawal', e.message));
     }
 
@@ -2428,9 +2610,12 @@ io.on('connection', (socket) => {
   socket.on('find-partner', async (data) => {
     const userData = users.get(socket.id);
     if (!userData) return;
+    await resolveCreatorIdentity(userData, data, ip);
     const mode = data?.mode === 'video' ? 'video' : 'text';
     const interest = sanitize(String(data?.interest || 'general').toLowerCase(), 30) || 'general';
-    const nickname = sanitize(data?.nickname || 'Anonymous', 30);
+    const nickname = userData.isCreator
+      ? sanitize(userData.nickname || userData.creatorData?.handle_name || 'Creator', 30)
+      : sanitize(data?.nickname || userData.nickname || 'Anonymous', 30);
     const region = sanitize(String(data?.region || userData.country || ''), 10);
     const language = sanitize(String(data?.language || ''), 20);
     const conversationMode = sanitize(String(data?.conversationMode || 'free'), 30);
@@ -2457,9 +2642,9 @@ io.on('connection', (socket) => {
       queue.splice(idx, 1);
       const otherData = users.get(match.socketId);
       if (!otherData || !io.sockets.sockets.get(match.socketId)) return;
-      const room = createRoom(interest, mode, socket.id, { id: userData.id, nickname: userData.nickname, country: userData.country }, PAIR_MAX);
+      const room = createRoom(interest, mode, socket.id, { id: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator }, PAIR_MAX);
       uniqueFeatures.enrichPartnerMatch(room, socket.id, data);
-      addUserToRoom(room, match.socketId, { id: otherData.id, nickname: otherData.nickname, country: otherData.country });
+      addUserToRoom(room, match.socketId, { id: otherData.id, nickname: otherData.nickname, country: otherData.country, isCreator: otherData.isCreator });
       userData.rooms.add(room.id);
       otherData.rooms.add(room.id);
       socket.join(room.id);
@@ -2477,32 +2662,16 @@ io.on('connection', (socket) => {
       const otherToken = enhancements.issueReconnectToken(match.socketId, { roomId: room.id, nickname: otherData.nickname, mode });
       io.sockets.sockets.get(match.socketId).emit('reconnect-token', { token: otherToken });
 
-      // --- AUTOMATED CREATOR INTRO MESSAGE ---
       if (userData.isCreator) {
-        const intro = `Hi! I am @${userData.nickname} - follow my profile here: ${process.env.FRONTEND_URL || 'manamingle.site'}/creator/${userData.nickname}`;
-        io.to(room.id).emit('chat-message', {
-          sender: socket.id,
-          nickname: userData.nickname,
-          text: intro,
-          timestamp: Date.now(),
-          isCreator: true,
-          isIntro: true
-        });
+        pushRoomChatMessage(room, buildCreatorIntroMessage(room.id, socket.id, userData));
       }
       if (otherData.isCreator) {
-        const intro = `Hi! I am @${otherData.nickname} - follow my profile here: ${process.env.FRONTEND_URL || 'manamingle.site'}/creator/${otherData.nickname}`;
-        io.to(room.id).emit('chat-message', {
-          sender: match.socketId,
-          nickname: otherData.nickname,
-          text: intro,
-          timestamp: Date.now(),
-          isCreator: true,
-          isIntro: true
-        });
+        pushRoomChatMessage(room, buildCreatorIntroMessage(room.id, match.socketId, otherData));
       }
 
-      socket.emit('chat-history', { roomId: room.id, messages: [] });
-      io.sockets.sockets.get(match.socketId).emit('chat-history', { roomId: room.id, messages: [] });
+      const history = room.messages || [];
+      socket.emit('chat-history', { roomId: room.id, messages: history });
+      io.sockets.sockets.get(match.socketId).emit('chat-history', { roomId: room.id, messages: history });
     } else {
       const entry = { socketId: socket.id, userData, interest, region, language, conversationMode, topicContract };
       if (userData.isCreator) queue.unshift(entry);

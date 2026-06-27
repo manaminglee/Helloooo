@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-
-const API_BASE = import.meta.env.VITE_SOCKET_URL || '';
+import { API_BASE } from '../config/apiBase';
 
 export function CreatorProfilePopup({ handle, onClose }) {
   const [creator, setCreator] = useState(null);

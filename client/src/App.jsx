@@ -336,7 +336,7 @@ export default function App() {
             country={country}
             onlineCount={onlineCount}
             interest={interest}
-            nickname={joinMeta.displayNickname || nickname}
+            nickname={isCreator ? nickname : (joinMeta.displayNickname || nickname)}
             language={joinMeta.language}
             region={joinMeta.region || country}
             isCreator={isCreator}
@@ -366,7 +366,7 @@ export default function App() {
             country={country}
             onlineCount={onlineCount}
             interest={interest}
-            nickname={joinMeta.displayNickname || nickname}
+            nickname={isCreator ? nickname : (joinMeta.displayNickname || nickname)}
             isCreator={isCreator}
             adsEnabled={adsEnabled}
             adScripts={adScripts}
@@ -391,7 +391,7 @@ export default function App() {
           <GroupTextRoom
             roomId={roomId}
             interest={interest}
-            nickname={joinMeta.displayNickname || nickname}
+            nickname={isCreator ? nickname : (joinMeta.displayNickname || nickname)}
             isCreator={isCreator}
             myCountry={country}
             socket={socket}
@@ -414,7 +414,7 @@ export default function App() {
           <GroupVideoRoom
             roomId={roomId}
             interest={interest}
-            nickname={joinMeta.displayNickname || nickname}
+            nickname={isCreator ? nickname : (joinMeta.displayNickname || nickname)}
             isCreator={isCreator}
             myCountry={country}
             socket={socket}

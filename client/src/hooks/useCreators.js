@@ -8,6 +8,7 @@ import {
   validateCreatorLogin,
   validateCreatorUpi,
   validateCreatorEmail,
+  validateCreatorPassword,
 } from '../utils/creatorValidation';
 
 export function useCreators() {
@@ -43,7 +44,7 @@ export function useCreators() {
     }
   };
 
-  const registerCreator = async (handle, platform, link, email) => {
+  const registerCreator = async (handle, platform, link, email, password, confirmPassword) => {
     const handleCheck = validateCreatorHandle(handle);
     if (!handleCheck.ok) return { success: false, error: handleCheck.error };
     const platformCheck = validateCreatorPlatform(platform);
@@ -52,6 +53,8 @@ export function useCreators() {
     if (!linkCheck.ok) return { success: false, error: linkCheck.error };
     const emailCheck = validateCreatorEmail(email);
     if (!emailCheck.ok) return { success: false, error: emailCheck.error };
+    const passCheck = validateCreatorPassword(password, confirmPassword);
+    if (!passCheck.ok) return { success: false, error: passCheck.error };
 
     try {
       const res = await fetch(`${API_BASE}/api/creators/register`, {
@@ -62,10 +65,14 @@ export function useCreators() {
           platform: platformCheck.platform,
           link: linkCheck.link,
           email: emailCheck.email || undefined,
+          password: passCheck.password,
         }),
       });
       const data = await res.json();
       if (res.ok) {
+        try {
+          window.localStorage.setItem('mm_creatorId', data.accessCode);
+        } catch { /* ignore */ }
         return { success: true, accessCode: data.accessCode };
       }
       return { success: false, error: data.error || 'Registration failed' };

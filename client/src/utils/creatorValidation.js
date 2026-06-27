@@ -43,6 +43,16 @@ export function validateCreatorLink(link) {
   }
 }
 
+export function validateCreatorPassword(password, confirm) {
+  const p = String(password || '');
+  const c = String(confirm || '');
+  if (!p) return { ok: false, error: 'Choose a login password.' };
+  if (p.length < 8) return { ok: false, error: 'Password must be at least 8 characters.' };
+  if (p.length > 128) return { ok: false, error: 'Password is too long.' };
+  if (p !== c) return { ok: false, error: 'Passwords do not match.' };
+  return { ok: true, password: p };
+}
+
 export function validateCreatorLogin(handle, password) {
   const h = validateCreatorHandle(handle);
   if (!h.ok) return h;

@@ -170,8 +170,34 @@ function useMessageTtl(m) {
   return timeLeft;
 }
 
-function MobChatBubble({ m, isMe, myCountry, peerCountry }) {
+function CreatorIntroChatCard({ m, onViewCreator }) {
+  if (!m?.isIntro || !m?.creatorHandle) return null;
+  return (
+    <div className="flex justify-center my-3 px-1">
+      <div className="w-full max-w-md rounded-2xl border border-violet-500/35 bg-gradient-to-br from-violet-500/15 to-indigo-500/5 p-4 text-center shadow-lg shadow-violet-950/30">
+        <div className="flex items-center justify-center gap-2 mb-2">
+          <BlueTick />
+          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-300">Creator connected</span>
+        </div>
+        <p className="text-sm text-white/85 leading-relaxed mb-3">{m.text}</p>
+        <button
+          type="button"
+          onClick={() => onViewCreator?.(m.creatorHandle)}
+          className="w-full py-2.5 rounded-xl bg-violet-500 text-black text-[10px] font-black uppercase tracking-widest hover:bg-white transition-all"
+        >
+          View @{m.creatorHandle} profile
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function MobChatBubble({ m, isMe, myCountry, peerCountry, onViewCreator }) {
   const timeLeft = useMessageTtl(m);
+
+  if (m.isIntro && m.creatorHandle) {
+    return <CreatorIntroChatCard m={m} onViewCreator={onViewCreator} />;
+  }
 
   if (m.system) {
     return (
@@ -216,8 +242,12 @@ function MobSignalBars({ quality }) {
   );
 }
 
-function DeskChatBubble({ m, isMe, myCountry, peerCountry }) {
+function DeskChatBubble({ m, isMe, myCountry, peerCountry, onViewCreator }) {
   const timeLeft = useMessageTtl(m);
+
+  if (m.isIntro && m.creatorHandle) {
+    return <CreatorIntroChatCard m={m} onViewCreator={onViewCreator} />;
+  }
 
   if (m.system) {
     return (
@@ -238,7 +268,13 @@ function DeskChatBubble({ m, isMe, myCountry, peerCountry }) {
   return (
     <div className={`mm-desk-bubble-row ${isMe ? 'mm-desk-bubble-row--me' : ''}`}>
       {!isMe && flag && <span className="mm-chat-flag" title="Stranger's region">{flag}</span>}
-      <div className={`mm-desk-bubble ${isMe ? 'mm-desk-bubble--me' : 'mm-desk-bubble--them'}`}>
+      <div className={`mm-desk-bubble ${isMe ? 'mm-desk-bubble--me' : 'mm-desk-bubble--them'} ${m.isCreator ? 'ring-1 ring-violet-500/30' : ''}`}>
+        {m.isCreator && !isMe && (
+          <div className="flex items-center gap-1 mb-1">
+            <span className="text-[9px] font-black uppercase tracking-widest text-violet-300">@{m.nickname}</span>
+            <BlueTick />
+          </div>
+        )}
         <p className="mm-desk-bubble__text">{m.text}</p>
         <span className="mm-desk-bubble__meta">
           {isMe && flag && <span className="mm-chat-flag mm-chat-flag--inline" title="Your region">{flag}</span>}
@@ -1488,14 +1524,19 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (!localStreamRef.current) return;
     if (findPartnerEmittedRef.current) return;
     findPartnerEmittedRef.current = true;
+    let creatorToken = '';
+    try {
+      creatorToken = window.localStorage.getItem('mm_creatorId') || '';
+    } catch { /* ignore */ }
     socket.emit('find-partner', {
       mode: 'video',
       interest: interest || 'general',
       nickname: nickname || 'Anonymous',
       conversationMode,
       topicContract,
+      creatorToken: isCreator || creatorToken ? creatorToken : undefined,
     });
-  }, [socket, connected, status, localStream, iceLoading, interest, nickname, conversationMode, topicContract]);
+  }, [socket, connected, status, localStream, iceLoading, interest, nickname, conversationMode, topicContract, isCreator]);
 
   // Auto-recover if connected but remote video never arrives.
   useEffect(() => {
@@ -1576,17 +1617,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       }
       onJoined?.(data.roomId);
       notifyIfBackground('Match found', 'Someone joined your Mana Mingle video chat.');
-
-      // Automated Creator Introduction Synthesis
-      if (isCreator && data.roomId) {
-        setTimeout(() => {
-          socket.emit('send-message', {
-            roomId: data.roomId,
-            text: `🎯 HI, THIS IS @${nickname}! View my profile here: ${window.location.origin}/creator/${nickname}`
-          });
-          setMessages(m => [...m, { id: 'auto-greet', system: true, text: 'Auto-Greeting Transmitted to Partner.', ts: Date.now() }]);
-        }, 1500);
-      }
     };
 
     const onHistory = (data) => {
@@ -2044,10 +2074,16 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   </div>
                 )}
               </div>
-              <div className="mm-desk-pane" ref={remoteStageRef}>
+              <div
+                className={`mm-desk-pane ${peer?.isCreator ? 'cursor-pointer' : ''}`}
+                ref={remoteStageRef}
+                onClick={() => peer?.isCreator && peer?.nickname && setShowProfileHandle(peer.nickname)}
+                role={peer?.isCreator ? 'button' : undefined}
+                title={peer?.isCreator ? 'View creator profile' : undefined}
+              >
                 <div className="mm-desk-pane__tag mm-desk-pane__tag--stranger">
                   <span className="mm-desk-dot mm-desk-dot--blue" aria-hidden />
-                  {peer?.isCreator ? `@${peer?.nickname || 'Creator'}` : 'Stranger'}
+                  {peer?.isCreator ? `@${peer?.nickname || 'Creator'}` : (peer?.nickname && peer.nickname !== 'Anonymous' ? peer.nickname : 'Stranger')}
                   {peer?.country && (
                     <CountryFlag country={peer.country} className="mm-country-flag" size={14} />
                   )}
@@ -2068,6 +2104,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 {status === 'connected' && (
                   <>
                     <RemoteVideoComponent stream={peer?.stream} muted={mutedStranger} strangerFilter={strangerFilter} strangerBlur={strangerBlur || (!unique.consentComplete && autoStrangerBlur)} />
+                    {peer?.isCreator && (
+                      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 px-3 py-1.5 rounded-full bg-black/55 border border-violet-500/30 text-[9px] font-black uppercase tracking-widest text-violet-200 pointer-events-none">
+                        Tap video to open creator profile
+                      </div>
+                    )}
                     <StrangerRevealOverlay show={showStrangerReveal && (strangerBlur || !unique.consentComplete) && !unique.consentComplete} onReveal={() => { revealStranger(); unique.markReady(); }} />
                     <FloatingVideoReactions reactions={localReactions} />
                     {strangerCameraOff && (
@@ -2112,8 +2153,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   You&apos;re chatting anonymously
                 </div>
                 <div className="mm-desk-chat__messages custom-scrollbar" id="video-chat-messages">
-                  {messages.filter((m) => !m.system).map((m, i) => (
-                    <DeskChatBubble key={m.id || i} m={m} isMe={m.socketId === socket?.id} myCountry={chatMyCountry} peerCountry={chatPeerCountry} />
+                  {messages.filter((m) => !m.system || m.isIntro).map((m, i) => (
+                    <DeskChatBubble key={m.id || i} m={m} isMe={m.socketId === socket?.id} myCountry={chatMyCountry} peerCountry={chatPeerCountry} onViewCreator={setShowProfileHandle} />
                   ))}
                   <div ref={chatEndRef} />
                 </div>
@@ -2263,11 +2304,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               {!chatCollapsed && (
                 <>
                   <div className="mm-mobile-chat__messages custom-scrollbar" id="video-chat-messages">
-                    {messages.filter((m) => !m.system).length === 0 && (
+                    {messages.filter((m) => !m.system || m.isIntro).length === 0 && (
                       <p className="text-center text-xs text-white/30 py-6">Say hi — messages are anonymous.</p>
                     )}
-                    {messages.filter((m) => !m.system).map((m, i) => (
-                      <MobChatBubble key={m.id || i} m={m} isMe={m.socketId === socket?.id} myCountry={chatMyCountry} peerCountry={chatPeerCountry} />
+                    {messages.filter((m) => !m.system || m.isIntro).map((m, i) => (
+                      <MobChatBubble key={m.id || i} m={m} isMe={m.socketId === socket?.id} myCountry={chatMyCountry} peerCountry={chatPeerCountry} onViewCreator={setShowProfileHandle} />
                     ))}
                     <div ref={chatEndRef} />
                   </div>

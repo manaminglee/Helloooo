@@ -2,16 +2,18 @@ import { useState, useEffect, useRef, memo } from 'react';
 import { useSocket } from '../hooks/useSocket';
 import { CoinBadge } from './CoinBadge';
 import { useCreators } from '../hooks/useCreators';
+import { useCreatorNotifications } from '../hooks/useCreatorNotifications';
 import { MiniTrendChart } from './MiniTrendChart';
 
 import { countryToFlag } from '../utils/countryFlag';
 import { PresenceMap } from './PresenceMap';
 import { CreatorMatrix } from './CreatorMatrix';
+import { CreatorNotificationBell } from './CreatorNotificationBell';
 import { AdSlot } from './AdSlot';
 import { RoomBrowser } from './RoomBrowser';
 import { useLowPower } from '../context/LowPowerContext';
 import { CREATOR_MIN_WITHDRAWAL_COINS } from '../utils/creatorAuth';
-import { validateCreatorHandle } from '../utils/creatorValidation';
+import { validateCreatorHandle, validateCreatorPassword } from '../utils/creatorValidation';
 import { EventsHubStrip, ConversationModePicker, AiStatusPill } from './unique/UniqueSessionUI';
 import { fetchPublicEvents, fetchAiStatus } from '../services/nvidiaAiClient';
 import { loadSessionPrefs, saveSessionPrefs } from '../constants/conversationModes';
@@ -87,7 +89,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [insightIndex, setInsightIndex] = useState(0);
-  const [creatorForm, setCreatorForm] = useState({ handle: '', platform: 'Instagram', link: '', email: '' });
+  const [creatorForm, setCreatorForm] = useState({ handle: '', platform: 'Instagram', link: '', email: '', password: '', confirmPassword: '' });
   const [linkValidated, setLinkValidated] = useState(false);
   const [linkVerifying, setLinkVerifying] = useState(false);
   const [linkVerifyFailed, setLinkVerifyFailed] = useState(false);
@@ -127,6 +129,20 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [showCommunityPolicy, setShowCommunityPolicy] = useState(false);
   const [pendingVideoMode, setPendingVideoMode] = useState(null);
   const { creatorStatus, registerCreator, verifyReferral, requestWithdrawal, login, checkStatus, reRequestApproval, updateProfile, fetchStatus, fetchMyActivity, fetchMyWithdrawals, fetchMyAnalytics, fetchFeaturedCreators, requestPasswordReset, resetPassword } = useCreators();
+
+  const creatorReferralCode =
+    creatorStatus?.referral_code ||
+    uniqueAccessCode ||
+    (typeof window !== 'undefined' ? window.localStorage.getItem('mm_creatorId') : '') ||
+    '';
+
+  const {
+    notifications: creatorNotifications,
+    unreadCount: creatorUnreadCount,
+    loading: creatorNotificationsLoading,
+    fetchNotifications,
+    markRead: markCreatorNotificationsRead,
+  } = useCreatorNotifications(creatorReferralCode, socket);
   const { lowPower, setLowPower } = useLowPower();
   const [languageFilter, setLanguageFilter] = useState(joinMeta.language || '');
   const [sessionMode, setSessionMode] = useState(joinMeta.conversationMode || loadSessionPrefs().conversationMode || 'free');
@@ -261,6 +277,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
       });
       if (creatorStatus?.referral_code === data.referral_code) {
         fetchStatus();
+        fetchNotifications();
       }
     };
     socket.on('creator-status-changed', handler);
@@ -269,13 +286,14 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
         fetchMyWithdrawals().then((w) => setDashboardWithdrawals(w.withdrawals || []));
         fetchStatus();
       }
+      fetchNotifications();
     });
 
     return () => {
       socket.off('creator-status-changed', handler);
       socket.off('creator-withdrawal-updated');
     };
-  }, [socket, uniqueAccessCode, waitingForApproval, creatorStatus?.referral_code, showDashboardModal, fetchMyWithdrawals]);
+  }, [socket, uniqueAccessCode, waitingForApproval, creatorStatus?.referral_code, showDashboardModal, fetchMyWithdrawals, fetchNotifications]);
 
   useEffect(() => {
     if (!creatorStatus?.referral_code || creatorStatus.status !== 'approved') return;
@@ -513,6 +531,16 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 <span className="tabular-nums">{(onlineCount ?? 0).toLocaleString()}</span>
                 <span className="hidden sm:inline">online</span>
               </div>
+              {creatorReferralCode && (
+                <CreatorNotificationBell
+                  notifications={creatorNotifications}
+                  unreadCount={creatorUnreadCount}
+                  loading={creatorNotificationsLoading}
+                  onMarkRead={markCreatorNotificationsRead}
+                  onRefresh={fetchNotifications}
+                  onOpenDashboard={() => setShowDashboardModal(true)}
+                />
+              )}
               {creatorStatus && (
                 <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                   <div className="mm-hide-mobile flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-fuchsia-500/15 to-indigo-500/10 border border-violet-500/25 rounded-full text-[9px] font-black text-violet-200/90 uppercase tracking-tight max-w-[140px] md:max-w-none">
@@ -873,7 +901,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   <div className="flex flex-col items-center">
                     <div className="w-20 h-20 rounded-full bg-emerald-500/20 flex items-center justify-center text-4xl mb-4 animate-bounce">✅</div>
                     <h4 className="text-xl font-black italic uppercase text-white">Validation Success!</h4>
-                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Credentials Generated by SynKora</p>
+                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
+                      {approvalData.password ? 'Admin-assigned credentials' : 'Use your registration password to log in'}
+                    </p>
                   </div>
 
                   <div className="space-y-3">
@@ -884,6 +914,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       </div>
                       <span className="text-[10px] opacity-10 group-hover:opacity-40 transition-opacity">🆔</span>
                     </div>
+                    {approvalData.password ? (
                     <div className="bg-black/40 rounded-2xl p-4 border border-white/5 flex justify-between items-center group">
                       <div>
                         <div className="text-[8px] font-black uppercase text-white/20 mb-1">Temporary Password</div>
@@ -891,11 +922,19 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       </div>
                       <span className="text-[10px] opacity-10 group-hover:opacity-40 transition-opacity">🔒</span>
                     </div>
+                    ) : (
+                    <div className="bg-black/40 rounded-2xl p-4 border border-white/5">
+                      <div className="text-[8px] font-black uppercase text-white/20 mb-1">Login Password</div>
+                      <p className="text-[10px] text-white/50 leading-relaxed">Use the password you chose when you applied. Open the bell icon for admin updates.</p>
+                    </div>
+                    )}
                   </div>
 
                   <button
                     onClick={() => {
-                      const content = `MANAMINGLE CREATOR CREDENTIALS\n\nHandle: @${approvalData.handle_name}\nAccess Code: ${approvalData.referral_code}\nPassword: ${approvalData.password}\n\nNote: Reach admin team at manaminglee@gmail.com for issues.`;
+                      const content = approvalData.password
+                        ? `MANAMINGLE CREATOR CREDENTIALS\n\nHandle: @${approvalData.handle_name}\nAccess Code: ${approvalData.referral_code}\nPassword: ${approvalData.password}\n\nNote: Reach admin team at manaminglee@gmail.com for issues.`
+                        : `MANAMINGLE CREATOR CREDENTIALS\n\nHandle: @${approvalData.handle_name}\nAccess Code: ${approvalData.referral_code}\nPassword: (the one you set during registration)\n\nNote: Reach admin team at manaminglee@gmail.com for issues.`;
                       const blob = new Blob([content], { type: 'text/plain' });
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement('a');
@@ -1008,6 +1047,26 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                     onChange={(e) => setCreatorForm((f) => ({ ...f, email: e.target.value }))}
                   />
                   <p className="text-[9px] text-white/25 px-2">Recommended — used for approval, password reset, and payout emails.</p>
+                  <input
+                    type="password"
+                    placeholder="Create login password (min 8 characters)"
+                    autoComplete="new-password"
+                    className="w-full h-14 bg-white/5 border border-white/5 focus:border-violet-500/30 rounded-2xl px-6 text-sm outline-none text-white font-bold"
+                    value={creatorForm.password}
+                    onChange={(e) => setCreatorForm((f) => ({ ...f, password: e.target.value }))}
+                  />
+                  <input
+                    type="password"
+                    placeholder="Confirm login password"
+                    autoComplete="new-password"
+                    className="w-full h-14 bg-white/5 border border-white/5 focus:border-violet-500/30 rounded-2xl px-6 text-sm outline-none text-white font-bold"
+                    value={creatorForm.confirmPassword}
+                    onChange={(e) => setCreatorForm((f) => ({ ...f, confirmPassword: e.target.value }))}
+                  />
+                  {creatorForm.password && !validateCreatorPassword(creatorForm.password, creatorForm.confirmPassword).ok && creatorForm.confirmPassword && (
+                    <p className="text-[9px] text-amber-400/80 px-2">{validateCreatorPassword(creatorForm.password, creatorForm.confirmPassword).error}</p>
+                  )}
+                  <p className="text-[9px] text-white/25 px-2">You will use this password to log in after admin approval.</p>
                   <div className="relative group">
                     <button
                       onClick={() => setPlatformDropdownOpen(!platformDropdownOpen)}
@@ -1129,11 +1188,21 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                         const go = await showConfirm('Profile Not Verified', "You haven't verified your profile link yet. Are you sure you want to submit?");
                         if (!go) return;
                       }
-                      const res = await registerCreator(creatorForm.handle, creatorForm.platform, creatorForm.link, creatorForm.email);
+                      const passCheck = validateCreatorPassword(creatorForm.password, creatorForm.confirmPassword);
+                      if (!passCheck.ok) return showAlert('Password required', passCheck.error);
+                      const res = await registerCreator(
+                        creatorForm.handle,
+                        creatorForm.platform,
+                        creatorForm.link,
+                        creatorForm.email,
+                        creatorForm.password,
+                        creatorForm.confirmPassword
+                      );
                       if (res.success) {
                         setUniqueAccessCode(res.accessCode);
                         setWaitingForApproval(true);
                         setApprovalTimer(15);
+                        fetchStatus();
                       }
                       else {
                         setCreatorFormError(res.error || 'Registration failed');
