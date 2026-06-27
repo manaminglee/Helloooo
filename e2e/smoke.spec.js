@@ -5,14 +5,20 @@ test.describe('Mana Mingle smoke (anonymous)', () => {
     await page.addInitScript(() => {
       sessionStorage.setItem('wc_age', '1');
       sessionStorage.setItem('wc_bot', '1');
+      sessionStorage.setItem('mm_community_policy_video', '1');
     });
   });
 
   test('landing loads and shows core modes', async ({ page }) => {
     await page.goto('/');
     await expect(page).toHaveTitle(/Mana Mingle/i);
-    await expect(page.getByRole('button', { name: /Start Video/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Group Jam/i })).toBeVisible();
+
+    const videoBtn = page.getByRole('button', { name: /Video Chat/i });
+    const groupBtn = page.getByRole('button', { name: /Group Video/i });
+
+    await expect(videoBtn).toBeVisible();
+    await expect(groupBtn).toBeVisible();
+    await expect(videoBtn).toBeEnabled({ timeout: 20000 });
   });
 
   test('debug flag does not break page', async ({ page }) => {
@@ -22,7 +28,11 @@ test.describe('Mana Mingle smoke (anonymous)', () => {
 
   test('interest entry and text mode navigation', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: /Start Text/i }).click();
-    await expect(page.locator('#text-back-btn')).toBeVisible({ timeout: 15000 });
+
+    const textBtn = page.getByRole('button', { name: /Text Chat/i });
+    await expect(textBtn).toBeEnabled({ timeout: 20000 });
+    await textBtn.click();
+
+    await expect(page.locator('#text-back-btn')).toBeVisible({ timeout: 20000 });
   });
 });
