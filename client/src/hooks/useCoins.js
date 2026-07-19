@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { API_BASE } from '../config/apiBase';
+import { mmDebug } from '../utils/mmDebug';
 
 const CLAIM_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -29,6 +30,7 @@ export function useCoins() {
     const [nextClaim, setNextClaim] = useState(0);
     const [canClaim, setCanClaim] = useState(false);
     const [loading, setLoading] = useState(true);
+    const retryTimerRef = useRef(null);
 
     const fetchStatus = async (retries = 3) => {
         try {
@@ -40,12 +42,12 @@ export function useCoins() {
                 setCanClaim(data.canClaim);
                 setNextClaim(data.nextClaim ?? 0);
             } else if (retries > 0) {
-                setTimeout(() => fetchStatus(retries - 1), 2000);
+                retryTimerRef.current = setTimeout(() => fetchStatus(retries - 1), 2000);
             }
         } catch (e) {
-            console.error('Failed to fetch coins:', e);
+            mmDebug('coins.fetch', e);
             if (retries > 0) {
-                setTimeout(() => fetchStatus(retries - 1), 2000);
+                retryTimerRef.current = setTimeout(() => fetchStatus(retries - 1), 2000);
             }
         } finally {
             setLoading(false);
@@ -64,7 +66,7 @@ export function useCoins() {
                 return true;
             }
         } catch (e) {
-            console.error('Claim failed:', e);
+            mmDebug('coins.claim', e);
         }
         return false;
     };
@@ -72,7 +74,10 @@ export function useCoins() {
     useEffect(() => {
         fetchStatus();
         const interval = setInterval(fetchStatus, 30000);
-        return () => clearInterval(interval);
+        return () => {
+            clearInterval(interval);
+            clearTimeout(retryTimerRef.current);
+        };
     }, []);
 
     // Countdown every second when !canClaim

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getCreatorAuthHeaders } from '../utils/creatorAuth';
 import { API_BASE } from '../config/apiBase';
+import { mmDebug } from '../utils/mmDebug';
 
 function sortNotifications(list) {
   return [...(list || [])].sort(
@@ -26,7 +27,7 @@ export function useCreatorNotifications(referralCode, socket) {
         setUnreadCount(data.unreadCount || 0);
       }
     } catch (e) {
-      console.error('Notifications fetch failed', e);
+      mmDebug('notifications.fetch', e);
     } finally {
       setLoading(false);
     }
@@ -52,7 +53,7 @@ export function useCreatorNotifications(referralCode, socket) {
         setUnreadCount(data.unreadCount || 0);
       }
     } catch (e) {
-      console.error('Mark read failed', e);
+      mmDebug('notifications.markRead', e);
     }
   }, [referralCode]);
 

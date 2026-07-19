@@ -398,9 +398,9 @@ export function AdminDashboard({ onJoinRoom }) {
     try {
       const res = await fetch(`https://ipapi.co/${ip}/json/`);
       const data = await res.json();
-      if (data.error) return alert('IP lookup failed');
-      alert(`User Detail: ${data.city}, ${data.region_code}, ${data.country_name} · ISP: ${data.org}`);
-    } catch (e) { alert('Lookup service failed'); }
+      if (data.error) return setToast('⚠️ IP lookup failed');
+      setToast(`📍 ${data.city}, ${data.region_code}, ${data.country_name} · ISP: ${data.org}`);
+    } catch (e) { setToast('⚠️ Lookup service failed'); }
   };
 
   const handleExportCSV = (data, filename) => {
@@ -483,6 +483,13 @@ export function AdminDashboard({ onJoinRoom }) {
         reconnection: true,
       });
       socketRef.current = s;
+
+      // Authenticate this socket as an admin so the server can target
+      // privileged events (new applications, status changes) at admin sockets
+      // only, instead of broadcasting them to every connected client.
+      s.on('connect', () => {
+        s.emit('admin-auth', { adminKey: key });
+      });
 
       // New creator application submitted — update list and show toast
       s.on('creator-new-application', (creator) => {

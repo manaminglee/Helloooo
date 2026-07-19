@@ -9,6 +9,8 @@ import { CountryFlag } from './CountryFlag';
 import { VideoLogoPlaceholder, VideoWatermark } from './VideoPanelChrome';
 import { CreatorProfilePopup } from './CreatorProfilePopup';
 import { AdSlot } from './AdSlot';
+import { API_BASE } from '../config/apiBase';
+import { nextMsgId } from '../utils/uniqueId';
 
 const BlueTick = () => (
   <span className="inline-flex items-center justify-center w-3 h-3 bg-violet-500 rounded-full ml-1.5 shadow-[0_0_10px_#a78bfa]">
@@ -22,7 +24,9 @@ import { useIceServers } from '../hooks/useIceServers';
 import { CoinBadge } from './CoinBadge';
 import { ReportSafetyModal } from './ReportSafetyModal';
 import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNotify';
-import { playConnectSound, playMessageSound, playDisconnectSound, playWaveSound } from '../utils/sounds';
+import { playConnectSound, playMessageSound, playDisconnectSound, playWaveSound, playMatch } from '../utils/sounds';
+import { getPrefs } from '../utils/userPrefs';
+import { SettingsPanel, SettingsGearButton } from './SettingsPanel';
 import { mmDebug } from '../utils/mmDebug';
 import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream } from '../utils/webrtcMedia';
 import { ChatInputWithEmoji } from './ChatInputWithEmoji';
@@ -136,7 +140,6 @@ const EMOJIS_3D = [
   { char: '👑', label: 'Crown', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/1f451/512.webp' },
 ];
 
-const API_BASE = import.meta.env.VITE_SOCKET_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 const MESSAGE_TTL_SEC = 90;
 
 const VIDEO_FILTERS = [
@@ -409,18 +412,23 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [localMirrored, setLocalMirrored] = useState(true);
   const [lowBandwidth, setLowBandwidth] = useState(false);
   const [localStream, setLocalStream] = useState(null);
-  const latency = useLatency();
+  const latency = useLatency(); // coarse fallback only until real RTC stats arrive
+  const [rtcLatency, setRtcLatency] = useState(null); // real RTT (ms) from RTCPeerConnection.getStats()
   const [isAiGenerating, setIsAiGenerating] = useState(false);
   const [isTranslatorActive, setIsTranslatorActive] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [active3dEmoji, setActive3dEmoji] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
+  const isRecordingRef = useRef(false);
   const recorderRef = useRef(null);
   const chunksRef = useRef([]);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [cameraError, setCameraError] = useState(null);
+  const [audioOnly, setAudioOnly] = useState(false);
+  const [micBlocked, setMicBlocked] = useState(false);
   const [toast, setToast] = useState(null);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [autoBandwidth, setAutoBandwidth] = useState(true);
   const [videoDevices, setVideoDevices] = useState([]);
   const [audioDevices, setAudioDevices] = useState([]);
@@ -467,6 +475,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const connTimerRef = useRef(null);
   const typingTimerRef = useRef(null);
   const toastTimerRef = useRef(null);
+  const userLeftTimerRef = useRef(null);
+  const partnerLeftTimerRef = useRef(null);
   const remoteStageRef = useRef(null);
   const pcRef = useRef(null);
   const roomIdRef = useRef(null);
@@ -522,11 +532,40 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   const isConnected = !!peer && !!roomId;
 
-  const connectionQuality = latency == null
+  // Real RTT from the active RTCPeerConnection (mirrors GroupVideoRoom's getStats loop)
+  useEffect(() => {
+    if (!isConnected || !peer?.socketId) {
+      setRtcLatency(null);
+      return;
+    }
+    let cancelled = false;
+    const measure = async () => {
+      const pc = peerConnectionsRef.current.get(peer.socketId) || pcRef.current;
+      if (!pc || pc.signalingState === 'closed') return;
+      try {
+        const stats = await pc.getStats();
+        let rtt = null;
+        for (const r of stats.values()) {
+          if (r.type === 'candidate-pair' && r.state === 'succeeded' && (r.currentRoundTripTime ?? r.roundTripTime) != null) {
+            const v = (r.currentRoundTripTime ?? r.roundTripTime) * 1000;
+            if (rtt == null || v < rtt) rtt = v;
+          }
+        }
+        if (!cancelled && rtt != null) setRtcLatency(Math.round(rtt));
+      } catch { /* keep last reading */ }
+    };
+    measure();
+    const interval = setInterval(measure, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [isConnected, peer?.socketId]);
+
+  const effectiveLatency = rtcLatency ?? latency;
+
+  const connectionQuality = effectiveLatency == null
     ? 'unknown'
-    : latency < 120
+    : effectiveLatency < 120
       ? 'good'
-      : latency < 260
+      : effectiveLatency < 260
         ? 'ok'
         : 'poor';
 
@@ -850,12 +889,18 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     let s = null;
     (async () => {
       try {
+        // Honor the user's camera quality preference on initial acquisition
+        const quality = getPrefs().videoQuality;
+        const qualityConstraints =
+          quality === 'low'
+            ? { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 15 } }
+            : quality === 'hd'
+              ? { width: { ideal: 1280 }, height: { ideal: 720 } }
+              : { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } };
         const baseConstraints = {
           video: {
             facingMode: { ideal: facingMode },
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            frameRate: { ideal: 30 }
+            ...qualityConstraints,
           },
           audio: selectedAudioDeviceId ? { deviceId: { exact: selectedAudioDeviceId } } : { echoCancellation: true, noiseSuppression: true },
         };
@@ -869,9 +914,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         }
         localStreamRef.current = s;
         setLocalStream(s);
+        setAudioOnly(false);
+        setMicBlocked(false);
+        setCameraError(null);
         if (localVideoRef.current) attachStreamToVideo(localVideoRef.current, s);
       } catch (err) {
-        console.error('Camera/mic error:', err);
+        mmDebug('camera.error', err);
+        setAudioOnly(false);
         setCameraError('We could not access your camera or microphone. Please allow permissions and try again.');
       }
     })();
@@ -904,7 +953,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           setSelectedAudioDeviceId(audios[0].deviceId);
         }
       } catch (e) {
-        console.error('enumerateDevices error', e);
+        mmDebug('enumerateDevices', e);
       }
     };
 
@@ -941,10 +990,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (!localStream) return;
     const vt = localStream.getVideoTracks()[0];
     if (!vt) return;
-    const targetLow = lowBandwidth || (autoBandwidth && latency != null && latency > 260);
+    const targetLow = lowBandwidth || (autoBandwidth && effectiveLatency != null && effectiveLatency > 260);
     const c = targetLow ? { width: 640, height: 480, frameRate: 15 } : { width: 1280, height: 720 };
     vt.applyConstraints(c).catch(() => { });
-  }, [lowBandwidth, autoBandwidth, latency, localStream]);
+  }, [lowBandwidth, autoBandwidth, effectiveLatency, localStream]);
 
   useEffect(() => {
     if (localVideoRef.current && localStream) {
@@ -1007,7 +1056,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   const handleStart = () => {
     if (!socket || !connected) return;
-    void ensureNotifyPermission();
+    if (getPrefs().notifyBrowser) void ensureNotifyPermission();
     clearRoom();
     findPartnerEmittedRef.current = false;
     setStatus('searching');
@@ -1049,8 +1098,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     setStatus('searching');
     setGoodVibesSent(false); setGoodVibesMatch(false); setCameraBlur(false);
     setStrangerFilter('none'); setStrangerBlur(false);
-    onFindNewPartner?.();
-  }, [socket, interest, status, onFindNewPartner, clearRoom, selectedInterests, maybeShowRating, saveSessionVibe]);
+    // Single find-partner emit: the auto-emit effect fires once status is 'searching'
+  }, [socket, interest, status, clearRoom, selectedInterests, maybeShowRating, saveSessionVibe]);
 
   const handleStop = useCallback(() => {
     if (statusRef.current === 'connected') saveSessionVibe();
@@ -1121,7 +1170,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
       peerConnectionsRef.current.forEach(pc => {
         const vs = pc.getSenders().find(s => s.track?.kind === 'video');
-        if (vs) vs.replaceTrack(stream.getVideoTracks()[0]).catch(e => console.error('Switch error', e));
+        if (vs) vs.replaceTrack(stream.getVideoTracks()[0]).catch(e => mmDebug('switchCam', e));
       });
       setToast(`📷 Switched to ${nextMode === 'user' ? 'Front' : 'Back'} Camera`);
     } catch (e) {
@@ -1158,6 +1207,25 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     }
   }, [peer?.socketId, socket]);
 
+  const continueAudioOnly = useCallback(async () => {
+    // Camera denied — fall back to mic-only so matching can proceed
+    setMicBlocked(false);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (localStreamRef.current) localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+      setAudioOnly(true);
+      setCameraError(null);
+      setCameraOff(true);
+      setToast('🎙️ Camera unavailable — continuing in audio-only mode');
+    } catch (e) {
+      mmDebug('audioOnly.err', e);
+      setMicBlocked(true);
+      setCameraError('Camera and microphone are both unavailable. Grant permissions and retry.');
+    }
+  }, []);
+
   const retryMediaLocal = useCallback(async () => {
     try {
       const baseConstraints = {
@@ -1189,6 +1257,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         });
       });
       setCameraError(null);
+      setMicBlocked(false);
+      setAudioOnly(!stream.getVideoTracks().length);
       setToast('Camera & mic refreshed');
       setP2pHealth('good');
     } catch (e) {
@@ -1365,7 +1435,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (status === 'connected') {
       setTimeout(() => inputRef.current?.focus(), 500);
       setToast('✅ Connected with a stranger!');
-      setMessages(prev => [...prev, { system: true, text: `Connected to a stranger from ${peer?.country || 'the network'}` }]);
+      setMessages(prev => [...prev, { id: nextMsgId('sys'), system: true, text: `Connected to a stranger from ${peer?.country || 'the network'}` }]);
       playConnectSound();
       setIsModerating(true);
       const timer = setTimeout(() => setIsModerating(false), 3000);
@@ -1401,10 +1471,15 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       rtcpMuxPolicy: 'require',
     });
 
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current));
-    } else {
+    const stream = localStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+    }
+    // Ensure both m-lines exist so negotiation works in audio-only / no-stream cases
+    if (!stream || stream.getVideoTracks().length === 0) {
       pc.addTransceiver('video', { direction: 'recvonly' });
+    }
+    if (!stream || stream.getAudioTracks().length === 0) {
       pc.addTransceiver('audio', { direction: 'recvonly' });
     }
 
@@ -1482,7 +1557,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       socket.emit('webrtc-signal', { roomId: rid, targetSocketId: remoteId, type: 'offer', signal: pc.localDescription });
       mmDebug('offer', remoteId, pc.signalingState);
     } catch (err) {
-      console.warn('[WEBRTC] Offer failed:', err);
+      mmDebug('offer.err', err);
       pendingOfferRef.current = remoteId;
     } finally {
       makingOffer.current = false;
@@ -1522,7 +1597,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         pendingCandidatesRef.current.set(remoteId, []);
       }
     } catch (err) {
-      console.warn('[WEBRTC] Perfect Negotiation Error:', err);
+      mmDebug('negotiation.err', err);
       pendingAnswerRef.current = { from: remoteId, signal: offer };
     }
   }, [socket, createPeerConnection]);
@@ -1639,7 +1714,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         setShowStrangerReveal(true);
       }
       onJoined?.(data.roomId);
-      notifyIfBackground('Match found', 'Someone joined your Mana Mingle video chat.');
+      playMatch();
+      if (getPrefs().notifyBrowser) notifyIfBackground('Match found', 'Someone joined your Mana Mingle video chat.');
     };
 
     const onHistory = (data) => {
@@ -1662,12 +1738,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       setPartnerLeft(true);
       playDisconnectSound();
 
-      setTimeout(() => {
+      clearTimeout(userLeftTimerRef.current);
+      userLeftTimerRef.current = setTimeout(() => {
         if (!isMounted.current || statusRef.current === 'idle' || statusRef.current === 'searching') return;
         handleSkip();
       }, 700);
 
-      setTimeout(() => setPartnerLeft(false), 5000);
+      clearTimeout(partnerLeftTimerRef.current);
+      partnerLeftTimerRef.current = setTimeout(() => setPartnerLeft(false), 5000);
     };
 
     const onRoomEndedByAdmin = (data) => {
@@ -1681,10 +1759,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     };
 
     const onWaiting = () => setStatus('searching');
-    const onSystemMsg = (data) => setMessages((m) => [...m, { id: Date.now(), system: true, text: `📢 ADMIN: ${data.message}`, ts: Date.now() }]);
+    const onSystemMsg = (data) => setMessages((m) => [...m, { id: nextMsgId('sys'), system: true, text: `📢 ADMIN: ${data.message}`, ts: Date.now() }]);
     const onMaintenance = (data) => {
-      alert(data.message || 'System is going into maintenance mode.');
-      window.location.href = '/';
+      setToast(data.message || 'System is going into maintenance mode.');
+      setTimeout(() => { window.location.href = '/'; }, 1500);
     };
 
     const onStrangerVideoStyle = (data) => {
@@ -1724,7 +1802,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               try { if (c) await pc.addIceCandidate(new RTCIceCandidate(c)); } catch { /* ignore */ }
             }
             pendingCandidatesRef.current.set(from, []);
-          } catch (err) { console.error('setRemoteDescription error', err); }
+          } catch (err) { mmDebug('setRemoteDesc', err); }
         }
       } else if (data.type === 'ice-candidate' && data.signal) {
         addIce(from, data.signal);
@@ -1742,17 +1820,22 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     socket.on('system-maintenance', onMaintenance);
     socket.on('room-ended-by-admin', onRoomEndedByAdmin);
     socket.on('session-terminated-by-admin', onSessionTerminatedByAdmin);
-    socket.on('content-flagged', (data) => {
-      setMessages(m => [...m, { id: Date.now(), system: true, text: `🛡️ ${data.message}`, ts: Date.now() }]);
+    const onContentFlaggedMsg = (data) => {
+      setMessages(m => [...m, { id: nextMsgId('sys'), system: true, text: `🛡️ ${data.message}`, ts: Date.now() }]);
       playDisconnectSound();
-    });
-    socket.on('error', (data) => {
-      setMessages(m => [...m, { id: Date.now(), system: true, text: `❌ ERROR: ${data.message || 'Something went wrong.'}`, ts: Date.now() }]);
-    });
+    };
+    const onServerError = (data) => {
+      const msg = data?.message || 'Something went wrong.';
+      setMessages(m => [...m, { id: nextMsgId('sys'), system: true, text: `❌ ERROR: ${msg}`, ts: Date.now() }]);
+      setToast(`⚠️ ${msg}`);
+    };
+    socket.on('content-flagged', onContentFlaggedMsg);
+    socket.on('error', onServerError);
     const onSignalRateLimited = (data) => {
       const msg = data?.message || 'Too many connection signals. Please wait a moment.';
       setToast(typeof msg === 'string' ? `⏱️ ${msg}` : '⏱️ Rate limited — slow down for a few seconds.');
     };
+    socket.on('signal-rate-limited', onSignalRateLimited);
 
     const onRoomReaction = ({ emoji }) => {
       const id = Math.random().toString(36).slice(2, 9);
@@ -1765,22 +1848,26 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     socket.on('room-reaction', onRoomReaction);
     socket.on('peer-recording-status', onPeerRecording);
     socket.on('creator-tip-received', onTipReceived);
-    socket.on('connect', () => {
-      console.log('Socket connected:', socket.id);
+    const onSocketConnect = () => {
+      mmDebug('socket.connected', socket.id);
       if (firstSocketConnectRef.current) {
         firstSocketConnectRef.current = false;
         return;
       }
-      setMessages((m) => [...m, { id: Date.now(), system: true, text: '✅ Reconnected to chat server.', ts: Date.now() }]);
-    });
-    socket.on('disconnect', (reason) => {
-      console.warn('Socket disconnected:', reason);
+      setMessages((m) => [...m, { id: nextMsgId('sys'), system: true, text: '✅ Reconnected to chat server.', ts: Date.now() }]);
+    };
+    const onSocketDisconnect = (reason) => {
+      mmDebug('socket.disconnected', reason);
       if (reason === 'io server disconnect' || reason === 'transport close' || reason === 'ping timeout') {
-        setMessages(m => [...m, { id: Date.now(), system: true, text: '⚠️ Connection lost. Reconnecting… stay on this screen.', ts: Date.now() }]);
+        setMessages(m => [...m, { id: nextMsgId('sys'), system: true, text: '⚠️ Connection lost. Reconnecting… stay on this screen.', ts: Date.now() }]);
       }
-    });
+    };
+    socket.on('connect', onSocketConnect);
+    socket.on('disconnect', onSocketDisconnect);
 
     return () => {
+      clearTimeout(userLeftTimerRef.current);
+      clearTimeout(partnerLeftTimerRef.current);
       socket.off('partner-found', onPartnerFound);
       socket.off('chat-history', onHistory);
       socket.off('chat-message', onMsg);
@@ -1792,16 +1879,16 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       socket.off('system-maintenance', onMaintenance);
       socket.off('room-ended-by-admin', onRoomEndedByAdmin);
       socket.off('session-terminated-by-admin', onSessionTerminatedByAdmin);
-      socket.off('content-flagged');
-      socket.off('error');
+      socket.off('content-flagged', onContentFlaggedMsg);
+      socket.off('error', onServerError);
       socket.off('signal-rate-limited', onSignalRateLimited);
       socket.off('room-reaction', onRoomReaction);
       socket.off('peer-recording-status', onPeerRecording);
       socket.off('creator-tip-received', onTipReceived);
-      socket.off('connect');
-      socket.off('disconnect');
+      socket.off('connect', onSocketConnect);
+      socket.off('disconnect', onSocketDisconnect);
     };
-  }, [socket, interest, onJoined, onFindNewPartner, doOffer, doAnswer, addIce, handleBack, handleSkip, autoStrangerBlur, isMobile, showChat, chatCollapsed]);
+  }, [socket, interest, onJoined, doOffer, doAnswer, addIce, handleBack, handleSkip, autoStrangerBlur, isMobile, showChat, chatCollapsed]);
 
   useEffect(() => {
     if (!isTranslatorActive) return;
@@ -1827,7 +1914,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   }, [messages, isTranslatorActive]);
 
   const startRecording = () => {
-    if (!localStream || !peer?.stream) return alert('Ensure both local and stranger video are active to record.');
+    if (!localStream || !peer?.stream) { setToast('⚠️ Ensure both local and stranger video are active to record.'); return; }
 
     // DVR Engine: Real-time Canvas Compositing
     const canvas = document.createElement('canvas');
@@ -1844,7 +1931,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     v2.play();
 
     const draw = () => {
-      if (!isRecording) return;
+      if (!isRecordingRef.current) return;
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -1860,6 +1947,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       requestAnimationFrame(draw);
     };
 
+    isRecordingRef.current = true;
     setIsRecording(true);
     emitRecordingStatus(true);
     draw();
@@ -1876,6 +1964,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       a.href = url;
       a.download = `ManaMingle_CreatorCapture_${Date.now()}.webm`;
       a.click();
+      isRecordingRef.current = false;
       setIsRecording(false);
       emitRecordingStatus(false);
     };
@@ -1887,6 +1976,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   const stopRecording = () => {
     if (recorderRef.current) {
+      isRecordingRef.current = false;
       recorderRef.current.stop();
       emitRecordingStatus(false);
       setToast('🎥 REC SAVED');
@@ -1894,7 +1984,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   };
 
   const send3dEmoji = (emojiObj) => {
-    if (coins < 5) return alert('Need 5 coins for 3D Emoji!');
+    if (coins < 5) { setToast('⚠️ Need 5 coins for 3D Emoji!'); return; }
     const r = roomIdRef.current;
     if (socket && r) {
       socket.emit('send-3d-emoji', { roomId: r, emoji: emojiObj });
@@ -1912,7 +2002,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       setMessages(prev => [
         ...prev.slice(-100),
         {
-          id: `local-med-${Date.now()}`,
+          id: `local-med-${nextMsgId()}`,
           type,
           content,
           nickname,
@@ -1927,30 +2017,31 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   };
 
   useEffect(() => {
-    if (socket) {
-      socket.on('3d-emoji', (data) => {
-        if (data.roomId && data.roomId !== roomIdRef.current) return;
-        setActive3dEmoji(data);
-        setMessages(prev => [...prev.slice(-100), {
-          id: `emoji-${Date.now()}`,
-          text: `Sent a 3D ${data.emoji?.char || data.emoji}`,
-          socketId: data.socketId,
-          nickname: data.nickname,
-          ts: Date.now(),
-          isEmoji: true,
-          fromSelf: data.socketId === socket.id
-        }]);
-        setTimeout(() => setActive3dEmoji(null), 4000);
-      });
-      socket.on('media-message', (data) => {
-        if (data.roomId && data.roomId !== roomIdRef.current) return;
-        setMessages(prev => [...prev.slice(-100), { ...data, media: true }]);
-      });
-      return () => {
-        socket.off('3d-emoji');
-        socket.off('media-message');
-      };
-    }
+    if (!socket) return;
+    const on3dEmoji = (data) => {
+      if (data.roomId && data.roomId !== roomIdRef.current) return;
+      setActive3dEmoji(data);
+      setMessages(prev => [...prev.slice(-100), {
+        id: nextMsgId('emoji'),
+        text: `Sent a 3D ${data.emoji?.char || data.emoji}`,
+        socketId: data.socketId,
+        nickname: data.nickname,
+        ts: Date.now(),
+        isEmoji: true,
+        fromSelf: data.socketId === socket.id
+      }]);
+      setTimeout(() => setActive3dEmoji(null), 4000);
+    };
+    const onMediaMessage = (data) => {
+      if (data.roomId && data.roomId !== roomIdRef.current) return;
+      setMessages(prev => [...prev.slice(-100), { ...data, media: true }]);
+    };
+    socket.on('3d-emoji', on3dEmoji);
+    socket.on('media-message', onMediaMessage);
+    return () => {
+      socket.off('3d-emoji', on3dEmoji);
+      socket.off('media-message', onMediaMessage);
+    };
   }, [socket]);
 
   useEffect(() => () => {
@@ -2120,6 +2211,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             <button type="button" className="mm-desk-icon-btn" onClick={() => setShowReportModal(true)} title="Safety" aria-label="Safety">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
             </button>
+            <SettingsGearButton onClick={() => setShowSettings(true)} className="mm-desk-icon-btn" />
             <button type="button" className="mm-desk-icon-btn" onClick={() => setShowMoreMenu(true)} title="More options" aria-label="Menu">⋯</button>
           </div>
         </header>
@@ -2147,6 +2239,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             )}
           </div>
         </div>
+        <SettingsGearButton onClick={() => setShowSettings(true)} className="mm-mobile-header__icon" />
         <button type="button" className="mm-mobile-header__icon" onClick={() => setShowMoreMenu(true)} title="More options" aria-label="Menu">⋯</button>
       </header>
       )}
@@ -2198,7 +2291,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   {isCreator && <BlueTick />}
                 </div>
                 <VideoWatermark />
-                {cameraError && !localStream && <AudioOnlyFallback nickname={nickname} onRetryCamera={retryMediaLocal} />}
+                {cameraError && !localStream && <AudioOnlyFallback nickname={nickname} micBlocked={micBlocked} onRetryCamera={retryMediaLocal} onAudioOnly={continueAudioOnly} />}
                 <video
                   ref={bindLocalVideo}
                   autoPlay
@@ -2341,7 +2434,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             )}
             {(status === 'idle' || status === 'searching') && (
               <>
-                {cameraError && !localStream && <AudioOnlyFallback nickname={nickname} onRetryCamera={retryMediaLocal} />}
+                {cameraError && !localStream && <AudioOnlyFallback nickname={nickname} micBlocked={micBlocked} onRetryCamera={retryMediaLocal} onAudioOnly={continueAudioOnly} />}
                 <video
                   ref={bindLocalVideo}
                   autoPlay
@@ -2672,6 +2765,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         onSelectAudio={(id) => { setSelectedAudioDeviceId(id); localStorage.setItem('mm_audioDeviceId', id); }}
       />
       <TipCreatorModal open={showTipModal} onClose={() => setShowTipModal(false)} onTip={sendTip} balance={balance} creatorName={peer?.nickname} />
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </div>
   );
 }

@@ -6,6 +6,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { CountryFlag } from './CountryFlag';
 import { VideoLogoPlaceholder, VideoWatermark } from './VideoPanelChrome';
 import { useIceServers } from '../hooks/useIceServers';
+import { API_BASE } from '../config/apiBase';
+import { nextMsgId } from '../utils/uniqueId';
 import { CoinBadge } from './CoinBadge';
 import { ReportSafetyModal } from './ReportSafetyModal';
 import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNotify';
@@ -525,6 +527,16 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     finishLeaveRoom();
   }, [messages, ratingDone, finishLeaveRoom]);
 
+  // Refs so socket handlers always see latest values without re-registering listeners
+  const handleLeaveRoomRef = useRef(handleLeaveRoom);
+  const onJoinedRef = useRef(onJoined);
+  const nicknameRef = useRef(nickname);
+  const isCreatorRef = useRef(isCreator);
+  useEffect(() => { handleLeaveRoomRef.current = handleLeaveRoom; }, [handleLeaveRoom]);
+  useEffect(() => { onJoinedRef.current = onJoined; }, [onJoined]);
+  useEffect(() => { nicknameRef.current = nickname; }, [nickname]);
+  useEffect(() => { isCreatorRef.current = isCreator; }, [isCreator]);
+
   useEffect(() => {
     const remote = peers.find((p) => p.socketId !== socket?.id);
     if (remote?.socketId) setReportTargetSid(remote.socketId);
@@ -549,14 +561,15 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   }, [socket, nickname]);
 
   const startRecording = () => {
-    if (peers.length === 0) return alert('No active users to record.');
+    if (peers.length === 0) { setToast('⚠️ No active users to record.'); return; }
     // Record the first peer for now, or use a complex Canvas recorder if needed.
     // For MVP consistency with VideoChat:
     const targetStream = peers[0]?.stream;
-    if (!targetStream) return alert('No remote user stream available.');
+    if (!targetStream) { setToast('⚠️ No remote user stream available.'); return; }
 
     if (!MediaRecorder.isTypeSupported('video/webm')) {
-      return alert('WebM recording not supported on this browser.');
+      setToast('⚠️ WebM recording not supported on this browser.');
+      return;
     }
 
     const recorder = new MediaRecorder(targetStream, { mimeType: 'video/webm' });
@@ -590,8 +603,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
   // Fetch active groups/interests on mount and when modal opens
   const fetchInterests = () => {
-    const apiBase = import.meta.env.VITE_SOCKET_URL || (typeof window !== 'undefined' ? window.location.origin : '');
-    fetch(`${apiBase}/api/rooms/active-interests?mode=group_video`)
+    fetch(`${API_BASE}/api/rooms/active-interests?mode=group_video`)
       .then(res => res.json())
       .then(data => setActiveInterests(data.interests || []))
       .catch(() => { });
@@ -723,7 +735,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         localVideoRef.current.play().catch(() => { });
       }
     } catch (err) {
-      console.error('getUserMedia error:', err);
+      mmDebug('grp.getUserMedia', err);
       const name = err?.name || '';
       const msg = err?.message || String(err);
       if (name === 'NotAllowedError' || msg.includes('Permission denied')) {
@@ -838,6 +850,10 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current));
+    } else {
+      // No local stream — recv-only so negotiation still completes
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
     }
 
     pc.onicecandidate = (e) => {
@@ -911,7 +927,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       socket.emit('webrtc-signal', { roomId: rid, targetSocketId: remoteId, type: 'offer', signal: offer });
-    } catch (err) { console.error('offer err', err); }
+    } catch (err) { mmDebug('grp.offer.err', err); }
   };
 
   const doAnswer = async (remoteId, offer) => {
@@ -923,7 +939,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socket.emit('webrtc-signal', { roomId: rid, targetSocketId: remoteId, type: 'answer', signal: answer });
-    } catch (err) { console.error('answer err', err); }
+    } catch (err) { mmDebug('grp.answer.err', err); }
   };
 
   const addIce = async (remoteId, candidate) => {
@@ -977,12 +993,11 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     setReplyingTo(null);
   };
 
-  const apiBase = import.meta.env.VITE_SOCKET_URL || (typeof window !== 'undefined' ? window.location.origin : '');
   const generateAiSpark = async () => {
     if (isAiGenerating) return;
     setIsAiGenerating(true);
     try {
-      const res = await fetch(`${apiBase}/api/ai/spark`, {
+      const res = await fetch(`${API_BASE}/api/ai/spark`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ interest: displayInterest })
@@ -1009,22 +1024,22 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       if (rid) {
         try {
           sessionStorage.setItem('mm_group_rejoin_room', rid);
-          sessionStorage.setItem('mm_group_rejoin_nick', nickname || 'Anonymous');
+          sessionStorage.setItem('mm_group_rejoin_nick', nicknameRef.current || 'Anonymous');
         } catch { /* ignore */ }
       }
       if (data.interest) setDisplayInterest(data.interest);
       if (!hasJoinedRef.current) {
         hasJoinedRef.current = true;
-        onJoined(rid);
+        onJoinedRef.current?.(rid);
         void ensureNotifyPermission();
         notifyIfBackground('Group video', 'You are connected to a Mana Mingle group room.');
 
         // Automated Group Presence Synthesis for Creators
-        if (isCreator && rid) {
+        if (isCreatorRef.current && rid) {
           setTimeout(() => {
             socket.emit('send-message', {
               roomId: rid,
-              text: `🌟 Hey team! I'm @${nickname} (Verified Creator). Check out my world: ${window.location.origin}/creator/${nickname}`
+              text: `🌟 Hey team! I'm @${nicknameRef.current} (Verified Creator). Check out my world: ${window.location.origin}/creator/${nicknameRef.current}`
             });
             setToast('Identity Broadcasted to Room');
           }, 2000);
@@ -1069,7 +1084,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         const el = document.getElementById('group-video-chat-messages');
         if (el) {
           const rect = el.getBoundingClientRect();
-          setSparks(prev => [...prev.slice(-20), { id: Date.now(), x: rect.left + rect.width / 2, y: rect.bottom - 100 }]);
+          setSparks(prev => [...prev.slice(-20), { id: nextMsgId('spark'), x: rect.left + rect.width / 2, y: rect.bottom - 100 }]);
         }
         if (data.socketId !== socket.id) {
           playMessageSound();
@@ -1083,7 +1098,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       if (data.nickname) peerNicksRef.current.set(data.socketId, data.nickname);
       if (data.country) peerCountriesRef.current.set(data.socketId, data.country);
       if (data.isCreator) peerCreatorsRef.current.set(data.socketId, true);
-      setMessages((m) => [...m, { id: `sys-${Date.now()}`, system: true, text: `${data.nickname || 'A stranger'} joined 👋` }]);
+      setMessages((m) => [...m, { id: nextMsgId('sys'), system: true, text: `${data.nickname || 'A stranger'} joined 👋` }]);
       playConnectSound();
 
       setPeers((prev) => {
@@ -1112,7 +1127,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           const next = Math.max(1, data.participantCount ?? c - 1);
           if (next === 1 && !isQueuing && !hasAutoLeftRef.current) {
             hasAutoLeftRef.current = true;
-            setTimeout(() => { if (roomIdRef.current) handleLeaveRoom(); }, 2000);
+            setTimeout(() => { if (roomIdRef.current) handleLeaveRoomRef.current?.(); }, 2000);
           }
           return next;
         });
@@ -1134,7 +1149,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           n.delete(sid);
           return n;
         });
-        if (leavingNick) setMessages((m) => [...m, { id: `sys-left-${Date.now()}`, system: true, text: `${leavingNick} left the room` }]);
+        if (leavingNick) setMessages((m) => [...m, { id: nextMsgId('sys-left'), system: true, text: `${leavingNick} left the room` }]);
         playDisconnectSound();
         cleanupAudioAnalyzer(sid);
       }
@@ -1167,20 +1182,20 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               });
               pendingCandidatesRef.current.set(from, []);
             });
-          } catch (err) { console.error('setRemoteDescription err', err); }
+          } catch (err) { mmDebug('grp.setRemoteDesc', err); }
         }
       } else if (data.type === 'ice-candidate' && data.signal) addIce(from, data.signal);
     };
 
-    const onSystemMsg = (data) => setMessages((m) => [...m, { id: Date.now(), system: true, text: `📢 ADMIN: ${data.message}`, ts: Date.now() }]);
+    const onSystemMsg = (data) => setMessages((m) => [...m, { id: nextMsgId('sys'), system: true, text: `📢 ADMIN: ${data.message}`, ts: Date.now() }]);
     const onRoomEndedByAdmin = (data) => {
       setToast(data?.message || '⚠️ This session was terminated by administrative protocol.');
-      setTimeout(() => handleLeaveRoom(), 2000);
+      setTimeout(() => handleLeaveRoomRef.current?.(), 2000);
     };
 
     const onSessionTerminatedByAdmin = (data) => {
       setToast(data?.message || '⚠️ Your session was terminated by a moderator.');
-      setTimeout(() => handleLeaveRoom(), 2500);
+      setTimeout(() => handleLeaveRoomRef.current?.(), 2500);
     };
 
     const onGroupRenamed = (data) => {
@@ -1219,56 +1234,66 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       socket.off('group-renamed', onGroupRenamed);
       socket.off('signal-rate-limited', onSignalRateLimited);
     };
-  }, [socket, onJoined, handleLeaveRoom, nickname, isCreator]);
+  // Handlers read latest values through refs — register once per socket
+  }, [socket]);
 
+  // Auxiliary listeners — registered once per socket; latest values via refs
   useEffect(() => {
-    if (socket) {
-      socket.on('3d-emoji', (data) => {
-        setActive3dEmoji(data);
-        setTimeout(() => setActive3dEmoji(null), 3000);
+    if (!socket) return;
+    const on3dEmoji = (data) => {
+      setActive3dEmoji(data);
+      setTimeout(() => setActive3dEmoji(null), 3000);
+    };
+    const onMediaMessage = (data) => {
+      setMessages(prev => [...prev.slice(-100), { ...data, media: true }]);
+    };
+    const onServerError = (data) => {
+      setToast(data?.message || 'Something went wrong.');
+    };
+    const onRoomFull = (data) => {
+      setToast(data?.message || 'This room is full. Try another hub or wait.');
+      setTimeout(() => handleLeaveRoomRef.current?.(), 2500);
+    };
+    const onQueueWait = (data) => {
+      setQueuePos(data.queuePosition);
+    };
+    const onHandRaise = ({ socketId, raised }) => {
+      setRemoteRaisedHands(prev => {
+        const next = new Set(prev);
+        if (raised) next.add(socketId);
+        else next.delete(socketId);
+        return next;
       });
-      socket.on('media-message', (data) => {
-        setMessages(prev => [...prev.slice(-100), { ...data, media: true }]);
-      });
-      socket.on('error', (data) => {
-        setToast(data?.message || 'Something went wrong.');
-      });
-      socket.on('room-full', (data) => {
-        setToast(data?.message || 'This room is full. Try another hub or wait.');
-        setTimeout(() => handleLeaveRoom(), 2500);
-      });
-      socket.on('waiting-in-group-queue', (data) => {
-        setQueuePos(data.queuePosition);
-      });
-      socket.on('hand-raise', ({ socketId, raised }) => {
-        setRemoteRaisedHands(prev => {
-          const next = new Set(prev);
-          if (raised) next.add(socketId);
-          else next.delete(socketId);
-          return next;
-        });
-      });
-      socket.on('room-reaction', ({ socketId, emoji }) => {
-        const id = Math.random().toString(36).substr(2, 9);
-        const reaction = { id, socketId, emoji, x: 20 + Math.random() * 60, y: 50 + Math.random() * 30 };
-        setLocalReactions(prev => [...prev, reaction]);
-        setTimeout(() => setLocalReactions(prev => prev.filter(r => r.id !== id)), 4000);
-      });
-      socket.on('peer-recording-status', ({ recording }) => setPeerRecording(!!recording));
-      socket.on('creator-tip-received', ({ fromNickname, amount }) => setToast(`💰 ${fromNickname} tipped you ${amount} coins!`));
-      return () => {
-        socket.off('3d-emoji');
-        socket.off('media-message');
-        socket.off('hand-raise');
-        socket.off('room-reaction');
-        socket.off('peer-recording-status');
-        socket.off('creator-tip-received');
-        socket.off('error');
-        socket.off('room-full');
-        socket.off('waiting-in-group-queue');
-      };
-    }
-  }, [socket, handleLeaveRoom]);
+    };
+    const onRoomReaction = ({ socketId, emoji }) => {
+      const id = Math.random().toString(36).substr(2, 9);
+      const reaction = { id, socketId, emoji, x: 20 + Math.random() * 60, y: 50 + Math.random() * 30 };
+      setLocalReactions(prev => [...prev, reaction]);
+      setTimeout(() => setLocalReactions(prev => prev.filter(r => r.id !== id)), 4000);
+    };
+    const onPeerRecording = ({ recording }) => setPeerRecording(!!recording);
+    const onTipReceived = ({ fromNickname, amount }) => setToast(`💰 ${fromNickname} tipped you ${amount} coins!`);
+    socket.on('3d-emoji', on3dEmoji);
+    socket.on('media-message', onMediaMessage);
+    socket.on('error', onServerError);
+    socket.on('room-full', onRoomFull);
+    socket.on('waiting-in-group-queue', onQueueWait);
+    socket.on('hand-raise', onHandRaise);
+    socket.on('room-reaction', onRoomReaction);
+    socket.on('peer-recording-status', onPeerRecording);
+    socket.on('creator-tip-received', onTipReceived);
+    return () => {
+      socket.off('3d-emoji', on3dEmoji);
+      socket.off('media-message', onMediaMessage);
+      socket.off('hand-raise', onHandRaise);
+      socket.off('room-reaction', onRoomReaction);
+      socket.off('peer-recording-status', onPeerRecording);
+      socket.off('creator-tip-received', onTipReceived);
+      socket.off('error', onServerError);
+      socket.off('room-full', onRoomFull);
+      socket.off('waiting-in-group-queue', onQueueWait);
+    };
+  }, [socket]);
 
   const toggleHandRaise = () => {
     const next = !handRaised;
@@ -1297,9 +1322,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   };
 
   const send3dEmoji = (emoji) => {
-    if (balance < 5) return alert('Need 5 coins!');
+    if (balance < 5) { setToast('⚠️ Need 5 coins!'); return; }
     if (socket && (roomIdRef.current || roomId)) {
-      socket.emit('spend-coins', { amount: 5, reason: '3d-emoji' });
+      // Server authoritatively charges coins on send-3d-emoji — no client spend-coins
       socket.emit('send-3d-emoji', { roomId: roomIdRef.current || roomId, emoji });
       setShowEmojiPicker(false);
     }
@@ -1310,7 +1335,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     if (!file) return;
     const type = file.type.startsWith('video') ? 'video' : 'image';
     const cost = type === 'video' ? 15 : 10;
-    if (balance < cost) return alert(`Need ${cost} coins!`);
+    if (balance < cost) { setToast(`⚠️ Need ${cost} coins!`); e.target.value = ''; return; }
 
     if (type === 'video') {
       const video = document.createElement('video');
@@ -1318,14 +1343,13 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       video.onloadedmetadata = function () {
         window.URL.revokeObjectURL(video.src);
         if (video.duration > 6) {
-          return alert('Video must be 5 seconds or less!');
+          setToast('⚠️ Video must be 5 seconds or less!');
+          return;
         }
-        socket.emit('spend-coins', { amount: cost, reason: 'media-share' });
         processUpload(file);
       };
       video.src = URL.createObjectURL(file);
     } else {
-      socket.emit('spend-coins', { amount: cost, reason: 'media-share' });
       processUpload(file);
     }
     e.target.value = '';
@@ -1340,7 +1364,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   };
 
   const startScreenShare = async () => {
-    if (balance < 50) return alert('Need 50 coins for Screen Share!');
+    if (balance < 50) { setToast('⚠️ Need 50 coins for Screen Share!'); return; }
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       const track = stream.getVideoTracks()[0];
@@ -1351,7 +1375,8 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       }
 
       setIsScreenSharing(true);
-      socket.emit('spend-coins', { amount: 50, reason: 'screenshare' });
+      // Server price table authoritatively charges for reason 'screenshare' (50)
+      socket.emit('spend-coins', { reason: 'screenshare' });
       track.onended = () => {
         setIsScreenSharing(false);
         if (localStreamRef.current) {
@@ -1363,7 +1388,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         }
       };
     } catch (e) {
-      console.error(e);
+      mmDebug('screenshare.err', e);
     }
   };
 
@@ -1373,10 +1398,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     const untranslated = messages.filter(m => !m.system && !m.translated && m.nickname !== nickname && m.text && m.text.length > 3);
     if (untranslated.length === 0) return;
     const target = untranslated[untranslated.length - 1];
-    const apiBase = import.meta.env.VITE_SOCKET_URL || (typeof window !== 'undefined' ? window.location.origin : '');
     const translateMsg = async () => {
       try {
-        const res = await fetch(`${apiBase}/api/ai/translate`, {
+        const res = await fetch(`${API_BASE}/api/ai/translate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: target.text, to: 'English' })
@@ -1888,7 +1912,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                   key={e.char}
                   type="button"
                   onClick={() => {
-                    if (balance < 5) return alert('Requires 5 Mana (Coins)');
+                    if (balance < 5) { setToast('⚠️ Requires 5 Mana (Coins)'); return; }
                     socket.emit('send-3d-emoji', { emoji: e, roomId: roomIdProp || roomIdRef.current });
                   }}
                   className="mm-group-mobile-creator-bar__btn"
@@ -1918,7 +1942,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           onChange={(e) => setRenameInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
-              if (balance < 25) return alert("Insufficient Mana");
+              if (balance < 25) { setToast('⚠️ Insufficient Mana'); return; }
               socket.emit('rename-group-room', { roomId: roomIdProp || roomIdRef.current, newInterest: renameInput.trim() });
               setShowRenameModal(false);
             }
@@ -1931,7 +1955,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           <button onClick={() => setShowRenameModal(false)} className="flex-1 py-2.5 rounded-xl bg-white/5 text-[9px] font-black uppercase tracking-widest text-white/50 hover:bg-white/10">Back</button>
           <button
             onClick={() => {
-              if (balance < 25) return alert("Insufficient Mana");
+              if (balance < 25) { setToast('⚠️ Insufficient Mana'); return; }
               socket.emit('rename-group-room', { roomId: roomIdProp || roomIdRef.current, newInterest: renameInput.trim() });
               setShowRenameModal(false);
             }}
@@ -1979,8 +2003,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         showGames
         balance={balance}
         onRoomBoost={() => {
-          if (balance < 25) return alert('Need 25 coins');
-          socket?.emit('spend-coins', { amount: 25, reason: 'room-boost' });
+          if (balance < 25) { setToast('⚠️ Need 25 coins'); return; }
+          // Server price table authoritatively charges for reason 'room-boost' (25)
+          socket?.emit('spend-coins', { reason: 'room-boost' });
           setToast('Pod boosted in public room browser!');
         }}
         peerOptions={peers.map((p) => ({ id: p.socketId, label: p.nickname || 'User' }))}
@@ -2045,6 +2070,13 @@ function RemoteVideoTile({ stream, socketId }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [hasVideo, setHasVideo] = useState(true);
   const playCountRef = useRef(0);
+  const retryTimersRef = useRef([]);
+
+  // Clear pending retry timers on unmount
+  useEffect(() => () => {
+    retryTimersRef.current.forEach(clearTimeout);
+    retryTimersRef.current = [];
+  }, []);
 
   useEffect(() => {
     const el = ref.current;
@@ -2063,9 +2095,9 @@ function RemoteVideoTile({ stream, socketId }) {
           setHasVideo(true);
           el.srcObject = stream;
           el.play().catch(() => { });
-        } else setTimeout(check, 300);
+        } else retryTimersRef.current.push(setTimeout(check, 300));
       };
-      setTimeout(check, 300);
+      retryTimersRef.current.push(setTimeout(check, 300));
       return;
     }
     el.srcObject = stream;
@@ -2073,7 +2105,7 @@ function RemoteVideoTile({ stream, socketId }) {
       try {
         if (el.paused) { await el.play(); setIsPlaying(true); }
       } catch (e) {
-        if (playCountRef.current < 5) { playCountRef.current++; setTimeout(tryPlay, 500); }
+        if (playCountRef.current < 5) { playCountRef.current++; retryTimersRef.current.push(setTimeout(tryPlay, 500)); }
       }
     };
     tryPlay();

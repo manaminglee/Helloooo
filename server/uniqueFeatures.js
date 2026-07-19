@@ -211,9 +211,9 @@ function registerUniqueFeatures(app, io, deps) {
       io.to(roomId).emit('tip-goal-update', tipGoals.get(roomId));
     });
 
-    socket.on('report-user', () => {
-      adjustTrust(ip, -8);
-    });
+    // NOTE: `report-user` is handled solely in index.js (reporter -2, target -8,
+    // plus report persistence). A duplicate handler here used to double-penalize
+    // the reporter — intentionally removed.
 
     socket.on('disconnect', () => {
       for (const [rid, c] of roomConsent.entries()) {

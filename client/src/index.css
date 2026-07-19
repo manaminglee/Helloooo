@@ -5551,3 +5551,50 @@ textarea {
   background-clip: unset;
   color: #fff;
 }
+/* ------------------------------------------------------------------ */
+/* Global toast system + connection banner animations                  */
+/* ------------------------------------------------------------------ */
+@keyframes mm-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes mm-toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.97);
+  }
+}
+
+.mm-toast-in {
+  animation: mm-toast-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.mm-toast-out {
+  animation: mm-toast-out 0.22s ease-in both;
+}
+
+@keyframes mm-conn-banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mm-conn-banner {
+  animation: mm-conn-banner-in 0.25s ease-out both;
+}

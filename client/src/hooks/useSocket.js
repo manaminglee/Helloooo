@@ -1,5 +1,6 @@
 import { useReducer, useEffect } from 'react';
 import { API_BASE } from '../config/apiBase';
+import { mmDebug } from '../utils/mmDebug';
 
 const BASE_URL = API_BASE;
 
@@ -66,7 +67,7 @@ async function ensureSocket() {
     s.on('connect', () => patchState({ connected: true, isBlocked: false }));
     s.on('disconnect', () => patchState({ connected: false }));
     s.on('connect_error', (err) => {
-      console.error('[Socket] Connection error:', err.message);
+      mmDebug('socket.error', err.message);
       patchState({ connected: false });
     });
 
@@ -99,7 +100,7 @@ async function ensureSocket() {
     });
 
     s.on('blocked-ip', (data) => {
-      console.warn('[Socket] Blocked by server:', data?.reason || 'No reason provided');
+      mmDebug('socket.blocked', data?.reason || 'No reason provided');
       patchState({ isBlocked: true });
     });
 

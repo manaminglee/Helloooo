@@ -201,22 +201,27 @@ function registerEnhancements(app, io, deps) {
     });
 
     socket.on('rate-conversation', async (data) => {
-      const rating = Number(data?.rating);
-      if (!rating || rating < 1 || rating > 5) return;
-      conversationRatings.push({ rating, roomId: data?.roomId, ip, ts: Date.now() });
-      if (conversationRatings.length > 500) conversationRatings.shift();
+      try {
+        const rating = Number(data?.rating);
+        if (!rating || rating < 1 || rating > 5) return;
+        conversationRatings.push({ rating, roomId: data?.roomId, ip, ts: Date.now() });
+        if (conversationRatings.length > 500) conversationRatings.shift();
 
-      let targetIp = null;
-      const room = rooms.get(data?.roomId);
-      if (room) {
-        for (const sid of room.users) {
-          if (sid === socket.id) continue;
-          const ou = users.get(sid);
-          if (ou?.ip) { targetIp = ou.ip; break; }
+        let targetIp = null;
+        const room = rooms.get(data?.roomId);
+        if (room) {
+          for (const sid of room.users) {
+            if (sid === socket.id) continue;
+            const ou = users.get(sid);
+            if (ou?.ip) { targetIp = ou.ip; break; }
+          }
         }
-      }
-      if (deps.saveRating) {
-        await deps.saveRating({ raterIp: ip, targetIp, rating, roomId: data?.roomId });
+        if (deps.saveRating) {
+          await deps.saveRating({ raterIp: ip, targetIp, rating, roomId: data?.roomId });
+        }
+      } catch (err) {
+        console.error('[ENHANCEMENTS] rate-conversation failed:', err.message);
+        socket.emit('error', { message: 'Could not save rating.' });
       }
     });
 
@@ -235,6 +240,11 @@ function registerEnhancements(app, io, deps) {
       if (!room || room.hostId !== socket.id) return;
       const target = io.sockets.sockets.get(targetSocketId);
       if (target) {
+        // Clean the kicked socket's membership first so a later disconnect
+        // doesn't double-fire removeUserFromRoom (zombie room state).
+        target.leave(roomId);
+        const targetData = users.get(targetSocketId);
+        if (targetData?.rooms) targetData.rooms.delete(roomId);
         target.emit('kicked-from-room', { roomId });
         deps.removeUserFromRoom(targetSocketId, roomId, io);
       }

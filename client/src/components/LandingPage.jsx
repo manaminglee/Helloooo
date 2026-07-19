@@ -4,6 +4,7 @@ import { CoinBadge } from './CoinBadge';
 import { useCreators } from '../hooks/useCreators';
 import { useCreatorNotifications } from '../hooks/useCreatorNotifications';
 import { MiniTrendChart } from './MiniTrendChart';
+import { API_BASE } from '../config/apiBase';
 
 import { countryToFlag } from '../utils/countryFlag';
 import { PresenceMap } from './PresenceMap';
@@ -18,6 +19,7 @@ import { EventsHubStrip, ConversationModePicker, AiStatusPill } from './unique/U
 import { fetchPublicEvents, fetchAiStatus } from '../services/nvidiaAiClient';
 import { loadSessionPrefs, saveSessionPrefs } from '../constants/conversationModes';
 import { PHASE_4_UNIQUE } from '../constants/features';
+import { SettingsPanel, SettingsGearButton } from './SettingsPanel';
 
 const BlueTick = () => (
   <span className="inline-flex items-center justify-center w-3 h-3 bg-violet-500 rounded-full ml-1.5 shadow-[0_0_14px_rgba(167,139,250,0.45)]">
@@ -156,6 +158,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [dashboardAnalytics, setDashboardAnalytics] = useState([]);
   const [creatorFormError, setCreatorFormError] = useState('');
   const [featuredCreators, setFeaturedCreators] = useState([]);
+  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
     try {
@@ -280,18 +283,19 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
         fetchNotifications();
       }
     };
-    socket.on('creator-status-changed', handler);
-    socket.on('creator-withdrawal-updated', () => {
+    const onWithdrawalUpdated = () => {
       if (showDashboardModal) {
         fetchMyWithdrawals().then((w) => setDashboardWithdrawals(w.withdrawals || []));
         fetchStatus();
       }
       fetchNotifications();
-    });
+    };
+    socket.on('creator-status-changed', handler);
+    socket.on('creator-withdrawal-updated', onWithdrawalUpdated);
 
     return () => {
       socket.off('creator-status-changed', handler);
-      socket.off('creator-withdrawal-updated');
+      socket.off('creator-withdrawal-updated', onWithdrawalUpdated);
     };
   }, [socket, uniqueAccessCode, waitingForApproval, creatorStatus?.referral_code, showDashboardModal, fetchMyWithdrawals, fetchNotifications]);
 
@@ -355,8 +359,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
     if (isSuggesting) return;
     setIsSuggesting(true);
     try {
-      const apiBase = import.meta.env.VITE_SOCKET_URL || '';
-      const res = await fetch(`${apiBase}/api/ai/suggest`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/api/ai/suggest`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         (data.suggestions || []).slice(0, 5).forEach((topic) => {
@@ -523,6 +526,10 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
               >
                 For Creators
               </button>
+              <SettingsGearButton
+                onClick={() => setShowSettings(true)}
+                className="mm-compact-btn p-2 rounded-xl border border-white/10 bg-white/5 text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+              />
               {connected && balance !== undefined && (
                 <CoinBadge balance={balance} streak={streak} canClaim={canClaim} nextClaim={nextClaim ?? 0} claimCoins={claimCoins} registered={registered} currentActiveSeconds={currentActiveSeconds} isCreator={!!creatorStatus || socketIsCreator} />
               )}
@@ -982,7 +989,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                             onClick={() => {
                               navigator.clipboard.writeText(uniqueAccessCode);
                               setCodeCopied(true);
-                              alert('Unique Code Saved to Clipboard');
+                              showAlert('Code copied', 'Your unique access code was saved to the clipboard.');
                             }}
                             className="px-10 py-4 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-indigo-500 hover:scale-105 transition-all shadow-2xl shadow-indigo-600/30 active:scale-95"
                           >
@@ -1135,8 +1142,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                           setLinkValidated(false);
                           setLinkVerifyFailed(false);
                           try {
-                            const apiBase = import.meta.env.VITE_SOCKET_URL || '';
-                            const res = await fetch(`${apiBase}/api/validate-url`, {
+                            const res = await fetch(`${API_BASE}/api/validate-url`, {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ url })
@@ -1309,7 +1315,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                             a.download = `mm_creator_${creatorStatus.handle_name}.txt`;
                             a.click();
                             URL.revokeObjectURL(url);
-                            alert('Credentials Downloaded to Device.');
+                            showAlert('Downloaded', 'Your creator credentials were downloaded to this device. Keep them private.');
                           }}
                           className="w-full py-4 rounded-xl bg-white/5 border border-white/10 text-white/40 text-[9px] font-black uppercase tracking-[0.2em] hover:bg-white hover:text-black transition-all"
                         >Download Account Details →</button>
@@ -1347,7 +1353,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       <button
                         onClick={() => {
                           navigator.clipboard.writeText(`${window.location.origin}?ref=${creatorStatus.referral_code}`);
-                          alert('Referral Link Copied');
+                          showAlert('Link copied', 'Your referral link was saved to the clipboard.');
                         }}
                         className="px-8 h-14 rounded-2xl bg-violet-400 text-black font-black uppercase tracking-widest text-[10px] hover:bg-white transition-all shadow-xl shadow-violet-500/25"
                       >Copy Link</button>
@@ -1361,8 +1367,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       const upi = prompt('Enter UPI ID for withdrawal:');
                       if (upi) {
                         const res = await requestWithdrawal(upi);
-                        if (res.success) alert('Withdrawal Request Sent.');
-                        else alert(res.error);
+                        if (res.success) showAlert('Withdrawal requested', 'Your withdrawal request was sent. Coins will be debited after verification.');
+                        else showAlert('Withdrawal failed', res.error || 'Could not submit the withdrawal request.');
                       }
                     }}
                     className="w-full h-14 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-emerald-500 hover:text-white transition-all shadow-xl shadow-emerald-500/20"
@@ -1946,6 +1952,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
           </div>
         </div>
       )}
+
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </div>
   );
 }

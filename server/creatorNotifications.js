@@ -74,11 +74,17 @@ async function pushCreatorNotification(ctx, payload) {
     created_at: row.created_at,
   };
 
-  if (io && referralCode) {
-    io.emit('creator-notification', {
+  if (referralCode) {
+    const payload = {
       referral_code: referralCode,
       notification,
-    });
+    };
+    if (typeof ctx.emitToCreator === 'function') {
+      // Targeted delivery: only this creator's sockets receive their notification.
+      ctx.emitToCreator(referralCode, 'creator-notification', payload);
+    } else if (io) {
+      io.emit('creator-notification', payload);
+    }
   }
 
   return notification;

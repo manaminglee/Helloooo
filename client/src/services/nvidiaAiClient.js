@@ -12,30 +12,42 @@ export async function fetchAiStatus() {
 }
 
 export async function fetchCopilot(body) {
-  const res = await fetch(`${base()}/api/ai/copilot`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  return res.json();
+  try {
+    const res = await fetch(`${base()}/api/ai/copilot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return res.ok ? res.json() : { prompt: null, offline: true };
+  } catch {
+    return { prompt: null, offline: true };
+  }
 }
 
 export async function fetchModePrompt(mode, interest, language) {
-  const res = await fetch(`${base()}/api/ai/mode-prompt`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode, interest, language }),
-  });
-  return res.json();
+  try {
+    const res = await fetch(`${base()}/api/ai/mode-prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, interest, language }),
+    });
+    return res.ok ? res.json() : { prompt: '', offline: true };
+  } catch {
+    return { prompt: '', offline: true };
+  }
 }
 
 export async function polishCaption(text) {
-  const res = await fetch(`${base()}/api/ai/caption-polish`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  });
-  return res.json();
+  try {
+    const res = await fetch(`${base()}/api/ai/caption-polish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    return res.ok ? res.json() : { polished: text, offline: true };
+  } catch {
+    return { polished: text, offline: true };
+  }
 }
 
 export async function fetchTrustScore() {
@@ -48,11 +60,13 @@ export async function fetchTrustScore() {
 }
 
 export async function saveVibeTags(tags) {
-  await fetch(`${base()}/api/vibe/save`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tags }),
-  });
+  try {
+    await fetch(`${base()}/api/vibe/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags }),
+    });
+  } catch { /* offline — ignore */ }
 }
 
 export async function fetchPublicEvents() {

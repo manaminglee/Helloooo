@@ -320,3 +320,81 @@ DROP POLICY IF EXISTS "Allow full access" ON creator_notifications;
 CREATE POLICY "Allow full access" ON creator_notifications FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
 -- End of ManaMingle Supabase Schema
+
+-- === Migration: trust/reports/ratings/pro/referral-clicks (server feature parity) ===
+-- These tables are written by server/persistence.js and server/enhancements.js.
+-- Run this section against existing deployments to close the schema drift.
+
+-- 12. Trust scores (keyed by salted IP hash; see persistence.js hashIp)
+CREATE TABLE IF NOT EXISTS mm_trust_scores (
+  ip_hash TEXT PRIMARY KEY,
+  score INTEGER NOT NULL DEFAULT 50,
+  sessions INTEGER NOT NULL DEFAULT 0,
+  badges JSONB DEFAULT '[]',
+  reports INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE mm_trust_scores ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON mm_trust_scores;
+CREATE POLICY "Allow full access" ON mm_trust_scores FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+-- 13. Moderation reports (persistence.saveReport)
+CREATE TABLE IF NOT EXISTS mm_reports (
+  id TEXT PRIMARY KEY,
+  reporter_ip TEXT,
+  target_ip TEXT,
+  reason TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mm_reports_created ON mm_reports(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mm_reports_target ON mm_reports(target_ip);
+
+ALTER TABLE mm_reports ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON mm_reports;
+CREATE POLICY "Allow full access" ON mm_reports FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+-- 14. Conversation ratings 1-5 (persistence.saveRating / getReputationBoost)
+CREATE TABLE IF NOT EXISTS mm_conversation_ratings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rater_ip TEXT,
+  target_ip TEXT,
+  rating INTEGER NOT NULL,
+  room_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mm_conversation_ratings_target ON mm_conversation_ratings(target_ip);
+
+ALTER TABLE mm_conversation_ratings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON mm_conversation_ratings;
+CREATE POLICY "Allow full access" ON mm_conversation_ratings FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+-- 15. Pro users by IP (persistence.getProStatus / activatePro / grantProSubscription)
+CREATE TABLE IF NOT EXISTS mm_pro_users (
+  ip TEXT PRIMARY KEY,
+  is_pro BOOLEAN DEFAULT FALSE,
+  pro_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE mm_pro_users ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON mm_pro_users;
+CREATE POLICY "Allow full access" ON mm_pro_users FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+-- 16. Referral link clicks (enhancements.js POST /api/referral/click)
+CREATE TABLE IF NOT EXISTS referral_clicks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_id TEXT REFERENCES creators(id) ON DELETE CASCADE,
+  visitor_ip TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_referral_clicks_creator ON referral_clicks(creator_id, created_at DESC);
+
+ALTER TABLE referral_clicks ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON referral_clicks;
+CREATE POLICY "Allow full access" ON referral_clicks FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+-- === End Migration ===

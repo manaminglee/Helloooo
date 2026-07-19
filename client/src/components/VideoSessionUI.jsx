@@ -358,15 +358,23 @@ export function StrangerRevealOverlay({ show, onReveal }) {
   );
 }
 
-export function AudioOnlyFallback({ nickname, onRetryCamera }) {
+export function AudioOnlyFallback({ nickname, onRetryCamera, onAudioOnly, micBlocked = false }) {
   return (
     <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-gradient-to-b from-[#0a0a12] to-black p-6 text-center">
       <div className="w-20 h-20 rounded-full bg-violet-500/20 border-2 border-violet-500/40 flex items-center justify-center text-3xl mb-4">🎙️</div>
-      <p className="text-sm font-bold text-white mb-1">Audio-only mode</p>
-      <p className="text-xs text-white/50 mb-4">Camera unavailable — voice chat still works.</p>
-      {onRetryCamera && (
-        <button type="button" onClick={onRetryCamera} className="px-4 py-2 rounded-xl bg-white/10 text-xs font-bold text-white hover:bg-white/20">Retry camera</button>
+      <p className="text-sm font-bold text-white mb-1">Camera unavailable</p>
+      <p className="text-xs text-white/50 mb-1 max-w-[16rem]">You can retry camera access, or continue with voice only.</p>
+      {micBlocked && (
+        <p className="text-[11px] text-rose-400 font-bold mb-1 max-w-[16rem]">Microphone is blocked too — check browser/site permissions, then retry.</p>
       )}
+      <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+        {onRetryCamera && (
+          <button type="button" onClick={onRetryCamera} className="px-4 py-2 rounded-xl bg-white/10 text-xs font-bold text-white hover:bg-white/20">Retry camera</button>
+        )}
+        {onAudioOnly && !micBlocked && (
+          <button type="button" onClick={onAudioOnly} className="px-4 py-2 rounded-xl bg-violet-600 text-xs font-bold text-white hover:bg-violet-500">Continue audio-only</button>
+        )}
+      </div>
     </div>
   );
 }

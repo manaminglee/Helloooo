@@ -1,7 +1,6 @@
 import { memo, useEffect, useState } from 'react';
 import { getCreatorAuthHeaders } from '../utils/creatorAuth';
-
-const API_BASE = import.meta.env.VITE_SOCKET_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+import { API_BASE } from '../config/apiBase';
 
 const perks = [
   { icon: '✓', title: 'Verified badge', desc: 'Stand out in video & text with the cyan tick' },
@@ -221,7 +220,7 @@ function CreatorMatrixInner({ embedded = false, creatorStatus, onOpenDashboard, 
                       const upi = prompt('Enter UPI ID for Payout:');
                       if (upi) {
                         const res = await onWithdraw(upi);
-                        if (res.error) alert(res.error);
+                        if (res.error) await showAlert('Withdrawal Failed', String(res.error));
                         else await showAlert('Transmitted', 'Withdrawal request sent to admin. Coins will be debited after verified.');
                       }
                     }}

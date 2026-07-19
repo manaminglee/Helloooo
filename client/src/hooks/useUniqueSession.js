@@ -32,7 +32,7 @@ export function useUniqueSession({
   const recognitionRef = useRef(null);
 
   useEffect(() => {
-    fetchTrustScore().then(setTrust);
+    fetchTrustScore().then(setTrust).catch(() => { /* offline — ignore */ });
   }, []);
 
   useEffect(() => {
@@ -76,7 +76,7 @@ export function useUniqueSession({
     fetchModePrompt(conversationMode, interest).then((r) => {
       setModePrompt(r.prompt || '');
       setAiOnline(!r.offline);
-    });
+    }).catch(() => { /* offline — ignore */ });
   }, [status, conversationMode, interest]);
 
   useEffect(() => {

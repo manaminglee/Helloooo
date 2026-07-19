@@ -26,7 +26,9 @@ function paymentProvider() {
   const stripeKey = (process.env.STRIPE_SECRET_KEY || '').trim();
   const razorpayId = (process.env.RAZORPAY_KEY_ID || '').trim();
   const razorpaySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
-  const testMode = process.env.PAYMENT_TEST_MODE === 'true' || process.env.NODE_ENV !== 'production';
+  // Test mode must be EXPLICIT: PAYMENT_TEST_MODE=true. Never auto-enable from
+  // NODE_ENV — a misconfigured deploy must fail closed, not silently fake charges.
+  const testMode = process.env.PAYMENT_TEST_MODE === 'true';
 
   if (forced === 'stripe' && stripeKey) return { provider: 'stripe', testMode: stripeKey.startsWith('sk_test_') };
   if (forced === 'razorpay' && razorpayId && razorpaySecret) {
@@ -224,7 +226,13 @@ function registerPayments(app, deps) {
     if (!verifyRazorpaySignature(razorpay_order_id, razorpay_payment_id, razorpay_signature)) {
       return res.status(400).json({ ok: false, error: 'Invalid payment signature' });
     }
+    // Idempotency: a consumed payment id can never be replayed for a second grant.
+    const ref = `razorpay:${razorpay_payment_id}`;
+    if (persistence.hasConsumedPayment?.(ref)) {
+      return res.json({ ok: true, alreadyProcessed: true, product: String(product || 'pro') });
+    }
     const result = await fulfillPayment(String(product || 'pro'), clientIp(req));
+    if (result.ok) await persistence.markPaymentConsumed?.(ref, { provider: 'razorpay', product: String(product || 'pro') });
     res.json(result);
   });
 
@@ -232,8 +240,14 @@ function registerPayments(app, deps) {
     const sessionId = String(req.query.session_id || '');
     const meta = await stripeVerifySession(sessionId);
     if (!meta?.product) return res.status(400).json({ ok: false, error: 'Payment not completed' });
+    // Idempotency: a consumed checkout session can never be replayed for a second grant.
+    const ref = `stripe:${sessionId}`;
+    if (persistence.hasConsumedPayment?.(ref)) {
+      return res.json({ ok: true, alreadyProcessed: true, product: meta.product });
+    }
     const ip = meta.ip || clientIp(req);
     const result = await fulfillPayment(meta.product, ip);
+    if (result.ok) await persistence.markPaymentConsumed?.(ref, { provider: 'stripe', product: meta.product });
     res.json(result);
   });
 

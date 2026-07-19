@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getCreatorAuthHeaders } from '../utils/creatorAuth';
 import { API_BASE } from '../config/apiBase';
+import { mmDebug } from '../utils/mmDebug';
 import {
   validateCreatorHandle,
   validateCreatorPlatform,
@@ -17,9 +18,9 @@ export function useCreators() {
 
   useEffect(() => {
     fetchStatus();
-  }, []);
+  }, [fetchStatus]);
 
-  const fetchStatus = async () => {
+  const fetchStatus = useCallback(async () => {
     try {
       const storedId = window.localStorage.getItem('mm_creatorId');
       const logoutFlag = window.localStorage.getItem('mm_logout_flag');
@@ -38,11 +39,11 @@ export function useCreators() {
       const data = await res.json();
       setCreatorStatus(data.data);
     } catch (e) {
-      console.error('Creator status fetch failed', e);
+      mmDebug('creators.status', e);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   const registerCreator = async (handle, platform, link, email, password, confirmPassword) => {
     const handleCheck = validateCreatorHandle(handle);
@@ -81,13 +82,13 @@ export function useCreators() {
     }
   };
 
-  const checkStatus = async (code) => {
+  const checkStatus = useCallback(async (code) => {
     try {
       const res = await fetch(`${API_BASE}/api/creators/status?id=${encodeURIComponent(code)}`);
       const data = await res.json();
       return data.data;
     } catch (e) { return null; }
-  };
+  }, []);
 
   const reRequestApproval = async (code) => {
     try {
@@ -100,7 +101,7 @@ export function useCreators() {
     } catch (e) { return { error: 'Request failed' }; }
   };
 
-  const verifyReferral = async (code) => {
+  const verifyReferral = useCallback(async (code) => {
     try {
       const res = await fetch(`${API_BASE}/api/creators/verify-ref`, {
         method: 'POST',
@@ -111,7 +112,7 @@ export function useCreators() {
     } catch (e) {
       return { error: 'Verification failed' };
     }
-  };
+  }, []);
 
   const requestWithdrawal = async (upi) => {
     const upiCheck = validateCreatorUpi(upi);

@@ -12,6 +12,7 @@ export function ChatInputWithEmoji({
   inputClassName = '',
   showVoice = false,
   onVoiceMessage,
+  enterToSend = true,
 }) {
   const [showEmoji, setShowEmoji] = useState(false);
   const inputRef = useRef(null);
@@ -27,6 +28,7 @@ export function ChatInputWithEmoji({
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !multiline && !e.shiftKey) {
+      if (!enterToSend) return; // pref off — require the send button
       e.preventDefault();
       onSend?.();
     }

@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { countryToFlag } from '../utils/countryFlag';
 import { useLatency } from '../hooks/useLatency';
+import { API_BASE } from '../config/apiBase';
+import { mmDebug } from '../utils/mmDebug';
+import { nextMsgId } from '../utils/uniqueId';
 import { CoinBadge } from './CoinBadge';
 import { AdSlot } from './AdSlot';
 import { ReportSafetyModal } from './ReportSafetyModal';
 import { ChatInputWithEmoji } from './ChatInputWithEmoji';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNotify';
+import { playDing, playPop } from '../utils/sounds';
+import { usePrefs } from '../utils/userPrefs';
+import { SettingsPanel, SettingsGearButton } from './SettingsPanel';
 import { ProFeaturesMenu } from './ProFeaturesMenu';
 import { useUniqueSession } from '../hooks/useUniqueSession';
 import {
@@ -104,10 +110,11 @@ function MessageSpark({ x, y }) {
 }
 
 function VanishingMessage({ m, isMe, onReply }) {
+  const { vanishMessages } = usePrefs();
   const [timeLeft, setTimeLeft] = useState(90);
 
   useEffect(() => {
-    if (m.system) return;
+    if (m.system || !vanishMessages) return;
     const age = Math.floor((Date.now() - (m.ts || Date.now())) / 1000);
     const rem = Math.max(0, 90 - age);
     setTimeLeft(rem);
@@ -118,9 +125,9 @@ function VanishingMessage({ m, isMe, onReply }) {
       setTimeLeft(prev => Math.max(0, prev - 1));
     }, 1000);
     return () => clearInterval(int);
-  }, [m.ts, m.system]);
+  }, [m.ts, m.system, vanishMessages]);
 
-  if (!m.system && timeLeft <= 0) return null;
+  if (!m.system && vanishMessages && timeLeft <= 0) return null;
 
   if (m.system) {
     return (
@@ -139,10 +146,11 @@ function VanishingMessage({ m, isMe, onReply }) {
     <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-message-pop mt-2`}>
         <div className={`msg-bubble ${isMe ? 'me' : 'them'} flex flex-col gap-1 relative group min-w-[60px]`}>
             {!m.system && (
-              <button 
-                onClick={() => onReply && onReply(m)} 
+              <button
+                onClick={() => onReply && onReply(m)}
                 className={`absolute -top-3 ${isMe ? '-left-3' : '-right-3'} opacity-0 group-hover:opacity-100 bg-white/10 hover:bg-white/20 p-1 rounded-full text-xs transition-opacity z-10`}
                 title="Reply"
+                aria-label="Reply to message"
               >
                 ↩️
               </button>
@@ -174,9 +182,11 @@ function VanishingMessage({ m, isMe, onReply }) {
                 ) : (
                     <p className="break-words leading-relaxed whitespace-pre-wrap">{m.text}</p>
                 )}
-                <span className={`text-[9px] font-mono shrink-0 mb-[-2px] ${timeLeft <= 10 ? 'text-amber-400 animate-pulse font-bold' : 'opacity-40'}`}>
-                    {mStr}:{sStr}
-                </span>
+                {vanishMessages && (
+                  <span className={`text-[9px] font-mono shrink-0 mb-[-2px] ${timeLeft <= 10 ? 'text-amber-400 animate-pulse font-bold' : 'opacity-40'}`}>
+                      {mStr}:{sStr}
+                  </span>
+                )}
             </div>
         </div>
     </div>
@@ -216,8 +226,25 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   const skipRef = useRef(null);
   const backRef = useRef(null);
   const messagesRef = useRef(messages);
+  const userLeftTimerRef = useRef(null);
+  const initialFindEmittedRef = useRef(false);
+  const handleSkipRef = useRef(null);
+  const onJoinedRef = useRef(onJoined);
+  const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
+  const prefs = usePrefs();
+  const [showSettings, setShowSettings] = useState(false);
   statusRef.current = status;
   messagesRef.current = messages;
+  onJoinedRef.current = onJoined;
+
+  // Small local toast (matches other chat surfaces)
+  useEffect(() => {
+    if (!toast) return;
+    clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(toastTimerRef.current);
+  }, [toast]);
 
   const isConnected = !!peer && !!roomId;
 
@@ -262,18 +289,25 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     roomIdRef.current = null;
   }, []);
 
+  // Auto-start matchmaking on mount (once, when socket is connected) — mirrors VideoChat's pattern
+  useEffect(() => {
+    if (!socket || !connected || initialFindEmittedRef.current || roomIdRef.current) return;
+    initialFindEmittedRef.current = true;
+    emitFind();
+  }, [socket, connected, emitFind]);
+
   // ---- socket events ----
   useEffect(() => {
     if (!socket) return;
 
     const onPartnerFound = (data) => {
-      console.log('[CHAT] Partner found, room:', data.roomId);
+      mmDebug('chat.match', data.roomId);
       roomIdRef.current = data.roomId;
       setLastRoomId(data.roomId);
       setRoomId(data.roomId);
       setPeer(data.peer);
       setStatus('connected');
-      onJoined?.(data.roomId);
+      onJoinedRef.current?.(data.roomId);
       notifyIfBackground('Text match', 'You have a new Mana Mingle text chat.');
       setTimeout(() => inputRef.current?.focus(), 100);
     };
@@ -285,12 +319,13 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     const onMessage = (data) => {
       if (data.roomId === roomIdRef.current) {
         setMessages((m) => [...m.slice(-100), data]);
+        if (!isFromMe(data)) playDing();
         // Trigger spark for incoming messages on message location
         const el = document.getElementById('text-chat-messages');
         if (el) {
           const rect = el.getBoundingClientRect();
           // Fix #8: Cap sparks to 20 to prevent memory growth
-          setSparks(prev => [...prev.slice(-20), { id: Date.now(), x: rect.left + rect.width / 2, y: rect.bottom - 100 }]);
+          setSparks(prev => [...prev.slice(-20), { id: nextMsgId('spark'), x: rect.left + rect.width / 2, y: rect.bottom - 100 }]);
         }
       }
     };
@@ -300,9 +335,10 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       setPeer(null);
       // Fix #7: Capture room ID at time of event to avoid race condition
       const currentRoom = roomIdRef.current;
-      setTimeout(() => {
+      clearTimeout(userLeftTimerRef.current);
+      userLeftTimerRef.current = setTimeout(() => {
         if (roomIdRef.current !== currentRoom) return; // new room joined, don't skip
-        handleSkip();
+        handleSkipRef.current?.();
       }, 800);
     };
 
@@ -313,12 +349,12 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     };
 
     const onWaiting = () => setStatus('searching');
-    const onSystemMsg = (data) => setMessages((m) => [...m, { id: Date.now(), system: true, text: `📢 ADMIN: ${data.message}`, ts: Date.now() }]);
+    const onSystemMsg = (data) => setMessages((m) => [...m, { id: nextMsgId('sys'), system: true, text: `📢 ADMIN: ${data.message}`, ts: Date.now() }]);
 
     const on3dEmoji = (data) => {
       setActive3dEmoji(data);
       setMessages(prev => [...prev.slice(-100), {
-        id: `emoji-${Date.now()}`,
+        id: nextMsgId('emoji'),
         text: `Sent a 3D ${data.emoji.char || data.emoji}`,
         system: false,
         socketId: data.socketId,
@@ -329,6 +365,22 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       setTimeout(() => setActive3dEmoji(null), 3000);
     };
 
+    const onContentFlagged = (data) => {
+      setMessages(m => [...m, { id: nextMsgId('sys'), system: true, text: `🛡️ ${data.message}`, ts: Date.now() }]);
+    };
+
+    const onServerError = (data) => {
+      setToast(data?.message || 'Something went wrong.');
+    };
+
+    const onDisconnect = (reason) => {
+      if (reason === 'io server disconnect' || reason === 'transport close' || reason === 'ping timeout') {
+        setStatus('disconnected');
+        clearTimeout(userLeftTimerRef.current);
+        userLeftTimerRef.current = setTimeout(() => handleSkipRef.current?.(), 2000);
+      }
+    };
+
     socket.on('partner-found', onPartnerFound);
     socket.on('chat-history', onHistory);
     socket.on('chat-message', onMessage);
@@ -337,20 +389,12 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     socket.on('waiting-for-partner', onWaiting);
     socket.on('system-announcement', onSystemMsg);
     socket.on('3d-emoji', on3dEmoji);
-    socket.on('content-flagged', (data) => {
-      setMessages(m => [...m, { id: Date.now(), system: true, text: `🛡️ ${data.message}`, ts: Date.now() }]);
-    });
-    socket.on('disconnect', (reason) => {
-      if (reason === 'io server disconnect' || reason === 'transport close' || reason === 'ping timeout') {
-        setStatus('disconnected');
-        setTimeout(() => handleSkip(), 2000);
-      }
-    });
-
-    // Fix #1: Removed duplicate find-partner emit here — it's called in handleStart/emitFind
-    // Fix #2: Was hardcoded 'Anonymous', now uses prop via emitFind
+    socket.on('content-flagged', onContentFlagged);
+    socket.on('error', onServerError);
+    socket.on('disconnect', onDisconnect);
 
     return () => {
+      clearTimeout(userLeftTimerRef.current);
       socket.off('partner-found', onPartnerFound);
       socket.off('chat-history', onHistory);
       socket.off('chat-message', onMessage);
@@ -359,28 +403,28 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       socket.off('waiting-for-partner', onWaiting);
       socket.off('system-announcement', onSystemMsg);
       socket.off('3d-emoji', on3dEmoji);
-      socket.off('content-flagged');
-      socket.off('error');
-      socket.off('disconnect');
+      socket.off('content-flagged', onContentFlagged);
+      socket.off('error', onServerError);
+      socket.off('disconnect', onDisconnect);
     };
-  // Fix #3: Added all used values to dependency array
-  }, [socket, onJoined, interest, nickname]);
+  // Handlers read latest values through refs — register once per socket
+  }, [socket]);
 
   useEffect(() => {
-    if (socket) {
-      socket.on('media-message', (data) => {
-        setMessages(prev => [...prev.slice(-100), { ...data, media: true }]);
-      });
-      return () => {
-        socket.off('media-message');
-      };
-    }
+    if (!socket) return;
+    const onMediaMessage = (data) => {
+      setMessages(prev => [...prev.slice(-100), { ...data, media: true }]);
+    };
+    socket.on('media-message', onMediaMessage);
+    return () => {
+      socket.off('media-message', onMediaMessage);
+    };
   }, [socket]);
 
   const send3dEmoji = (emojiObj) => {
     // Fix #10: Guard room existence before emitting
     if (!roomIdRef.current) return;
-    if (balance < 5) return alert('Need 5 coins for 3D Emoji!');
+    if (balance < 5) { setToast('⚠️ Need 5 coins for 3D Emoji!'); return; }
     if (socket) {
       socket.emit('send-3d-emoji', { roomId: roomIdRef.current, emoji: emojiObj });
       setShowEmojiPicker(false);
@@ -391,13 +435,13 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     const file = e.target.files[0];
     if (!file) return;
     if (file.size > MAX_MEDIA_SIZE_MB * 1024 * 1024) {
-      alert(`File must be under ${MAX_MEDIA_SIZE_MB}MB`);
+      setToast(`⚠️ File must be under ${MAX_MEDIA_SIZE_MB}MB`);
       e.target.value = '';
       return;
     }
     const type = file.type.startsWith('video') ? 'video' : 'image';
     const cost = type === 'video' ? 15 : 10;
-    if (balance < cost) return alert(`Need ${cost} coins!`);
+    if (balance < cost) { setToast(`⚠️ Need ${cost} coins!`); e.target.value = ''; return; }
 
     if (type === 'video') {
       const video = document.createElement('video');
@@ -405,7 +449,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       video.onloadedmetadata = function () {
         window.URL.revokeObjectURL(video.src);
         if (video.duration > 6) { // Allowing small buffer
-          return alert('Video must be 5 seconds or less!');
+          setToast('⚠️ Video must be 5 seconds or less!');
+          return;
         }
         processUpload(file);
       };
@@ -444,8 +489,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     const targetId = toTranslate.id;
     setMessages(prev => prev.map(m => m.id === targetId ? { ...m, translating: true } : m));
 
-    const apiBase = import.meta.env.VITE_SOCKET_URL || '';
-    fetch(`${apiBase}/api/ai/translate`, {
+    fetch(`${API_BASE}/api/ai/translate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: toTranslate.text })
@@ -541,13 +585,13 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     clearRoom();
     setStatus('searching');
     setTimeout(() => {
-      // Fix #2: Use nickname prop, not hardcoded 'Anonymous'
-      socket?.emit('find-partner', { mode: 'text', interest: interest || 'general', nickname: nickname || 'Anonymous', language, region: region || country });
-      onFindNewPartner?.();
+      // Single find-partner emit for the skip/abort path (component-side only)
+      socket?.emit('find-partner', { mode: 'text', interest: interest || 'general', nickname: nickname || 'Anonymous', language, region: region || country, conversationMode, topicContract });
     }, 50);
-  }, [socket, interest, onFindNewPartner]);
+  }, [socket, interest, nickname, language, region, country, conversationMode, topicContract]);
 
   skipRef.current = handleSkip;
+  handleSkipRef.current = handleSkip;
 
   const handleStop = () => {
     if (roomIdRef.current && socket) socket.emit('leave-room', { roomId: roomIdRef.current });
@@ -572,6 +616,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     const payload = { roomId: r, text: t };
     if (replyingTo) payload.replyTo = { id: replyingTo.id, text: replyingTo.text, nickname: replyingTo.nickname };
     socket.emit('send-message', payload);
+    playPop();
     setInput('');
     setReplyingTo(null);
   };
@@ -596,8 +641,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     setIsAiGenerating(true);
 
     try {
-      const apiBase = import.meta.env.VITE_SOCKET_URL || '';
-      const res = await fetch(`${apiBase}/api/ai/spark`, {
+      const res = await fetch(`${API_BASE}/api/ai/spark`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ interest })
@@ -686,12 +730,17 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
               onClick={() => setIsTranslatorActive(!isTranslatorActive)}
               className={`p-2.5 rounded-xl border transition-all ${isTranslatorActive ? 'bg-violet-500/10 border-violet-500/50 text-violet-400' : 'bg-white/5 border-white/5 text-white/30 hover:text-white hover:border-white/20'}`}
               title="AI Smart Translator"
+              aria-label="AI Smart Translator"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
               </svg>
             </button>
           )}
+          <SettingsGearButton
+            onClick={() => setShowSettings(true)}
+            className="p-2.5 rounded-xl border bg-white/5 border-white/5 text-white/30 hover:text-white hover:border-white/20 transition-all"
+          />
         </div>
       </header>
 
@@ -746,6 +795,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
                   type="button"
                   onClick={() => setMutedStranger((m) => !m)}
                   className={`p-2.5 rounded-xl border transition-all ${mutedStranger ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-white/5 border-white/5 text-white/30 hover:text-white'}`}
+                  aria-label={mutedStranger ? 'Unmute stranger messages' : 'Mute stranger messages'}
+                  title={mutedStranger ? 'Unmute stranger' : 'Mute stranger'}
                 >
                   {mutedStranger ? '🔇' : '🔊'}
                 </button>
@@ -893,6 +944,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
                   disabled={isAiGenerating}
                   showVoice={PHASE_2.voiceMessages}
                   onVoiceMessage={handleVoiceMessage}
+                  enterToSend={prefs.enterToSend}
                   className="flex-1"
                   inputClassName="min-h-[64px] rounded-3xl bg-white/[0.03] border-white/10 focus:border-violet-500/40 text-sm uppercase font-black tracking-widest italic backdrop-blur-3xl placeholder:text-white/10"
                 />
@@ -904,28 +956,31 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
              <div className="flex items-center justify-between px-2">
                 <div className="flex items-center gap-2">
                    {QUICK_REACTIONS.map(emoji => (
-                     <button 
-                       key={emoji} 
+                     <button
+                       key={emoji}
                        onClick={() => {
                         if (balance >= 5) send3dEmoji(EMOJIS_3D.find(e => e.char === emoji) || {char: emoji, url: ''});
                         else socket.emit('send-message', {roomId: roomIdRef.current, text: emoji});
                        }}
                        className="w-10 h-10 rounded-xl bg-white/[0.02] border border-white/5 hover:border-violet-500/20 text-lg flex items-center justify-center grayscale hover:grayscale-0 transition-all"
+                       aria-label={`Send reaction ${emoji}`}
                      >
                        {emoji}
                      </button>
                    ))}
                    <div className="w-px h-6 bg-white/5 mx-2" />
-                   <button 
+                   <button
                     onClick={() => fileInputRef.current?.click()}
                     className="w-10 h-10 rounded-xl bg-white/[0.02] border border-white/5 hover:border-emerald-500/40 text-emerald-400 flex items-center justify-center text-lg hover:bg-emerald-500/5 transition-all"
+                    aria-label="Send image or video"
                    >📂</button>
                    <input type="file" ref={fileInputRef} className="hidden" accept="image/*,video/*" onChange={handleMediaUpload} />
-                   
+
                    <div className="relative">
-                     <button 
+                     <button
                       onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                       className={`w-10 h-10 rounded-xl bg-white/[0.02] border ${showEmojiPicker ? 'border-amber-500 bg-amber-500/10' : 'border-white/5'} hover:border-amber-500/40 text-amber-400 flex items-center justify-center text-lg transition-all`}
+                      aria-label="Open emoji picker"
                      >✨</button>
                      {showEmojiPicker && (
                        <div className="absolute bottom-full left-0 mb-4 p-5 bg-black/90 backdrop-blur-3xl border border-white/10 rounded-[40px] w-[280px] shadow-[0_0_50px_rgba(0,0,0,0.8)] animate-in-zoom z-[500]">
@@ -975,6 +1030,12 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
         onDismiss={unique.dismissCopilot}
       />
 
+      {toast && (
+        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-[2000] max-w-[90vw] px-4 py-3 rounded-2xl bg-black/90 border border-white/10 text-xs font-bold text-white shadow-2xl animate-fade-in-up">
+          {toast}
+        </div>
+      )}
+
       <ReportSafetyModal
         open={showReportModal}
         onClose={() => setShowReportModal(false)}
@@ -984,7 +1045,13 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       {/* RATING MODAL */}
       {showRating && (
         <div className="fixed inset-0 z-[2000] flex items-center justify-center p-8 bg-black/90 backdrop-blur-3xl animate-in-zoom" onClick={() => setShowRating(false)}>
-          <div className="bg-black border border-white/10 rounded-[40px] p-10 max-w-sm w-full text-center shadow-2xl relative" onClick={(e) => e.stopPropagation()}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Rate your chat"
+            className="bg-black border border-white/10 rounded-[40px] p-10 max-w-sm w-full text-center shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="text-4xl mb-6 scale-125 animate-bounce">⭐</div>
             <h3 className="text-xl font-black italic uppercase italic tracking-tighter text-white mb-4">How was your chat?</h3>
             <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-10 leading-relaxed">Help us improve your experience by rating this conversation.</p>
@@ -1005,6 +1072,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
           </div>
         </div>
       )}
+
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </div>
   );
 }

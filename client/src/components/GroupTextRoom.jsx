@@ -11,6 +11,11 @@ import { ChatInputWithEmoji } from './ChatInputWithEmoji';
 import { SafetyBanner } from './ModerationMenu';
 import { MiniChatGamePanel } from './MiniChatGamePanel';
 import { PHASE_2, PHASE_3_PRO } from '../constants/features';
+import { API_BASE } from '../config/apiBase';
+import { nextMsgId } from '../utils/uniqueId';
+import { playDing } from '../utils/sounds';
+
+const MAX_MEDIA_SIZE_MB = 5;
 
 const GROUP_MAX = 4;
 const COLORS = ['#818cf8', '#34d399', '#fb923c', '#f472b6'];
@@ -81,6 +86,28 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
   const hasJoinedRef = useRef(false);
+  const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
+
+  // Refs for values read inside socket handlers (avoids stale mount-time closures)
+  const peersRef = useRef(peers);
+  const displayInterestRef = useRef(displayInterest);
+  const onJoinedRef = useRef(onJoined);
+  const onFindNewPodRef = useRef(onFindNewPod);
+  const isQueuingRef = useRef(isQueuing);
+  useEffect(() => { peersRef.current = peers; }, [peers]);
+  useEffect(() => { displayInterestRef.current = displayInterest; }, [displayInterest]);
+  useEffect(() => { onJoinedRef.current = onJoined; }, [onJoined]);
+  useEffect(() => { onFindNewPodRef.current = onFindNewPod; }, [onFindNewPod]);
+  useEffect(() => { isQueuingRef.current = isQueuing; }, [isQueuing]);
+
+  // Small local toast (matches group video surface)
+  useEffect(() => {
+    if (!toast) return;
+    clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(toastTimerRef.current);
+  }, [toast]);
 
   // Auto-scroll
   useEffect(() => {
@@ -99,10 +126,10 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
     const handlers = {
       'group-joined': (data) => {
         roomIdRef.current = data.roomId;
-        setDisplayInterest(data.interest || displayInterest);
-        if (!hasJoinedRef.current) { 
-          hasJoinedRef.current = true; 
-          onJoined(data.roomId);
+        setDisplayInterest(data.interest || displayInterestRef.current);
+        if (!hasJoinedRef.current) {
+          hasJoinedRef.current = true;
+          onJoinedRef.current?.(data.roomId);
           setWarning('⚡ Secure End-to-End Session Established.');
           setTimeout(() => setWarning(null), 3000);
         }
@@ -117,23 +144,24 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
       'chat-message': (data) => {
         if (data.roomId === roomIdRef.current) {
           setMessages(prev => [...prev.slice(-100), data]);
+          if (data.socketId && data.socketId !== socket.id) playDing();
         }
       },
       'user-joined': (data) => {
         setPeers(prev => [...prev.filter(pc => pc.socketId !== data.socketId), data]);
-        setMessages(prev => [...prev, { system: true, text: `${data.nickname || 'Someone'} joined! Wave hello 👋`, id: `sys-${Date.now()}` }]);
+        setMessages(prev => [...prev, { system: true, text: `${data.nickname || 'Someone'} joined! Wave hello 👋`, id: nextMsgId('sys') }]);
       },
       'user-left': (data) => {
         setPeers(prev => {
           const departing = prev.find(p => p.socketId === (data.userId || data.socketId));
           if (departing) {
-            setMessages(m => [...m, { system: true, text: `${departing.nickname || 'Stranger'} left the room`, id: `sys-exit-${Date.now()}` }]);
+            setMessages(m => [...m, { system: true, text: `${departing.nickname || 'Stranger'} left the room`, id: nextMsgId('sys-exit') }]);
           }
           return prev.filter(p => p.socketId !== (data.userId || data.socketId));
         });
         // Auto-seek if alone
-        if (peers.length <= 1 && !isQueuing) {
-            setTimeout(() => { if (peers.length === 0) onFindNewPod?.(); }, 4000);
+        if (peersRef.current.length <= 1 && !isQueuingRef.current) {
+            setTimeout(() => { if (peersRef.current.length === 0) onFindNewPodRef.current?.(); }, 4000);
         }
       },
       '3d-emoji': (data) => {
@@ -148,14 +176,17 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
       'content-flagged': (data) => {
         setWarning(data.message || 'Message blocked. Please follow community guidelines.');
         setTimeout(() => setWarning(null), 5000);
+      },
+      'error': (data) => {
+        setToast(data?.message || 'Something went wrong.');
       }
     };
 
     Object.entries(handlers).forEach(([evt, fn]) => socket.on(evt, fn));
-    
+
     // Initial Join Logic
     if (isQueuing && !hasJoinedRef.current) {
-      socket.emit('join-group-by-topics', { interest: displayInterest, nickname: nickname || 'Anonymous', mode: 'group_text' });
+      socket.emit('join-group-by-topics', { interest: displayInterestRef.current, nickname: nickname || 'Anonymous', mode: 'group_text' });
     } else if (roomIdProp && !hasJoinedRef.current) {
       socket.emit('join-specific-group', { roomId: roomIdProp, nickname: nickname || 'Admin' });
     }
@@ -174,8 +205,7 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
     setWarning(null);
 
     try {
-      const apiBase = import.meta.env.VITE_SOCKET_URL || '';
-      const res = await fetch(`${apiBase}/api/ai/moderate`, {
+      const res = await fetch(`${API_BASE}/api/ai/moderate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
@@ -209,8 +239,7 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
     if (isAiGenerating) return;
     setIsAiGenerating(true);
     try {
-      const apiBase = import.meta.env.VITE_SOCKET_URL || '';
-      const res = await fetch(`${apiBase}/api/ai/spark`, {
+      const res = await fetch(`${API_BASE}/api/ai/spark`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ interest: displayInterest })
@@ -230,7 +259,7 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
   };
 
   const send3dEmoji = (emoji) => {
-    if (balance < 5) return alert('Need 5 coins!');
+    if (balance < 5) { setToast('⚠️ Need 5 coins!'); return; }
     socket?.emit('send-3d-emoji', { roomId: roomIdRef.current, emoji });
     setShowEmojiPicker(false);
   };
@@ -268,9 +297,14 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
   const handleMediaUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    if (file.size > MAX_MEDIA_SIZE_MB * 1024 * 1024) {
+      setToast(`⚠️ File must be under ${MAX_MEDIA_SIZE_MB}MB`);
+      e.target.value = '';
+      return;
+    }
     const isVid = file.type.startsWith('video');
     const cost = isVid ? 15 : 10;
-    if (balance < cost) return alert(`Need ${cost} coins!`);
+    if (balance < cost) { setToast(`⚠️ Need ${cost} coins!`); e.target.value = ''; return; }
 
     const reader = new FileReader();
     reader.onload = (ev) => {
@@ -567,6 +601,12 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
         onSubmit={submitGroupTextReport}
         prepend={reportParticipantPicker}
       />
+
+      {toast && (
+        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-[1000] max-w-[90vw] px-4 py-3 rounded-2xl bg-black/90 border border-white/10 text-xs font-bold text-white shadow-2xl animate-fade-in-up">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

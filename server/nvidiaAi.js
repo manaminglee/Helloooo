@@ -4,6 +4,9 @@
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const CHAT_MODEL = process.env.NVIDIA_MODEL || 'meta/llama3-70b-instruct';
 const FAST_MODEL = process.env.NVIDIA_FAST_MODEL || 'mistralai/mistral-7b-instruct-v0.1';
+// Hard ceiling for any outbound AI call so a hung provider can never stall
+// message sending / moderation. Overridable via NVIDIA_TIMEOUT_MS.
+const AI_TIMEOUT_MS = Number(process.env.NVIDIA_TIMEOUT_MS) || 10000;
 
 async function nvidiaChat(messages, opts = {}) {
   const apiKey = process.env.NVIDIA_API_KEY;
@@ -15,6 +18,8 @@ async function nvidiaChat(messages, opts = {}) {
     max_tokens = 200,
   } = opts;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
   try {
     const response = await fetch(NVIDIA_URL, {
       method: 'POST',
@@ -23,6 +28,7 @@ async function nvidiaChat(messages, opts = {}) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({ model, messages, temperature, max_tokens }),
+      signal: controller.signal,
     });
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
@@ -32,7 +38,12 @@ async function nvidiaChat(messages, opts = {}) {
     const content = data.choices?.[0]?.message?.content?.trim() || '';
     return { content, model };
   } catch (e) {
+    if (e?.name === 'AbortError') {
+      return { error: `NVIDIA request timed out after ${AI_TIMEOUT_MS}ms`, timeout: true };
+    }
     return { error: e.message || 'NVIDIA request failed' };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -71,6 +82,12 @@ async function moderate(text) {
     { role: 'system', content: 'Classify if message is safe for anonymous chat. Reply ONLY: SAFE or UNSAFE plus one short reason if unsafe.' },
     { role: 'user', content: text },
   ], { model: FAST_MODEL, temperature: 0, max_tokens: 30 });
+  if (r.error) {
+    // Fail-open so chat keeps flowing when the AI backend is down/slow — but
+    // never silently: always log that moderation was skipped.
+    console.warn(`[AI] Moderation fail-open (${r.error}). Message allowed without AI review.`);
+    return { safe: true, warning: null, offline: true };
+  }
   const line = cleanLine(r.content).toUpperCase();
   const safe = !line.startsWith('UNSAFE');
   return { safe, warning: safe ? null : 'Message may violate community guidelines.' };

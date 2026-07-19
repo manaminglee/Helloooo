@@ -25,6 +25,19 @@ const creatorSecurity = require('./creatorSecurity');
 const creatorEmail = require('./creatorEmail');
 const creatorNotifications = require('./creatorNotifications');
 const adminLiveMonitor = require('./adminLiveMonitor');
+const { promises: dnsPromises } = require('dns');
+
+const APP_VERSION = (() => {
+  try { return require('../package.json').version || '0.0.0'; } catch { return '0.0.0'; }
+})();
+
+// Process-level safety nets: never crash silently on stray async failures.
+process.on('unhandledRejection', (reason) => {
+  console.error('[PROCESS] Unhandled promise rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[PROCESS] Uncaught exception:', err);
+});
 
 /** Normalize ADMIN_KEY from env (trim whitespace / optional quotes). Never log the value. */
 function getAdminKey() {
@@ -61,6 +74,7 @@ let localDb = {
   creator_events: [],
   creator_password_resets: [],
   creator_notifications: [],
+  consumed_payments: [],
 };
 
 function loadLocalDb() {
@@ -80,19 +94,37 @@ function loadLocalDb() {
         creator_events: [],
         creator_password_resets: [],
         creator_notifications: [],
+        consumed_payments: [],
         ...parsed,
       };
       console.log('[DB] Local storage loaded.');
     }
-  } catch (e) { console.error('[DB] Local DB load failed', e); }
+  } catch (e) {
+    console.error('[DB] Local DB load failed', e);
+    // Preserve the corrupt file for forensics instead of silently starting empty.
+    try {
+      if (fs.existsSync(LOCAL_DB_PATH)) {
+        const backupPath = LOCAL_DB_PATH.replace(/\.json$/, `.corrupt-${Date.now()}.json`);
+        fs.copyFileSync(LOCAL_DB_PATH, backupPath);
+        console.warn(`[DB] Corrupt local DB backed up to ${path.basename(backupPath)}. Starting with empty state.`);
+      }
+    } catch (backupErr) {
+      console.error('[DB] Could not back up corrupt local DB', backupErr);
+    }
+  }
 }
 
 function saveLocalDb() {
+  // Atomic write: write to a temp file, then rename over the target so a crash
+  // mid-write can never leave a truncated manadb.json behind.
   try {
-    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(localDb, null, 2));
+    const tmpPath = `${LOCAL_DB_PATH}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(localDb, null, 2));
+    fs.renameSync(tmpPath, LOCAL_DB_PATH);
   } catch (e) { console.error('[DB] Local DB save failed', e); }
 }
 
+let supabaseHealthy = null; // null = not configured; true/false = last boot check result
 if (supabaseUrl && supabaseKey && supabaseUrl.startsWith('http')) {
   supabase = createClient(supabaseUrl, supabaseKey);
   console.log('[DB] Supabase connected.');
@@ -100,12 +132,15 @@ if (supabaseUrl && supabaseKey && supabaseUrl.startsWith('http')) {
   supabase.from('creators').select('count', { count: 'exact', head: true })
     .then(({ error }) => {
       if (error) {
+        supabaseHealthy = false;
         console.error('[DB] Supabase connection test FAILED:', error.message);
         console.warn('[DB] Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in your .env / Render environment variables.');
       } else {
+        supabaseHealthy = true;
         console.log('[DB] Supabase connection verified OK.');
       }
-    });
+    })
+    .catch(() => { supabaseHealthy = false; });
 } else {
   console.warn('[DB] Supabase not configured. Using local JSON storage (data resets on restart).');
 }
@@ -117,7 +152,14 @@ const persistence = createPersistence({
   adminKey: getAdminKey(),
 });
 
-const PORT = process.env.PORT || 3000;
+// CLI overrides for local preview tooling: `npm run dev -- --port=7100 --host=0.0.0.0`
+const cliArgs = process.argv.slice(2);
+const cliPort = (cliArgs.find((a) => a.startsWith('--port=')) || '').split('=')[1]
+  || (cliArgs.includes('--port') ? cliArgs[cliArgs.indexOf('--port') + 1] : '');
+const cliHost = (cliArgs.find((a) => a.startsWith('--host=')) || '').split('=')[1]
+  || (cliArgs.includes('--host') ? cliArgs[cliArgs.indexOf('--host') + 1] : '');
+const PORT = Number(cliPort) || process.env.PORT || 3000;
+const HOST = cliHost || process.env.HOST || undefined;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Validate sensitive config at startup (never log secret values)
@@ -184,6 +226,132 @@ function logSystemError(module, error, context = {}) {
   if (errorLogs.length > 50) errorLogs.shift();
   console.error(`[SYSTEM ERROR][${module}]`, error);
 }
+
+/**
+ * Wrap a socket handler so async failures are logged and surfaced to the caller
+ * as an `error` event instead of becoming unhandled rejections.
+ */
+function wrapSocketHandler(socket, eventName, fn) {
+  return async (...args) => {
+    try {
+      await fn(...args);
+    } catch (err) {
+      logSystemError(`socket:${eventName}`, err, { socketId: socket.id });
+      try { socket.emit('error', { message: 'Something went wrong. Please try again.' }); } catch { /* ignore */ }
+    }
+  };
+}
+
+/** Timing-safe string comparison for admin-key style secrets. */
+function safeEqualKeys(provided, expected) {
+  try {
+    const a = Buffer.from(String(expected || ''), 'utf8');
+    const b = Buffer.from(String(provided || ''), 'utf8');
+    return a.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+// --- Targeted socket delivery (no global broadcasts of privileged data) ---
+const ADMIN_ROOM = 'mm-admin-sockets';
+
+function emitToAdmins(event, payload) {
+  io.to(ADMIN_ROOM).emit(event, payload);
+}
+
+/** Socket ids belonging to a creator account (by creator id, referral code, or authorized IP). */
+function creatorSocketIds(creator) {
+  const ids = [];
+  if (!creator) return ids;
+  for (const [sid, u] of users.entries()) {
+    if (creator.id && u.creatorData?.id === creator.id) { ids.push(sid); continue; }
+    if (creator.referral_code && u.creatorData?.referral_code === creator.referral_code) { ids.push(sid); continue; }
+    if (Array.isArray(creator.authorized_ips) && u.ip && creator.authorized_ips.includes(u.ip)) ids.push(sid);
+  }
+  return ids;
+}
+
+function emitToCreator(creator, event, payload) {
+  for (const sid of creatorSocketIds(creator)) io.to(sid).emit(event, payload);
+}
+
+/** Resolve a creator by referral code and emit only to that creator's sockets. */
+async function emitToCreatorByReferralCode(referralCode, event, payload) {
+  const code = String(referralCode || '').trim();
+  if (!code) return;
+  let creator = null;
+  try {
+    if (supabase) {
+      const { data } = await supabase.from('creators').select('id, referral_code, authorized_ips').eq('referral_code', code).maybeSingle();
+      creator = data;
+    } else {
+      const c = localDb.creators.find((x) => x.referral_code === code);
+      creator = c ? { id: c.id, referral_code: c.referral_code, authorized_ips: c.authorized_ips } : null;
+    }
+  } catch { /* fall through to in-memory matching only */ }
+  for (const [sid, u] of users.entries()) {
+    if (u.creatorData?.referral_code === code) { io.to(sid).emit(event, payload); continue; }
+    if (creator?.id && u.creatorData?.id === creator.id) { io.to(sid).emit(event, payload); continue; }
+    if (Array.isArray(creator?.authorized_ips) && u.ip && creator.authorized_ips.includes(u.ip)) io.to(sid).emit(event, payload);
+  }
+}
+
+// --- SSRF guards for /api/validate-url ---
+const validateUrlBuckets = new Map(); // ip -> { start, count }
+const VALIDATE_URL_MAX_PER_MINUTE = 10;
+
+function isPrivateOrReservedIp(ip) {
+  if (!ip) return true;
+  let v4 = ip.includes('.') ? ip : null;
+  if (!v4 && ip.toLowerCase().startsWith('::ffff:')) v4 = ip.slice(7);
+  if (v4) {
+    const parts = v4.split('.').map((p) => parseInt(p, 10));
+    if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;                 // 0/8, 10/8, loopback
+    if (a === 169 && b === 254) return true;                           // link-local
+    if (a === 172 && b >= 16 && b <= 31) return true;                  // 172.16/12
+    if (a === 192 && b === 168) return true;                           // 192.168/16
+    if (a === 100 && b >= 64 && b <= 127) return true;                 // CGNAT 100.64/10
+    return false;
+  }
+  // IPv6
+  const first = parseInt(ip.split(':')[0] || '0', 16);
+  if (Number.isNaN(first)) return true;
+  if (ip === '::1' || ip === '::') return true;                        // loopback / unspecified
+  if ((first & 0xffc0) === 0xfe80) return true;                        // fe80::/10 link-local
+  if ((first & 0xfe00) === 0xfc00) return true;                        // fc00::/7 unique-local
+  return false;
+}
+
+async function resolvesToPrivateIp(hostname) {
+  const lower = String(hostname || '').toLowerCase();
+  if (!lower || lower === 'localhost' || lower.endsWith('.localhost') || lower.endsWith('.local') || lower.endsWith('.internal')) return true;
+  try {
+    const addrs = await dnsPromises.lookup(lower, { all: true, verbatim: true });
+    if (!addrs.length) return true;
+    return addrs.some((a) => isPrivateOrReservedIp(a.address));
+  } catch {
+    return true; // unresolvable hosts are treated as unsafe
+  }
+}
+
+/**
+ * Server-authoritative coin price table for `spend-coins` / `/api/user/spend`.
+ * number    -> always charge this price (client-declared amount ignored)
+ * [numbers] -> client amount must be one of these fixed prices
+ * Any reason not listed here is rejected (no free-form spends => no minting).
+ * Mirrors the emits in client/src (GroupVideoRoom.jsx, VideoChat.jsx).
+ */
+const SPEND_PRICES = {
+  'screenshare': 50,
+  'Premium Video Filter (60s)': 15,
+  '3d-emoji': 5,
+  'media-share': [10, 15],
+  'room-boost': 25,
+};
+const SPEND_MAX_AMOUNT = 10000; // absolute sanity cap, even for table-priced spends
 
 const ipActivity = new Map(); // ip -> { firstSeen, lastSeen, persisted }
 const coinUsers = new Map(); // ip -> { coins, last_claim, streak, ... }
@@ -264,7 +432,7 @@ async function updateCoinUser(ip, updates) {
 }
 
 const statsHistory = []; // { timestamp, users, rooms }
-setInterval(() => {
+const statsInterval = setInterval(() => {
   statsHistory.push({
     timestamp: Date.now(),
     users: users.size,
@@ -354,7 +522,15 @@ async function getCreatorForRequest(req) {
   return { creator: c2 || null, ip, via: c2 ? 'ip' : null };
 }
 
-const notifyCtx = () => ({ supabase, localDb, saveLocalDb, io });
+const notifyCtx = () => ({
+  supabase,
+  localDb,
+  saveLocalDb,
+  io,
+  emitToCreator: (referralCode, event, payload) => {
+    emitToCreatorByReferralCode(referralCode, event, payload).catch((e) => console.error('[NOTIFY] targeted emit failed', e.message));
+  },
+});
 
 async function notifyCreatorAction(creator, payload) {
   if (!creator?.id) return;
@@ -801,31 +977,72 @@ app.get('/api/debug/status', async (req, res) => {
 app.post('/api/validate-url', async (req, res) => {
   const { url } = req.body || {};
   if (!url) return res.status(400).json({ valid: false, error: 'No URL provided' });
+
+  // Per-IP rate limit: this endpoint is an SSRF/probing primitive without it.
+  const clientIp = getClientIp(req);
+  const now = Date.now();
+  let bucket = validateUrlBuckets.get(clientIp);
+  if (!bucket || now - bucket.start > 60000) {
+    bucket = { start: now, count: 0 };
+    validateUrlBuckets.set(clientIp, bucket);
+  }
+  bucket.count += 1;
+  if (validateUrlBuckets.size > 5000) validateUrlBuckets.clear(); // bound memory
+  if (bucket.count > VALIDATE_URL_MAX_PER_MINUTE) {
+    return res.status(429).json({ valid: false, error: 'Too many validation requests' });
+  }
+
+  let parsed;
   try {
-    new URL(url); // Validate URL format
+    parsed = new URL(String(url));
+  } catch {
+    return res.json({ valid: false, error: 'Invalid URL format' });
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return res.json({ valid: false, error: 'Only http(s) URLs are allowed' });
+  }
+  if (await resolvesToPrivateIp(parsed.hostname)) {
+    return res.json({ valid: false, error: 'URL host is not allowed' });
+  }
+
+  const doFetch = async (method) => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
+    const timeout = setTimeout(() => controller.abort(), 5000);
     try {
-      const response = await fetch(url, {
-        method: 'HEAD',
+      return await fetch(parsed.href, {
+        method,
         redirect: 'follow',
         signal: controller.signal,
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ManaMingle/1.0)' }
       });
+    } finally {
       clearTimeout(timeout);
-      res.json({ valid: response.ok || response.status < 400, status: response.status });
-    } catch (fetchErr) {
-      clearTimeout(timeout);
+    }
+  };
+
+  try {
+    let response;
+    try {
+      response = await doFetch('HEAD');
+    } catch {
       // Some hosts block HEAD - try GET with minimal read
       try {
-        const r2 = await fetch(url, { method: 'GET', redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ManaMingle/1.0)' }, signal: AbortSignal.timeout(6000) });
-        res.json({ valid: r2.ok || r2.status < 400, status: r2.status });
+        response = await doFetch('GET');
       } catch {
-        res.json({ valid: false, error: 'Unreachable' });
+        return res.json({ valid: false, error: 'Unreachable' });
       }
     }
+    // Re-validate the final (post-redirect) URL to catch redirect-to-internal attacks.
+    if (response.url) {
+      let finalUrl;
+      try { finalUrl = new URL(response.url); } catch { return res.json({ valid: false, error: 'Invalid redirect target' }); }
+      if (!['http:', 'https:'].includes(finalUrl.protocol) || await resolvesToPrivateIp(finalUrl.hostname)) {
+        return res.json({ valid: false, error: 'Redirect target is not allowed' });
+      }
+    }
+    res.json({ valid: response.ok || response.status < 400, status: response.status });
   } catch (e) {
-    res.json({ valid: false, error: 'Invalid URL format' });
+    res.json({ valid: false, error: 'Unreachable' });
   }
 });
 
@@ -899,7 +1116,7 @@ app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
       message: 'Your creator application is pending review. You will be notified here when an admin updates your status.',
       important: false,
     });
-    io.emit('creator-new-application', {
+    emitToAdmins('creator-new-application', {
       id: entry.id,
       handle_name: entry.handle_name,
       platform: entry.platform,
@@ -1231,7 +1448,7 @@ app.post('/api/creators/re-request', async (req, res) => {
   const { code } = req.body || {};
   if (!code) return res.status(400).json({ error: 'Code required' });
   // In a real system, this would notify the admin via socket or email
-  io.emit('admin-notification', { type: 'creator_ping', message: `Creator ${code} is requesting status update.` });
+  emitToAdmins('admin-notification', { type: 'creator_ping', message: `Creator ${code} is requesting status update.` });
   res.json({ success: true });
 });
 
@@ -1327,15 +1544,20 @@ app.post('/api/admin/creators/approve', requireAdmin, async (req, res) => {
       saveLocalDb();
     }
     res.json({ success: true, password: plainPassword || undefined });
-    io.emit('creator-status-changed', {
+
+    const merged = { ...creator, ...updates };
+    // Never broadcast credentials: a fresh password is delivered only via the
+    // admin REST response above and the approval email. The socket payload is
+    // scoped to the affected creator + admin sockets and carries no secrets.
+    const statusPayload = {
       referral_code: creator.referral_code,
       handle_name: creator.handle_name,
       status,
-      password: plainPassword || undefined,
       rejection_reason: updates.rejection_reason || null,
-    });
+    };
+    emitToCreator(merged, 'creator-status-changed', statusPayload);
+    emitToAdmins('creator-status-changed', statusPayload);
 
-    const merged = { ...creator, ...updates };
     if (status === 'approved') {
       await notifyCreatorAction(merged, {
         type: 'approved',
@@ -1534,12 +1756,6 @@ app.post('/api/admin/withdrawals/status', requireAdmin, async (req, res) => {
       saveLocalDb();
     }
 
-    io.emit('creator-withdrawal-updated', {
-      creator_id: withdrawal.creator_id,
-      withdrawalId,
-      status,
-    });
-
     let creatorForEmail = null;
     if (supabase) {
       const { data: c } = await supabase.from('creators').select('*').eq('id', withdrawal.creator_id).single();
@@ -1559,6 +1775,11 @@ app.post('/api/admin/withdrawals/status', requireAdmin, async (req, res) => {
       });
       creatorEmail.notifyWithdrawalUpdate(creatorForEmail, withdrawal, status, updates.admin_note).catch((e) => console.error('[EMAIL] withdrawal', e.message));
     }
+
+    // Targeted delivery only: the affected creator + admin sockets.
+    const withdrawalPayload = { creator_id: withdrawal.creator_id, withdrawalId, status };
+    emitToCreator(creatorForEmail || { id: withdrawal.creator_id }, 'creator-withdrawal-updated', withdrawalPayload);
+    emitToAdmins('creator-withdrawal-updated', withdrawalPayload);
 
     res.json({ success: true });
   } catch (e) {
@@ -1917,15 +2138,33 @@ app.get('/api/rooms/active-interests', (req, res) => {
 // Cloudflare Turnstile verification
 app.post('/api/verify-turnstile', async (req, res) => {
   const { token } = req.body || {};
-  const secret = process.env.TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA';
+  const secret = (process.env.TURNSTILE_SECRET_KEY || '').trim();
+  if (!secret) {
+    // Fail closed: never fall back to Cloudflare's always-pass test secret.
+    if (NODE_ENV === 'production') {
+      console.error('[TURNSTILE] TURNSTILE_SECRET_KEY is not set — refusing verification in production.');
+      return res.status(503).json({ success: false, error: 'Turnstile is not configured' });
+    }
+    // Development bypass — allowed locally, but always logged so it is never silent.
+    console.warn('[TURNSTILE] WARNING: TURNSTILE_SECRET_KEY unset — verification bypassed (development only, never do this in production).');
+    return res.json({ success: true, devBypass: true });
+  }
   if (!token) return res.status(400).json({ success: false, error: 'Token required' });
   try {
     const ip = req.ip === '::1' ? '127.0.0.1' : req.ip;
-    const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ secret, response: token, remoteip: ip }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    let r;
+    try {
+      r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret, response: token, remoteip: ip }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
     const data = await r.json();
     if (data.success) return res.json({ success: true });
     return res.status(400).json({ success: false, 'error-codes': data['error-codes'] });
@@ -2175,6 +2414,8 @@ app.post('/api/admin/killswitch', requireAdmin, (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
+    db: supabase ? (supabaseHealthy === false ? 'unavailable' : 'supabase') : 'local',
+    version: APP_VERSION,
     uptime: process.uptime(),
     users: users.size,
     rooms: rooms.size,
@@ -2287,17 +2528,36 @@ app.post('/api/user/claim', async (req, res) => {
 });
 
 app.post('/api/user/spend', async (req, res) => {
-  const { amount } = req.body;
   const ip = req.ip === '::1' ? '127.0.0.1' : req.ip;
-  const user = await getCoinUser(ip);
-
-  if (!user || user.coins < amount) {
-    return res.status(400).json({ error: 'Insufficient coins' });
+  const amount = Number(req.body?.amount);
+  // Anti-mint: only accept small positive integer amounts.
+  if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount <= 0 || amount > SPEND_MAX_AMOUNT) {
+    return res.status(400).json({ error: 'Invalid amount' });
   }
+  // Anti-mint: spend reason must map to the server-side price table; the
+  // server decides what gets charged, never the client.
+  const reason = String(req.body?.reason || '');
+  const price = SPEND_PRICES[reason];
+  if (price === undefined) {
+    return res.status(400).json({ error: 'Unknown purchase' });
+  }
+  const charge = Array.isArray(price) ? (price.includes(amount) ? amount : null) : price;
+  if (charge == null) {
+    return res.status(400).json({ error: 'Invalid amount for this purchase' });
+  }
+  try {
+    const user = await getCoinUser(ip);
 
-  const nextBalance = user.coins - amount;
-  await updateCoinUser(ip, { coins: nextBalance });
-  res.json({ success: true, balance: nextBalance });
+    if (!user || (user.coins || 0) < charge) {
+      return res.status(400).json({ error: 'Insufficient coins' });
+    }
+
+    const nextBalance = user.coins - charge;
+    await updateCoinUser(ip, { coins: nextBalance });
+    res.json({ success: true, balance: nextBalance });
+  } catch (e) {
+    res.status(500).json({ error: 'Spend failed' });
+  }
 });
 
 // NVIDIA AI PROXY
@@ -2489,6 +2749,16 @@ app.all('/api/*', (req, res) => {
   res.status(404).json({ error: 'API endpoint not found' });
 });
 
+// Central error handler — must be registered after all routes/middleware.
+// Catches synchronous throws and next(err) so routes never leak stack traces.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  logSystemError('EXPRESS', err, { method: req.method, url: req.originalUrl });
+  if (res.headersSent) return;
+  const status = Number(err?.status) || (err?.type === 'entity.parse.failed' ? 400 : 500);
+  res.status(status).json({ error: status === 400 ? 'Bad request' : 'Internal server error' });
+});
+
 // Per-socket rate limit for signaling (WebRTC offer/answer/ICE bursts)
 const signalCount = new Map();
 const rateLimitNotifyAt = new Map();
@@ -2549,6 +2819,31 @@ io.on('connection', (socket) => {
   enhancements.attachSocketHandlers(socket, ip);
   uniqueFeatures.attachSocketHandlers(socket, ip);
 
+  // Uniform handler registration: wraps every handler in try/catch so a failing
+  // async handler logs and emits `error` instead of an unhandled rejection.
+  const on = (eventName, fn) => socket.on(eventName, wrapSocketHandler(socket, eventName, fn));
+
+  // Per-socket pacing state for accumulate-activity heartbeats.
+  let lastActivityAcceptedAt = 0;
+
+  // Admin sockets authenticate with the admin key and join a private room so
+  // privileged events (new applications, admin notifications) are never broadcast.
+  on('admin-auth', (data) => {
+    const adminKey = getAdminKey();
+    if (!adminKey) return;
+    if (safeEqualKeys(data?.adminKey, adminKey)) {
+      socket.join(ADMIN_ROOM);
+      socket.emit('admin-auth-ok', { ok: true });
+    }
+  });
+
+  // Leave any group-room waiting queues (client emits when cancelling queue UI).
+  on('cancel-group-queue', () => {
+    for (const [key, q] of groupQueues.entries()) {
+      groupQueues.set(key, q.filter((e) => e.socketId !== socket.id));
+    }
+  });
+
   (async () => {
     let finalNick = 'Anonymous';
     let finalIsCreator = false;
@@ -2601,7 +2896,7 @@ io.on('connection', (socket) => {
     emitOnlineCount();
   })();
 
-  socket.on('list-group-rooms', (data) => {
+  on('list-group-rooms', (data) => {
     const { mode } = data || {}; // 'group_video' or 'group_text'
     const available = [];
     for (const [rid, room] of rooms.entries()) {
@@ -2620,7 +2915,7 @@ io.on('connection', (socket) => {
     socket.emit('group-rooms-list', { rooms: available });
   });
 
-  socket.on('report-user', (data) => {
+  on('report-user', (data) => {
     let targetIp = 'unknown';
     const targetSid = data?.targetSocketId;
     if (targetSid && users.has(targetSid)) {
@@ -2651,7 +2946,7 @@ io.on('connection', (socket) => {
     if (targetIp && targetIp !== 'unknown') uniqueFeatures.adjustTrust(targetIp, -8);
   });
 
-  socket.on('block-user', (data) => {
+  on('block-user', (data) => {
     let targetIp = null;
     if (data?.targetSocketId) {
       const u = users.get(data.targetSocketId);
@@ -2677,7 +2972,7 @@ io.on('connection', (socket) => {
   });
 
   // Find partner for 1:1 text or video
-  socket.on('find-partner', async (data) => {
+  on('find-partner', async (data) => {
     const userData = users.get(socket.id);
     if (!userData) return;
     await resolveCreatorIdentity(userData, data, ip);
@@ -2703,15 +2998,49 @@ io.on('connection', (socket) => {
       if (userBlocks.get(otherIp)?.has(ip)) return false;
       return true;
     };
+
+    // Prevent double-queueing: drop any stale queue entries for this socket
+    // from ALL mode queues before matching or (re-)queueing.
+    pairQueues.text = pairQueues.text.filter((e) => e.socketId !== socket.id);
+    pairQueues.video = pairQueues.video.filter((e) => e.socketId !== socket.id);
+
     const queue = pairQueues[mode];
     const repFn = (otherIp) => persistence.getReputationBoost(otherIp);
-    let match = await enhancements.pickSmartMatch(queue.filter((e) => e.interest === interest), interest, region, language, canMatch, repFn);
-    if (!match) match = await enhancements.pickSmartMatch(queue, interest, region, language, canMatch, repFn);
+    // Candidates must still be connected and not already inside a room.
+    const isAvailable = (e) => {
+      const ud = users.get(e.socketId);
+      if (!ud || !io.sockets.sockets.get(e.socketId)) return false;
+      if (ud.rooms && ud.rooms.size > 0) return false;
+      return true;
+    };
+    let match = await enhancements.pickSmartMatch(queue.filter((e) => e.interest === interest && isAvailable(e)), interest, region, language, canMatch, repFn);
+    if (!match) match = await enhancements.pickSmartMatch(queue.filter(isAvailable), interest, region, language, canMatch, repFn);
+
     if (match) {
-      const idx = queue.indexOf(match);
-      queue.splice(idx, 1);
+      // Atomic claim: pickSmartMatch awaits between selection and claim, so the
+      // entry may already be gone. Re-validate via indexOf — never splice(-1, 1),
+      // which would silently delete an unrelated user from the queue tail.
+      let idx = queue.indexOf(match);
+      if (idx === -1) {
+        // Queue changed mid-selection: retry the selection once.
+        match = await enhancements.pickSmartMatch(queue.filter(isAvailable), interest, region, language, canMatch, repFn);
+        idx = match ? queue.indexOf(match) : -1;
+        if (idx === -1) match = null;
+      }
+      if (match) {
+        queue.splice(idx, 1);
+        const otherData = users.get(match.socketId);
+        const otherSocket = io.sockets.sockets.get(match.socketId);
+        if (!otherData || !otherSocket) {
+          // Matched peer vanished between claim and room creation: fall through
+          // and re-queue the requester instead of silently dropping them.
+          match = null;
+        }
+      }
+    }
+
+    if (match) {
       const otherData = users.get(match.socketId);
-      if (!otherData || !io.sockets.sockets.get(match.socketId)) return;
       const room = createRoom(interest, mode, socket.id, { id: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator }, PAIR_MAX);
       uniqueFeatures.enrichPartnerMatch(room, socket.id, data);
       addUserToRoom(room, match.socketId, { id: otherData.id, nickname: otherData.nickname, country: otherData.country, isCreator: otherData.isCreator });
@@ -2750,14 +3079,14 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('cancel-find-partner', () => {
+  on('cancel-find-partner', () => {
     ['text', 'video'].forEach((m) => {
       pairQueues[m] = pairQueues[m].filter((e) => e.socketId !== socket.id);
     });
   });
 
   // Join group by interest (find or create room, max 4)
-  socket.on('join-group-by-topics', (data) => {
+  on('join-group-by-topics', (data) => {
     const userData = users.get(socket.id);
     if (!userData) return;
     const interest = sanitize(String(data?.interest || '').toLowerCase(), 30) || 'general';
@@ -2843,7 +3172,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('join-specific-group', (data) => {
+  on('join-specific-group', (data) => {
     const userData = users.get(socket.id);
     if (!userData) return;
     const { roomId, nickname } = data || {};
@@ -2908,7 +3237,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('leave-room', (data) => {
+  on('leave-room', (data) => {
     const roomId = String(data?.roomId || '');
     const userData = users.get(socket.id);
     const room = rooms.get(roomId);
@@ -2919,12 +3248,19 @@ io.on('connection', (socket) => {
     socket.emit('left-room', { roomId });
   });
 
-  socket.on('rename-group-room', async (data) => {
+  on('rename-group-room', async (data) => {
     const { roomId, newInterest } = data || {};
     const u = users.get(socket.id);
     const room = rooms.get(roomId);
     if (!u || !room) return;
     if (room.mode !== 'group_video' && room.mode !== 'group_text') return;
+
+    // Validate BEFORE charging: membership first, then topic. No charge on failure.
+    if (!room.users.has(socket.id)) {
+      return socket.emit('error', { message: 'You are not in this room.' });
+    }
+    const sanitized = sanitize(String(newInterest || '').toLowerCase(), 30);
+    if (!sanitized) return socket.emit('error', { message: 'Topic is too short or invalid.' });
 
     const cUser = await getCoinUser(ip);
     const balance = Number(cUser.coins) || 0;
@@ -2932,12 +3268,9 @@ io.on('connection', (socket) => {
       return socket.emit('error', { message: 'Insufficient Mana (25 Coins Required).' });
     }
 
-    // Server-authoritative deduction
+    // Server-authoritative deduction (only after all validation passed)
     const nextBalance = balance - 25;
     await updateCoinUser(ip, { coins: nextBalance });
-
-    const sanitized = sanitize(String(newInterest || '').toLowerCase(), 30);
-    if (!sanitized) return socket.emit('error', { message: 'Topic is too short or invalid.' });
 
     room.interest = sanitized;
     io.to(roomId).emit('group-renamed', { interest: sanitized, nickname: u.nickname });
@@ -2956,7 +3289,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('send-message', async (data) => {
+  on('send-message', async (data) => {
     const { roomId, text, replyTo } = data || {};
     const u = users.get(socket.id);
     if (!u) return socket.emit('error', { message: 'Session lost. Please refresh.' });
@@ -2995,7 +3328,10 @@ io.on('connection', (socket) => {
 
     // Obfuscation Shield: Remove spaces and common symbols to detect hidden harmful words
     const strippedMsg = msg.toLowerCase().replace(/[\s\.\-\_\@\#\$\%\^\&\*\(\)\=\+\{\}\[\]\:\;\"\'\<\>\,\?\/\\]/g, '');
-    const pattern = new RegExp(`(${profanities.join('|')})`, 'i');
+    // Escape regex metacharacters so entries like 'a$$' or 'f.u.c.k' are matched literally,
+    // otherwise 'a$$' compiles to `a$$` (trailing-'a' anchor) and blocks any message ending in 'a'.
+    const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(${profanities.map(escapeRe).join('|')})`, 'i');
 
     if (settings.safetyAiEnabled && (pattern.test(msg) || pattern.test(strippedMsg))) {
       socket.emit('content-flagged', {
@@ -3047,10 +3383,10 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('chat-message', { roomId, ...entry });
   });
 
-  socket.on('admin-end-room', (data) => {
+  on('admin-end-room', (data) => {
     const { roomId, adminKey: providedKey, message } = data || {};
     const adminKey = getAdminKey();
-    if (!adminKey || providedKey !== adminKey) return;
+    if (!adminKey || !safeEqualKeys(providedKey, adminKey)) return;
     const room = rooms.get(roomId);
     if (room) {
       const msg = message || 'This session was terminated by administrative protocol.';
@@ -3065,7 +3401,7 @@ io.on('connection', (socket) => {
   });
 
   // Wave reaction
-  socket.on('send-wave', (data) => {
+  on('send-wave', (data) => {
     const { roomId } = data || {};
     const u = users.get(socket.id);
     const room = rooms.get(roomId);
@@ -3075,7 +3411,7 @@ io.on('connection', (socket) => {
 
   // Good vibes
   const goodVibesPending = new Map();
-  socket.on('send-good-vibes', (data) => {
+  on('send-good-vibes', (data) => {
     const { roomId } = data || {};
     const u = users.get(socket.id);
     const room = rooms.get(roomId);
@@ -3090,13 +3426,16 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('typing', (data) => {
+  on('typing', (data) => {
     const { roomId, isTyping } = data || {};
-    if (roomId) socket.to(roomId).emit('stranger-typing', { isTyping, socketId: socket.id });
+    // Membership check: only relay typing state for rooms the sender is in.
+    const room = rooms.get(roomId);
+    if (!roomId || !room || !room.users.has(socket.id)) return;
+    socket.to(roomId).emit('stranger-typing', { isTyping: !!isTyping, socketId: socket.id });
   });
 
   // Hand raise relay
-  socket.on('hand-raise', (data) => {
+  on('hand-raise', (data) => {
     const { roomId, raised } = data || {};
     const room = rooms.get(roomId);
     if (!room || !room.users.has(socket.id)) return;
@@ -3104,21 +3443,21 @@ io.on('connection', (socket) => {
   });
 
   // Room reaction relay
-  socket.on('room-reaction', (data) => {
+  on('room-reaction', (data) => {
     const { roomId, emoji } = data || {};
     const room = rooms.get(roomId);
     if (!room || !room.users.has(socket.id)) return;
     socket.to(roomId).emit('room-reaction', { socketId: socket.id, emoji });
   });
 
-  socket.on('peer-recording-status', (data) => {
+  on('peer-recording-status', (data) => {
     const { roomId, recording } = data || {};
     const room = rooms.get(roomId);
     if (!room || !room.users.has(socket.id)) return;
     socket.to(roomId).emit('peer-recording-status', { socketId: socket.id, recording: !!recording });
   });
 
-  socket.on('tip-creator', async (data) => {
+  on('tip-creator', async (data) => {
     const { roomId, targetSocketId, amount: rawAmount } = data || {};
     const room = rooms.get(roomId);
     if (!room || !room.users.has(socket.id) || !targetSocketId) return;
@@ -3169,9 +3508,12 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('video-style', (data) => {
+  on('video-style', (data) => {
     const { roomId, filter, blur, targetSocketId } = data || {};
     if (!roomId) return;
+    // Membership check: the sender must actually be in the room they style.
+    const room = rooms.get(roomId);
+    if (!room || !room.users.has(socket.id)) return;
     if (targetSocketId) {
       io.to(targetSocketId).emit('stranger-video-style', { socketId: socket.id, filter, blur });
     } else {
@@ -3189,28 +3531,49 @@ io.on('connection', (socket) => {
   // Background check for persistence (only if they stayed long enough)
   persistCoinUser(ip);
 
-  socket.on('join-standard', async (data) => {
+  on('join-standard', async (data) => {
     // Initial data handshake for standard modes
   });
 
-  socket.on('spend-coins', async (data) => {
+  on('spend-coins', async (data) => {
     const { amount, reason } = data || {};
-    const cUser = await getCoinUser(ip);
+    const reasonKey = String(reason || '');
+    const price = SPEND_PRICES[reasonKey];
+    if (price === undefined) {
+      // Unknown reason => reject without charging (anti free-form mint).
+      return socket.emit('error', { message: 'Unknown purchase.' });
+    }
+    // Server-authoritative charge: the client-declared amount is never trusted
+    // unless the table explicitly offers a fixed set of price points.
+    let charge;
+    if (Array.isArray(price)) {
+      const clientAmount = Number(amount);
+      if (!Number.isInteger(clientAmount) || !price.includes(clientAmount)) {
+        return socket.emit('error', { message: 'Invalid amount for this purchase.' });
+      }
+      charge = clientAmount;
+    } else {
+      charge = price;
+    }
+    if (!Number.isFinite(charge) || !Number.isInteger(charge) || charge <= 0 || charge > SPEND_MAX_AMOUNT) {
+      return socket.emit('error', { message: 'Invalid amount.' });
+    }
 
-    if (cUser.coins < amount) return socket.emit('error', { message: 'Insufficient coins' });
-    const nextBalance = cUser.coins - amount;
+    const cUser = await getCoinUser(ip);
+    if ((cUser.coins || 0) < charge) return socket.emit('error', { message: 'Insufficient coins' });
+    const nextBalance = cUser.coins - charge;
     await updateCoinUser(ip, { coins: nextBalance });
 
     // Notify all sockets with this IP
     for (const [sid, user] of users.entries()) {
       if (user.ip === ip) {
-        io.to(sid).emit('coins-updated', { coins: nextBalance, reason });
+        io.to(sid).emit('coins-updated', { coins: nextBalance, reason: reasonKey });
       }
     }
-    console.log(`[COINS] User ${socket.id} spent ${amount} for ${reason}`);
+    console.log(`[COINS] User ${socket.id} spent ${charge} for ${reasonKey}`);
   });
 
-  socket.on('claim-active-reward', async () => {
+  on('claim-active-reward', async () => {
     // Legacy support for welcome bonus if needed, but primary logic is now hourly/accumulated
     const activity = ipActivity.get(ip);
     if (!activity) return;
@@ -3225,7 +3588,13 @@ io.on('connection', (socket) => {
   });
 
   // HIGH ACCURACY ACCUMULATOR: Triggered frequently by client when active
-  socket.on('accumulate-activity', async (data) => {
+  on('accumulate-activity', async (data) => {
+    // Per-socket pacing: the client heartbeats every ~20s, so calls arriving
+    // faster than 15s are ignored — scripted floods can't farm activity time.
+    const nowMs = Date.now();
+    if (nowMs - lastActivityAcceptedAt < 15000) return;
+    lastActivityAcceptedAt = nowMs;
+
     const { seconds } = data || {};
     const clamped = Math.min(Math.max(Number(seconds) || 0, 0), 60); // Anti-cheat
     if (clamped <= 0) return;
@@ -3262,9 +3631,14 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('send-3d-emoji', async (data) => {
+  on('send-3d-emoji', async (data) => {
     const { roomId, emoji } = data || {};
     const u = users.get(socket.id);
+    // Membership check BEFORE charging.
+    const room = rooms.get(roomId);
+    if (!room || !room.users.has(socket.id)) {
+      return socket.emit('error', { message: 'You are not in this room.' });
+    }
     const cUser = await getCoinUser(ip);
 
     if (cUser.coins < 5) return socket.emit('error', { message: 'Need 5 coins for 3D Emoji' });
@@ -3280,9 +3654,22 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('3d-emoji', { roomId, emoji, nickname: u?.nickname || 'Someone', socketId: socket.id });
   });
 
-  socket.on('send-media', async (data) => {
+  on('send-media', async (data) => {
     const { roomId, type, content } = data || {};
     const u = users.get(socket.id);
+    // Membership check BEFORE charging.
+    const room = rooms.get(roomId);
+    if (!room || !room.users.has(socket.id)) {
+      return socket.emit('error', { message: 'You are not in this room.' });
+    }
+    // Type whitelist mirroring client usage (image/video data URLs only).
+    if (type !== 'image' && type !== 'video') {
+      return socket.emit('error', { message: 'Unsupported media type.' });
+    }
+    // Payload cap: 900KB of data-URL content (mirrors client-side file limits).
+    if (typeof content !== 'string' || !content.startsWith('data:') || content.length > 900 * 1024) {
+      return socket.emit('error', { message: 'Media payload too large.' });
+    }
     const cUser = await getCoinUser(ip);
 
     const cost = type === 'video' ? 15 : 10;
@@ -3299,11 +3686,11 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('media-message', { id: generateId('med'), roomId, type, content, nickname: u?.nickname || 'Someone', ts: Date.now(), socketId: socket.id });
   });
 
-  socket.on('admin-monitor-frame', (data) => {
+  on('admin-monitor-frame', (data) => {
     adminLiveMonitor.ingestMonitorFrame(socket.id, data, users, rooms);
   });
 
-  socket.on('webrtc-signal', (data) => {
+  on('webrtc-signal', (data) => {
     if (isSignalRateLimited(socket.id, socket)) return;
     const { roomId, targetSocketId, type, signal } = data || {};
     const userData = users.get(socket.id);
@@ -3325,7 +3712,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('disconnect', () => {
+  on('disconnect', () => {
     pairQueues.text = pairQueues.text.filter((e) => e.socketId !== socket.id);
     pairQueues.video = pairQueues.video.filter((e) => e.socketId !== socket.id);
     for (const [key, q] of groupQueues.entries()) {
@@ -3345,6 +3732,40 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, HOST || '0.0.0.0', () => {
   console.log(`Mana Mingle server listening on port ${PORT} (${NODE_ENV})`);
 });
+
+// --- Graceful shutdown: drain, flush, close, exit (with hard 5s deadline) ---
+let shuttingDown = false;
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[SHUTDOWN] ${signal} received — draining connections...`);
+
+  const finish = (code) => {
+    try { saveLocalDb(); } catch { /* ignore */ }
+    process.exit(code);
+  };
+  const forceTimer = setTimeout(() => {
+    console.error('[SHUTDOWN] Cleanup exceeded 5s — forcing exit.');
+    finish(1);
+  }, 5000);
+  forceTimer.unref();
+
+  try { clearInterval(statsInterval); } catch { /* ignore */ }
+  try { server.close(); } catch { /* ignore */ } // stop accepting new HTTP connections
+  try {
+    io.close(() => {
+      clearTimeout(forceTimer);
+      console.log('[SHUTDOWN] Sockets closed, local DB flushed. Bye.');
+      finish(0);
+    });
+    io.disconnectSockets(true); // drop live socket.io clients
+  } catch {
+    clearTimeout(forceTimer);
+    finish(0);
+  }
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
+import { API_BASE } from '../config/apiBase';
+import { mmDebug } from '../utils/mmDebug';
 
-// Fix #4 + minor: Single base URL computed once — trim to avoid whitespace bugs
-const BASE_URL = (import.meta.env.VITE_SOCKET_URL || '').trim() ||
-  (typeof window !== 'undefined' ? window.location.origin : '');
+// Fix #4 + minor: Single base URL computed once — shared API base
+const BASE_URL = API_BASE;
 
 // Fix #1: NEVER hardcode TURN credentials here — only safe STUN as offline fallback
 const STUN_ONLY_FALLBACK = [
@@ -71,21 +72,21 @@ export function useIceServers() {
                   })
                 ),
               ];
-              console.log(`[ICE] Loaded ${merged.length} server(s) from backend:`, merged.map(s => Array.isArray(s.urls) ? s.urls[0] : s.urls));
+              mmDebug('ice.loaded', merged.length, merged.map(s => Array.isArray(s.urls) ? s.urls[0] : s.urls));
               setIceServers(merged);
               return; // success — stop retrying
             }
           }
           // API responded but with empty/invalid servers → use fallback
-          console.warn('[ICE] Backend returned no valid ICE servers — using STUN fallback');
+          mmDebug('ice.empty', 'Backend returned no valid ICE servers — using STUN fallback');
           return;
         } catch (err) {
           // Fix #5: Retry mechanism
           if (attempt < retries) {
-            console.warn(`[ICE] Fetch attempt ${attempt + 1} failed, retrying...`, err.message);
+            mmDebug('ice.retry', attempt + 1, err.message);
             await new Promise(r => setTimeout(r, 800 * (attempt + 1))); // backoff
           } else {
-            console.warn('[ICE] All retries failed — using STUN-only fallback:', err.message);
+            mmDebug('ice.failed', 'All retries failed — using STUN-only fallback:', err.message);
           }
         }
       }

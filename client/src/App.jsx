@@ -4,6 +4,8 @@ import { AgeVerificationGate } from './components/AgeVerificationGate';
 import { CreatorPublicProfile } from './components/CreatorPublicProfile';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { UnblockPaymentModal } from './components/UnblockPaymentModal';
+import { ToastProvider, useToast } from './components/Toast';
+import { ConnectionBanner } from './components/ConnectionBanner';
 import { verifyStripeReturn } from './utils/paymentCheckout';
 import { LowPowerProvider } from './context/LowPowerContext';
 import { useSocket } from './hooks/useSocket';
@@ -27,6 +29,17 @@ const STATES = { LANDING: 'landing', CHAT: 'chat', ADMIN: 'admin', CREATOR_PROFI
 const MODES = { TEXT: 'text', VIDEO: 'video', GROUP_TEXT: 'group_text', GROUP_VIDEO: 'group_video' };
 
 export default function App() {
+  return (
+    <LowPowerProvider>
+      <ToastProvider>
+        <AppShell />
+      </ToastProvider>
+    </LowPowerProvider>
+  );
+}
+
+function AppShell() {
+  const { toast } = useToast();
   const [gateVerified, setGateVerified] = useState(() =>
     sessionStorage.getItem('wc_age') === '1' && sessionStorage.getItem('wc_bot') === '1'
   );
@@ -51,6 +64,7 @@ export default function App() {
   const [creatorHandle, setCreatorHandle] = useState(null);
   const [pendingJoinRoomId, setPendingJoinRoomId] = useState(null);
   const [isJoining, setIsJoining] = useState(false);
+  const [roomJoinNotice, setRoomJoinNotice] = useState('');
   const { socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds, isPro, subscription } = useSocket();
   const coinState = useCoins();
   const coinStateWithAds = useMemo(
@@ -113,11 +127,12 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
+  // Surface payment results as global toasts
   useEffect(() => {
     if (!paymentNotice) return;
-    const t = setTimeout(() => setPaymentNotice(''), 6000);
-    return () => clearTimeout(t);
-  }, [paymentNotice]);
+    toast(paymentNotice, { type: 'success', duration: 6000 });
+    setPaymentNotice('');
+  }, [paymentNotice, toast]);
 
   useEffect(() => {
     if (!socket || !connected || !pendingJoinRoomId) return;
@@ -131,24 +146,37 @@ export default function App() {
           setRoomId(rid);
           setAppState(STATES.CHAT);
           window.history.pushState({ mode: room.mode, roomId: rid }, '');
+        } else {
+          setRoomJoinNotice('That room is no longer available. Pick a mode below to start a new session.');
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        setRoomJoinNotice('Could not reach the server to join that room. Check your connection and try again.');
+      })
       .finally(() => setPendingJoinRoomId(null));
   }, [socket, connected, pendingJoinRoomId]);
 
+  // Surface room-join problems as global toasts
+  useEffect(() => {
+    if (!roomJoinNotice) return;
+    toast(roomJoinNotice, { type: 'warn', duration: 6000 });
+    setRoomJoinNotice('');
+  }, [roomJoinNotice, toast]);
+
+  // Surface moderation flags as global toasts (replaces the old fixed banner)
+  useEffect(() => {
+    if (!contentFlagged) return;
+    toast(`⚠️ ${String(contentFlagged)}`, { type: 'warn', duration: 6000 });
+  }, [contentFlagged, toast]);
+
   useEffect(() => {
     if (!socket) return;
-    socket.on('reconnect-token', (data) => {
+    const onReconnectToken = (data) => {
       if (data?.token && data?.roomId) {
         saveReconnectSession({ token: data.token, roomId: data.roomId, mode: data.mode, nickname: joinMeta.displayNickname });
       }
-    });
-    const saved = loadReconnectSession();
-    if (saved?.token && connected) {
-      socket.emit('reconnect-session', { token: saved.token });
-    }
-    socket.on('reconnect-success', (data) => {
+    };
+    const onReconnectSuccess = (data) => {
       clearReconnectSession();
       if (!data?.roomId || !data?.mode) {
         setAppState(STATES.LANDING);
@@ -160,12 +188,19 @@ export default function App() {
       setMode(data.mode);
       setInterest(data.interest || 'general');
       setAppState(STATES.CHAT);
-    });
-    socket.on('reconnect-failed', () => clearReconnectSession());
+    };
+    const onReconnectFailed = () => clearReconnectSession();
+    socket.on('reconnect-token', onReconnectToken);
+    const saved = loadReconnectSession();
+    if (saved?.token && connected) {
+      socket.emit('reconnect-session', { token: saved.token });
+    }
+    socket.on('reconnect-success', onReconnectSuccess);
+    socket.on('reconnect-failed', onReconnectFailed);
     return () => {
-      socket.off('reconnect-token');
-      socket.off('reconnect-success');
-      socket.off('reconnect-failed');
+      socket.off('reconnect-token', onReconnectToken);
+      socket.off('reconnect-success', onReconnectSuccess);
+      socket.off('reconnect-failed', onReconnectFailed);
     };
   }, [socket, connected, joinMeta.displayNickname]);
 
@@ -176,12 +211,15 @@ export default function App() {
     }
   }, [appState, mode]);
 
+  const { setBalance } = coinState;
   useEffect(() => {
     if (socket) {
-      socket.on('coins-updated', (data) => coinState.setBalance(data.coins));
-      socket.on('connected', (data) => {
-        if (data?.coins !== undefined) coinState.setBalance(data.coins);
-      });
+      const onCoinsUpdated = (data) => setBalance(data.coins);
+      const onConnected = (data) => {
+        if (data?.coins !== undefined) setBalance(data.coins);
+      };
+      socket.on('coins-updated', onCoinsUpdated);
+      socket.on('connected', onConnected);
 
       // Activity Accumulator: Heartbeat every 20s to ensure milestones (3m, 1h) are tracked by server
       const activityInterval = setInterval(() => {
@@ -191,12 +229,12 @@ export default function App() {
       }, 20000);
 
       return () => {
-        socket.off('coins-updated');
-        socket.off('connected');
+        socket.off('coins-updated', onCoinsUpdated);
+        socket.off('connected', onConnected);
         clearInterval(activityInterval);
       };
     }
-  }, [socket, connected, coinState]);
+  }, [socket, connected, setBalance]);
 
   // Manage browser back button
   useEffect(() => {
@@ -213,7 +251,12 @@ export default function App() {
 
 
   const handleBackInternal = () => {
-    if (roomId && socket) socket.emit('leave-room', { roomId });
+    if (roomId && socket) {
+      socket.emit('leave-room', { roomId });
+    } else if ((mode === MODES.GROUP_TEXT || mode === MODES.GROUP_VIDEO) && socket) {
+      // Leaving a group mode while still queuing (no room yet) — release the queue slot
+      socket.emit('cancel-group-queue');
+    }
     if (mode === MODES.TEXT || mode === MODES.VIDEO) socket?.emit('cancel-find-partner');
     setRoomId(null);
     setAppState(STATES.LANDING);
@@ -460,8 +503,8 @@ export default function App() {
   }
 
   return (
-    <LowPowerProvider>
     <>
+      <ConnectionBanner connected={connected} />
       <div className="relative flex min-h-[100dvh] w-full max-w-[100vw] flex-1 flex-col overflow-x-hidden mm-mobile-safe">
         <Suspense fallback={<LoadingFallback />}>
           {renderContent()}
@@ -469,17 +512,6 @@ export default function App() {
       </div>
 
       <PwaInstallPrompt />
-      {contentFlagged && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3 rounded-xl bg-amber-500/90 text-black font-semibold text-sm shadow-xl max-w-md text-center mm-mobile-safe">
-          ⚠️ {String(contentFlagged)}
-        </div>
-      )}
-      {paymentNotice && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3 rounded-xl bg-emerald-500/90 text-black font-semibold text-sm shadow-xl max-w-md text-center mm-mobile-safe">
-          ✓ {paymentNotice}
-        </div>
-      )}
     </>
-    </LowPowerProvider>
   );
 }

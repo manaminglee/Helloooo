@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
+import { API_BASE } from '../config/apiBase';
 
-const API = import.meta.env.VITE_SOCKET_URL || '';
+const API = API_BASE;
 
 export function CreatorPublicProfile({ handle }) {
   const [profile, setProfile] = useState(null);

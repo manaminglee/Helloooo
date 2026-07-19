@@ -17,6 +17,30 @@ function createPersistence({ supabase, localDb, saveLocalDb, adminKey }) {
     if (!localDb.moderation_reports) localDb.moderation_reports = [];
     if (!localDb.conversation_ratings) localDb.conversation_ratings = [];
     if (!localDb.pro_users) localDb.pro_users = {};
+    if (!localDb.consumed_payments) localDb.consumed_payments = [];
+  }
+
+  // Payment idempotency: consumed session/order ids are kept in memory AND
+  // persisted to the local DB so verify endpoints cannot be replayed.
+  const consumedPayments = new Set(
+    (localDb.consumed_payments || []).map((r) => String(r?.ref || r))
+  );
+
+  function hasConsumedPayment(ref) {
+    return !!ref && consumedPayments.has(String(ref));
+  }
+
+  async function markPaymentConsumed(ref, meta = {}) {
+    if (!ref) return;
+    const key = String(ref);
+    if (consumedPayments.has(key)) return;
+    consumedPayments.add(key);
+    ensureLocalShape();
+    localDb.consumed_payments.push({ ref: key, ...meta, consumed_at: new Date().toISOString() });
+    if (localDb.consumed_payments.length > 5000) {
+      localDb.consumed_payments = localDb.consumed_payments.slice(-5000);
+    }
+    saveLocalDb?.();
   }
 
   async function loadTrust(ip) {
@@ -197,6 +221,8 @@ function createPersistence({ supabase, localDb, saveLocalDb, adminKey }) {
     getProStatus,
     activatePro,
     grantProSubscription,
+    hasConsumedPayment,
+    markPaymentConsumed,
   };
 }
 
