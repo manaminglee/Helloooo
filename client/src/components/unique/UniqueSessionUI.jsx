@@ -113,19 +113,27 @@ export function LiveCaptionsBar({ caption, enabled, onToggle }) {
 export function EventsHubStrip({ events = [] }) {
   if (!events.length) return null;
   return (
-    <section className="mm-neural-section w-full max-w-5xl mx-auto px-4 mb-10">
-      <div className="flex items-center gap-2 mb-4">
+    <section
+      className="mm-landing-section mm-landing-section--narrow mm-landing-fade-in"
+      aria-label="Community events"
+    >
+      <div className="mm-events-hub">
         <span className="mm-neural-badge">Community events</span>
-      </div>
-      <div className="flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none]">
-        {events.map((e) => (
-          <div key={e.id} className={`mm-neural-card shrink-0 w-44 p-4 ${e.live ? 'mm-neural-card--live' : ''}`}>
-            <span className="text-2xl">{e.badge}</span>
-            <p className="text-xs font-bold text-white mt-2">{e.title}</p>
-            <p className="text-[10px] text-white/40 mt-1">{e.day} · {e.hourUtc}:00 UTC</p>
-            {e.live && <span className="text-[9px] font-black text-[#76B900] uppercase mt-2 block">Live now</span>}
-          </div>
-        ))}
+        <ul className="mm-events-grid">
+          {events.map((e) => (
+            <li
+              key={e.id}
+              className={`mm-neural-card mm-events-card ${e.live ? 'mm-neural-card--live' : ''}`}
+            >
+              <span className="mm-events-card__icon" aria-hidden>{e.badge}</span>
+              <div className="mm-events-card__body">
+                <p className="mm-events-card__title">{e.title}</p>
+                <p className="mm-events-card__meta">{e.day} · {e.hourUtc}:00 UTC</p>
+                {e.live && <span className="mm-events-card__live">Live now</span>}
+              </div>
+            </li>
+          ))}
+        </ul>
       </div>
     </section>
   );
