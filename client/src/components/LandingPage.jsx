@@ -310,31 +310,59 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
   const [approvalData, setApprovalData] = useState(null);
 
-  // Approval Timer Logic
+  // Approval wait: countdown + poll. Do NOT gate on !creatorStatus —
+  // register() saves mm_creatorId and fetchStatus() fills creatorStatus immediately,
+  // which previously froze the timer at 15 forever.
   useEffect(() => {
-    let timer;
-    let pollInterval;
-    if (waitingForApproval && approvalTimer > 0 && !creatorStatus) {
-      timer = setInterval(() => {
-        setApprovalTimer(prev => prev - 1);
-      }, 1000);
+    if (!waitingForApproval) return undefined;
 
-      // Poll status every 3 seconds if waiting (backup for when socket is unavailable)
-      pollInterval = setInterval(async () => {
-        if (uniqueAccessCode) {
-          const status = await checkStatus(uniqueAccessCode);
-          if (status && status.status === 'approved') {
-            setApprovalData(status);
-            setWaitingForApproval(false);
-          }
-        }
-      }, 10000);
+    if (creatorStatus?.status === 'approved') {
+      setApprovalData(creatorStatus);
+      setWaitingForApproval(false);
+      return undefined;
     }
+    if (creatorStatus?.status === 'rejected') {
+      setWaitingForApproval(false);
+      showAlert(
+        'Application rejected',
+        creatorStatus.rejection_reason || 'Your application was not approved.'
+      );
+      return undefined;
+    }
+
+    const code =
+      uniqueAccessCode ||
+      creatorStatus?.referral_code ||
+      (typeof window !== 'undefined' ? window.localStorage.getItem('mm_creatorId') : null);
+
+    if (code && !uniqueAccessCode) setUniqueAccessCode(code);
+
+    const tick = setInterval(() => {
+      setApprovalTimer((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    const poll = setInterval(async () => {
+      if (!code) return;
+      const status = await checkStatus(code);
+      if (!status) return;
+      if (status.status === 'approved') {
+        setApprovalData(status);
+        setWaitingForApproval(false);
+      } else if (status.status === 'rejected') {
+        setWaitingForApproval(false);
+        showAlert(
+          'Application rejected',
+          status.rejection_reason || 'Your application was not approved.'
+        );
+      }
+    }, 4000);
+
     return () => {
-      clearInterval(timer);
-      clearInterval(pollInterval);
+      clearInterval(tick);
+      clearInterval(poll);
     };
-  }, [waitingForApproval, approvalTimer, creatorStatus, uniqueAccessCode, checkStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showAlert is stable enough; avoid restarting every render
+  }, [waitingForApproval, creatorStatus?.status, creatorStatus?.referral_code, uniqueAccessCode, checkStatus]);
 
   useEffect(() => {
     fetchFeaturedCreators().then(({ creators }) => setFeaturedCreators(creators || [])).catch(() => {});
@@ -1025,7 +1053,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
               </div>
             ) : waitingForApproval ? (
               <div className="space-y-8 animate-in-zoom">
-                <div className="text-center py-8">
+                <div className="text-center py-6">
                   {approvalTimer > 0 ? (
                     <div className="space-y-6">
                       <div className="relative w-32 h-32 mx-auto flex items-center justify-center">
@@ -1038,8 +1066,26 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       </div>
                       <div className="space-y-2">
                         <h4 className="text-xl font-black italic uppercase tracking-tighter text-white">Validating Identity...</h4>
-                        <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest animate-pulse">Wait for Admin or AI Appraisal</p>
+                        <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest animate-pulse">
+                          Application saved — waiting for admin appraisal
+                        </p>
                       </div>
+                      {(uniqueAccessCode || creatorStatus?.referral_code) && (
+                        <div className="mx-auto max-w-sm rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-left">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-white/35 mb-1">Your access code</p>
+                          <p className="text-sm font-bold text-violet-200 break-all select-all">
+                            {uniqueAccessCode || creatorStatus?.referral_code}
+                          </p>
+                          <p className="text-[9px] text-white/30 mt-2">Save this now. Use it under Check Status after approval.</p>
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setApprovalTimer(0)}
+                        className="text-[10px] font-bold uppercase tracking-widest text-white/40 hover:text-white/70"
+                      >
+                        Skip wait → show code
+                      </button>
                     </div>
                   ) : (
                     <div className="space-y-8 animate-fade-in-up">
@@ -1047,37 +1093,54 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                         <div className="text-center">
                           <h4 className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400/60 mb-2">Unique Access Code</h4>
                           <div className="w-full bg-black/40 rounded-[30px] py-10 px-6 text-2xl font-black italic text-center tracking-[0.1em] text-white border border-white/5 select-all hover:border-indigo-500/30 transition-all">
-                            {uniqueAccessCode}
+                            {uniqueAccessCode || creatorStatus?.referral_code || '—'}
                           </div>
                         </div>
 
-                        <div className="flex flex-col items-center gap-6">
+                        <div className="flex flex-col items-center gap-4">
                           <button
+                            type="button"
                             onClick={() => {
-                              navigator.clipboard.writeText(uniqueAccessCode);
+                              const code = uniqueAccessCode || creatorStatus?.referral_code;
+                              if (!code) return;
+                              navigator.clipboard.writeText(code);
                               setCodeCopied(true);
                               showAlert('Code copied', 'Your unique access code was saved to the clipboard.');
                             }}
                             className="px-10 py-4 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-indigo-500 hover:scale-105 transition-all shadow-2xl shadow-indigo-600/30 active:scale-95"
                           >
-                            {codeCopied ? 'Code Copied ✓' : 'Copy Mandatory Code'}
+                            {codeCopied ? 'Code Copied ✓' : 'Copy Access Code'}
                           </button>
 
-                          <p className="text-[9px] font-bold text-white/20 uppercase text-center leading-relaxed max-w-xs">
-                            Validation is taking longer than expected. <span className="text-white/60">Copy this code now.</span> You will need it to check your status under the "Returning Creator" section.
+                          <p className="text-[9px] font-bold text-white/35 uppercase text-center leading-relaxed max-w-xs">
+                            An admin will approve your application. Use <span className="text-white/70">Check Status</span> or <span className="text-white/70">Creator Login</span> with this code and your password.
                           </p>
                         </div>
                       </div>
 
-                      {codeCopied && (
+                      <div className="flex flex-col gap-2">
                         <button
+                          type="button"
+                          onClick={() => {
+                            setWaitingForApproval(false);
+                            setShowCreatorModal(false);
+                            setShowStatusModal(true);
+                          }}
+                          className="w-full h-14 bg-white text-black font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-indigo-400 transition-all"
+                        >
+                          Check Status
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => {
                             setWaitingForApproval(false);
                             setShowCreatorModal(false);
                           }}
-                          className="w-full h-14 bg-white text-black font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-indigo-400 transition-all"
-                        >Close and Check Later</button>
-                      )}
+                          className="w-full h-12 bg-white/5 border border-white/10 text-white/50 font-black uppercase tracking-widest text-[10px] rounded-2xl hover:text-white hover:border-white/20 transition-all"
+                        >
+                          Close
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
