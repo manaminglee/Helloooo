@@ -77,9 +77,17 @@ function registerEconomy(app, io, deps) {
     }
   }
 
-  function pushBalance(ip, coins, reason) {
-    for (const [sid, u] of users.entries()) {
-      if (u.ip === ip) io.to(sid).emit('coins-updated', { coins, reason });
+  async function pushBalance(ip, coins, reason) {
+    const u = await getCoinUser(ip);
+    for (const [sid, user] of users.entries()) {
+      if (user.ip === ip) {
+        io.to(sid).emit('coins-updated', {
+          coins,
+          reason,
+          registered: !!u?.registered,
+          activeSeconds: u?.active_seconds || 0,
+        });
+      }
     }
   }
 
@@ -88,40 +96,80 @@ function registerEconomy(app, io, deps) {
     return Math.max(0, Number(u?.coins) || 0);
   }
 
+  /**
+   * Apply debit assuming the caller already holds the per-IP lock
+   * (e.g. inside runLocked). Prefer debit() for normal call sites.
+   */
+  async function applyDebit(ip, amount, reason, meta) {
+    const amt = Math.floor(Number(amount) || 0);
+    if (amt <= 0) return { ok: false, error: 'Invalid amount' };
+    const u = await getCoinUser(ip);
+    const balance = Math.max(0, Number(u.coins) || 0);
+    if (balance < amt) return { ok: false, error: 'Insufficient coins', balance };
+    const after = balance - amt;
+    await updateCoinUser(ip, { coins: after });
+    stats.totalSpent += amt;
+    journalEntry({ ip, delta: -amt, reason, balanceAfter: after, meta });
+    await pushBalance(ip, after, reason);
+    return { ok: true, balance: after };
+  }
+
+  /**
+   * Apply credit assuming the caller already holds the per-IP lock.
+   * Prefer credit() for normal call sites.
+   */
+  async function applyCredit(ip, amount, reason, meta) {
+    const amt = Math.floor(Number(amount) || 0);
+    if (amt <= 0) return { ok: false, error: 'Invalid amount' };
+    const u = await getCoinUser(ip);
+    const balance = Math.max(0, Number(u.coins) || 0);
+    const after = balance + amt;
+    await updateCoinUser(ip, { coins: after });
+    stats.totalEarned += amt;
+    journalEntry({ ip, delta: amt, reason, balanceAfter: after, meta });
+    await pushBalance(ip, after, reason);
+    return { ok: true, balance: after };
+  }
+
   /** Atomic spend. Returns { ok, balance } or { ok:false, error }. */
   async function debit(ip, amount, reason, meta) {
     const amt = Math.floor(Number(amount) || 0);
     if (amt <= 0) return { ok: false, error: 'Invalid amount' };
-
-    return withLock(ip, async () => {
-      const u = await getCoinUser(ip);
-      const balance = Math.max(0, Number(u.coins) || 0);
-      if (balance < amt) return { ok: false, error: 'Insufficient coins', balance };
-
-      const after = balance - amt;
-      await updateCoinUser(ip, { coins: after });
-      stats.totalSpent += amt;
-      journalEntry({ ip, delta: -amt, reason, balanceAfter: after, meta });
-      pushBalance(ip, after, reason);
-      return { ok: true, balance: after };
-    });
+    return withLock(ip, () => applyDebit(ip, amt, reason, meta));
   }
 
   /** Atomic credit. */
   async function credit(ip, amount, reason, meta) {
     const amt = Math.floor(Number(amount) || 0);
     if (amt <= 0) return { ok: false, error: 'Invalid amount' };
+    return withLock(ip, () => applyCredit(ip, amt, reason, meta));
+  }
 
+  /** Set absolute balance (admin). Clamped at 0. */
+  async function setBalance(ip, amount, reason, meta) {
+    const target = Math.max(0, Math.floor(Number(amount) || 0));
     return withLock(ip, async () => {
       const u = await getCoinUser(ip);
       const balance = Math.max(0, Number(u.coins) || 0);
-      const after = balance + amt;
-      await updateCoinUser(ip, { coins: after });
-      stats.totalEarned += amt;
-      journalEntry({ ip, delta: amt, reason, balanceAfter: after, meta });
-      pushBalance(ip, after, reason);
-      return { ok: true, balance: after };
+      const delta = target - balance;
+      await updateCoinUser(ip, { coins: target });
+      if (delta > 0) stats.totalEarned += delta;
+      else if (delta < 0) stats.totalSpent += Math.abs(delta);
+      journalEntry({
+        ip,
+        delta,
+        reason: reason || 'admin_set_balance',
+        balanceAfter: target,
+        meta: { ...(meta || {}), set: true, previous: balance },
+      });
+      await pushBalance(ip, target, reason || 'Admin set balance');
+      return { ok: true, balance: target, previous: balance, delta };
     });
+  }
+
+  /** Run arbitrary mutations under the per-IP mutex (claim / registration). */
+  function runLocked(ip, fn) {
+    return withLock(ip, fn);
   }
 
   function statsFor(ip) {
@@ -343,16 +391,28 @@ function registerEconomy(app, io, deps) {
     res.json({ stats, journal: journal.slice(0, 200), creators, gifts: GIFTS });
   });
 
-  /** Admin: grant or revoke coins (support tooling, refunds). */
+  /** Admin: grant, revoke, or set coins (support tooling, refunds). */
   app.post('/api/admin/economy/adjust', async (req, res) => {
     if (!isAdminRequest(req)) return res.status(403).json({ error: 'Forbidden' });
-    const { ip, amount, reason } = req.body || {};
-    const amt = Math.floor(Number(amount) || 0);
-    if (!ip || !amt) return res.status(400).json({ error: 'ip and non-zero amount required' });
+    const { ip, amount, reason, set } = req.body || {};
+    const rawIp = String(ip || '').trim().slice(0, 64);
+    if (!rawIp) return res.status(400).json({ error: 'ip required' });
+
+    const amt = Math.floor(Number(amount));
+    if (!Number.isFinite(amt)) return res.status(400).json({ error: 'amount required' });
+    const MAX = 100000;
+    if (Math.abs(amt) > MAX) return res.status(400).json({ error: `Amount capped at ±${MAX}` });
 
     const note = sanitize(String(reason || 'admin_adjustment'), 80);
-    const result = amt > 0 ? await credit(ip, amt, note) : await debit(ip, Math.abs(amt), note);
-    audit?.('admin_coin_adjust', { ip, amount: amt, reason: note });
+    let result;
+    if (set) {
+      if (amt < 0) return res.status(400).json({ error: 'Set balance cannot be negative' });
+      result = await setBalance(rawIp, amt, note, { admin: true });
+    } else {
+      if (!amt) return res.status(400).json({ error: 'non-zero amount required' });
+      result = amt > 0 ? await credit(rawIp, amt, note, { admin: true }) : await debit(rawIp, Math.abs(amt), note, { admin: true });
+    }
+    audit?.('admin_coin_adjust', { ip: rawIp, amount: amt, set: !!set, reason: note });
     res.json(result);
   });
 
@@ -380,6 +440,10 @@ function registerEconomy(app, io, deps) {
     getBalance,
     debit,
     credit,
+    applyDebit,
+    applyCredit,
+    setBalance,
+    runLocked,
     sendGift,
     tierFor,
     statsFor,

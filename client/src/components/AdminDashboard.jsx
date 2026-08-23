@@ -20,6 +20,8 @@ export function AdminDashboard({ onJoinRoom }) {
   const [withdrawals, setWithdrawals] = useState([]);
   const [history, setHistory] = useState([]);
   const [economyLogs, setEconomyLogs] = useState([]);
+  const [economyJournal, setEconomyJournal] = useState([]);
+  const [economyStats, setEconomyStats] = useState(null);
   const [toast, setToast] = useState(null);
   const [adForm, setAdForm] = useState({
     hero: '',
@@ -29,6 +31,10 @@ export function AdminDashboard({ onJoinRoom }) {
     chat_sidebar: '',
   });
   const [manualGrantIp, setManualGrantIp] = useState('');
+  const [grantAmount, setGrantAmount] = useState('100');
+  const [grantReason, setGrantReason] = useState('');
+  const [grantSetBalance, setGrantSetBalance] = useState(false);
+  const [audioChannels, setAudioChannels] = useState([]);
   const [livePanels, setLivePanels] = useState(null);
   const [modAction, setModAction] = useState(null);
   const [modMessage, setModMessage] = useState('');
@@ -107,6 +113,50 @@ export function AdminDashboard({ onJoinRoom }) {
         setEconomyLogs(data.logs || []);
       }
     } catch (e) { }
+  };
+
+  const fetchEconomyJournal = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/economy`, {
+        headers: { 'x-admin-key': key },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEconomyJournal(data.journal || []);
+        setEconomyStats(data.stats || null);
+      }
+    } catch (e) { }
+  };
+
+  const fetchAudioChannels = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/audio/channels`, {
+        headers: { 'x-admin-key': key },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAudioChannels(data.channels || []);
+      }
+    } catch (e) { }
+  };
+
+  const handleAudioAction = async (channelId, action, targetSocketId) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/audio/${encodeURIComponent(channelId)}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
+        body: JSON.stringify({ action, targetSocketId }),
+      });
+      if (res.ok) {
+        setToast(`Audio: ${action} · ${channelId}`);
+        fetchAudioChannels();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setToast(err.error || 'Audio action failed');
+      }
+    } catch (e) {
+      setToast('Audio action failed');
+    }
   };
 
   const handleCreatorApprove = async (creatorId, status) => {
@@ -340,16 +390,45 @@ export function AdminDashboard({ onJoinRoom }) {
     } catch (e) { }
   };
 
-  const handleUpdateCoins = async (ip, amount, set = false) => {
+  const handleUpdateCoins = async (ip, amount, set = false, reason = '') => {
+    const note = String(reason || '').trim();
+    if (!note) {
+      setToast('Reason required for coin adjustments');
+      return;
+    }
+    const amt = Math.floor(Number(amount));
+    if (!Number.isFinite(amt)) {
+      setToast('Enter a valid amount');
+      return;
+    }
+    if (!window.confirm(`${set ? 'Set' : 'Adjust'} ${ip} → ${set ? amt : (amt >= 0 ? `+${amt}` : amt)}?\nReason: ${note}`)) {
+      return;
+    }
     try {
-      await fetch(`${API_BASE}/api/admin/coins/update`, {
+      const res = await fetch(`${API_BASE}/api/admin/economy/adjust`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
-        body: JSON.stringify({ ip, amount, set }),
+        body: JSON.stringify({ ip, amount: amt, set: !!set, reason: note }),
       });
+      if (!res.ok) {
+        // Fallback wrapper for older deploys
+        const fallback = await fetch(`${API_BASE}/api/admin/coins/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
+          body: JSON.stringify({ ip, amount: amt, set: !!set, reason: note }),
+        });
+        if (!fallback.ok) {
+          const err = await fallback.json().catch(() => ({}));
+          setToast(err.error || 'Coin update failed');
+          return;
+        }
+      }
       fetchStats(key);
-      setToast(`💰 Coin logic modified for ${ip}`);
-    } catch (e) { }
+      fetchEconomyJournal();
+      setToast(`💰 ${set ? 'Set' : 'Adjusted'} ${ip}`);
+    } catch (e) {
+      setToast('Coin update failed');
+    }
   };
 
   const handleResolveReport = async (reportId) => {
@@ -450,7 +529,7 @@ export function AdminDashboard({ onJoinRoom }) {
   // On login: immediately load all data in parallel
   useEffect(() => {
     if (isLogged) {
-      Promise.all([fetchStats(key), fetchCreators(), fetchHistory(), fetchEconomyLogs()]);
+      Promise.all([fetchStats(key), fetchCreators(), fetchHistory(), fetchEconomyLogs(), fetchEconomyJournal(), fetchAudioChannels()]);
     }
   }, [isLogged]);
 
@@ -521,6 +600,10 @@ export function AdminDashboard({ onJoinRoom }) {
     }
     if (isLogged && activeTab === 'economy') {
       fetchEconomyLogs();
+      fetchEconomyJournal();
+    }
+    if (isLogged && activeTab === 'audio') {
+      fetchAudioChannels();
     }
   }, [activeTab, isLogged]);
 
@@ -530,6 +613,18 @@ export function AdminDashboard({ onJoinRoom }) {
     const interval = setInterval(fetchCreators, 8000);
     return () => clearInterval(interval);
   }, [isLogged, activeTab]);
+
+  useEffect(() => {
+    if (!isLogged || activeTab !== 'audio') return;
+    const interval = setInterval(fetchAudioChannels, 5000);
+    return () => clearInterval(interval);
+  }, [isLogged, activeTab, key]);
+
+  useEffect(() => {
+    if (!isLogged || activeTab !== 'economy') return;
+    const interval = setInterval(fetchEconomyJournal, 8000);
+    return () => clearInterval(interval);
+  }, [isLogged, activeTab, key]);
 
   const filteredUsers = useMemo(() => {
     if (!stats?.userList) return [];
@@ -631,6 +726,7 @@ export function AdminDashboard({ onJoinRoom }) {
     { id: 'creators', label: 'Creators', icon: '⭐', badge: creators.filter(c => c.status === 'pending').length },
     { id: 'room-monitoring', label: 'Live Monitor', icon: '👁️' },
     { id: 'economy', label: 'Economy', icon: '🪙' },
+    { id: 'audio', label: 'Audio Rooms', icon: '🎙️', badge: audioChannels.length },
     { id: 'security', label: 'Security', icon: '🛡️' },
     { id: 'ads', label: 'Ads', icon: '💰' },
     { id: 'logic', label: 'Settings', icon: '⚙️' },
@@ -733,7 +829,7 @@ export function AdminDashboard({ onJoinRoom }) {
                 {[
                   { label: 'Active Users', value: stats?.users || 0, color: 'text-cyan-400', icon: '👤', shadow: 'shadow-cyan-900/10' },
                   { label: 'Active Rooms', value: stats?.rooms || 0, color: 'text-indigo-400', icon: '🏠', shadow: 'shadow-indigo-900/10' },
-                  { label: 'Total Connections', value: stats?.stats?.totalConnections || 0, color: 'text-purple-400', icon: '🔄', shadow: 'shadow-purple-900/10' },
+                  { label: 'Gifts Sent', value: economyStats?.giftsSent || 0, color: 'text-rose-400', icon: '🎁', shadow: 'shadow-rose-900/10' },
                   { label: 'System Wealth', value: stats?.coinStats?.totalCoinsInSystem || 0, color: 'text-amber-400', icon: '🪙', shadow: 'shadow-amber-900/10' },
                 ].map(s => (
                   <div key={s.label} className={`p-8 rounded-[40px] bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-all group relative overflow-hidden ${s.shadow}`}>
@@ -743,6 +839,23 @@ export function AdminDashboard({ onJoinRoom }) {
                   </div>
                 ))}
               </div>
+
+              {(economyStats || audioChannels.length > 0) && (
+                <div className="grid sm:grid-cols-3 gap-4">
+                  <div className="p-6 rounded-3xl bg-white/[0.02] border border-white/5">
+                    <div className="text-[9px] font-black uppercase text-white/30 mb-1 tracking-widest">Total Earned (ledger)</div>
+                    <div className="text-2xl font-black text-emerald-400 italic">{(economyStats?.totalEarned || 0).toLocaleString()}</div>
+                  </div>
+                  <div className="p-6 rounded-3xl bg-white/[0.02] border border-white/5">
+                    <div className="text-[9px] font-black uppercase text-white/30 mb-1 tracking-widest">Total Spent (ledger)</div>
+                    <div className="text-2xl font-black text-rose-400 italic">{(economyStats?.totalSpent || 0).toLocaleString()}</div>
+                  </div>
+                  <div className="p-6 rounded-3xl bg-white/[0.02] border border-white/5">
+                    <div className="text-[9px] font-black uppercase text-white/30 mb-1 tracking-widest">Live Audio Rooms</div>
+                    <div className="text-2xl font-black text-cyan-400 italic">{audioChannels.length}</div>
+                  </div>
+                </div>
+              )}
 
               {stats?.infrastructure && (
                 <div className="p-8 rounded-[40px] bg-white/[0.02] border border-white/5 space-y-4">
@@ -1306,11 +1419,11 @@ export function AdminDashboard({ onJoinRoom }) {
 
           {activeTab === 'economy' && (
             <div className="space-y-10 animate-fade-in">
-              <div className="p-12 rounded-[50px] bg-[#050505] border border-amber-500/10 flex flex-col lg:flex-row gap-12 items-center shadow-2xl relative overflow-hidden">
+              <div className="p-12 rounded-[50px] bg-[#050505] border border-amber-500/10 flex flex-col lg:flex-row gap-12 items-stretch shadow-2xl relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/5 rounded-full blur-[100px] -mr-32 -mt-32" />
                 <div className="flex-1 relative z-10">
                   <h2 className="text-3xl font-black italic uppercase tracking-tight mb-4">Economy <span className="text-amber-500">Hub</span></h2>
-                  <p className="text-sm text-white/30 mb-10 leading-relaxed font-bold italic uppercase tracking-wide">Managing real-time coin distribution and Verifying IP Persistence.</p>
+                  <p className="text-sm text-white/30 mb-10 leading-relaxed font-bold italic uppercase tracking-wide">Locked ledger adjustments with required audit reasons.</p>
                   <div className="grid grid-cols-2 gap-6">
                     <div className="p-8 rounded-[32px] bg-white/[0.02] border border-white/5 shadow-inner">
                       <div className="text-[10px] font-black text-amber-500/60 uppercase mb-3 tracking-[0.2em] italic">Total Wallets</div>
@@ -1321,29 +1434,58 @@ export function AdminDashboard({ onJoinRoom }) {
                       <div className="text-4xl font-black text-white italic tracking-tighter">{stats?.coinStats?.totalCoinsInSystem || 0}</div>
                     </div>
                   </div>
-                </div>
-                <div className="flex flex-col gap-4 relative z-10">
-                  <div className="p-6 rounded-3xl bg-white/5 border border-white/10 text-center">
-                    <div className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Manual IP Grant</div>
-                    <div className="flex gap-2">
-                       <input
-                         type="text"
-                         value={manualGrantIp}
-                         onChange={(e) => setManualGrantIp(e.target.value)}
-                         placeholder="IP Address..."
-                         className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-[10px] font-black uppercase text-amber-500 outline-none focus:border-amber-500/40"
-                         onKeyDown={(e) => {
-                           if (e.key === 'Enter' && manualGrantIp.trim()) handleUpdateCoins(manualGrantIp.trim(), 100);
-                         }}
-                       />
-                       <button
-                         type="button"
-                         onClick={() => manualGrantIp.trim() && handleUpdateCoins(manualGrantIp.trim(), 100)}
-                         className="px-4 py-2 bg-amber-500 text-black rounded-xl font-black text-[10px] uppercase hover:bg-amber-400"
-                       >
-                         Grant +100
-                       </button>
+                  <div className="grid grid-cols-3 gap-3 mt-6">
+                    <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 text-center">
+                      <div className="text-[8px] font-black uppercase text-white/25 tracking-widest">Earned</div>
+                      <div className="text-lg font-black text-emerald-400">{(economyStats?.totalEarned || 0).toLocaleString()}</div>
                     </div>
+                    <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 text-center">
+                      <div className="text-[8px] font-black uppercase text-white/25 tracking-widest">Spent</div>
+                      <div className="text-lg font-black text-rose-400">{(economyStats?.totalSpent || 0).toLocaleString()}</div>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 text-center">
+                      <div className="text-[8px] font-black uppercase text-white/25 tracking-widest">Gifts</div>
+                      <div className="text-lg font-black text-amber-400">{(economyStats?.giftsSent || 0).toLocaleString()}</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-3 relative z-10 w-full lg:w-[340px]">
+                  <div className="p-6 rounded-3xl bg-white/5 border border-white/10 space-y-3">
+                    <div className="text-[10px] font-black text-white/30 uppercase tracking-widest">Adjust Wallet</div>
+                    <input
+                      type="text"
+                      value={manualGrantIp}
+                      onChange={(e) => setManualGrantIp(e.target.value)}
+                      placeholder="IP Address..."
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-[10px] font-black uppercase text-amber-500 outline-none focus:border-amber-500/40"
+                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="number"
+                        value={grantAmount}
+                        onChange={(e) => setGrantAmount(e.target.value)}
+                        placeholder="Amount (+/−)"
+                        className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-[10px] font-black text-white outline-none focus:border-amber-500/40"
+                      />
+                      <label className="flex items-center gap-2 px-3 rounded-xl bg-black/40 border border-white/10 text-[9px] font-black uppercase text-white/50 cursor-pointer">
+                        <input type="checkbox" checked={grantSetBalance} onChange={(e) => setGrantSetBalance(e.target.checked)} />
+                        Set
+                      </label>
+                    </div>
+                    <input
+                      type="text"
+                      value={grantReason}
+                      onChange={(e) => setGrantReason(e.target.value)}
+                      placeholder="Reason (required)"
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-[10px] font-bold text-white/80 outline-none focus:border-amber-500/40"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => manualGrantIp.trim() && handleUpdateCoins(manualGrantIp.trim(), grantAmount, grantSetBalance, grantReason)}
+                      className="w-full px-4 py-2.5 bg-amber-500 text-black rounded-xl font-black text-[10px] uppercase hover:bg-amber-400"
+                    >
+                      {grantSetBalance ? 'Set Balance' : 'Apply Adjustment'}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1357,18 +1499,24 @@ export function AdminDashboard({ onJoinRoom }) {
                     <table className="w-full text-left text-sm border-collapse">
                       <thead>
                         <tr className="bg-white/[0.02] border-b border-white/5 text-[9px] uppercase font-black tracking-[0.3em] text-white/20 italic font-mono">
-                          <th className="px-8 py-4">IP ADDRESS</th>
-                          <th className="px-8 py-4">BALANCE</th>
-                          <th className="px-8 py-4 text-right">ACTION</th>
+                          <th className="px-6 py-4">IP</th>
+                          <th className="px-4 py-4">Bal</th>
+                          <th className="px-4 py-4">Streak</th>
+                          <th className="px-4 py-4">Reg</th>
+                          <th className="px-4 py-4 text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/[0.03]">
                         {(stats?.economyList || []).filter(e => !searchQuery || e.ip.includes(searchQuery)).slice(0, 50).map(u => (
                           <tr key={u.ip} className="hover:bg-white/[0.01] transition-all group">
-                            <td className="px-8 py-4 font-mono text-xs text-white/60 font-black">{u.ip}</td>
-                            <td className="px-8 py-4 font-black italic text-amber-500">🪙 {u.coins}</td>
-                            <td className="px-8 py-4 text-right">
-                               <button onClick={() => handleUpdateCoins(u.ip, 100)} className="text-[9px] font-black text-white/20 hover:text-emerald-400">GRANT →</button>
+                            <td className="px-6 py-4 font-mono text-[11px] text-white/60 font-black">{u.ip}</td>
+                            <td className="px-4 py-4 font-black italic text-amber-500">🪙 {u.coins}</td>
+                            <td className="px-4 py-4 text-[11px] text-white/40">{u.streak ?? '—'}</td>
+                            <td className="px-4 py-4 text-[10px] font-black uppercase">{u.registered ? <span className="text-emerald-400">Yes</span> : <span className="text-white/20">No</span>}</td>
+                            <td className="px-4 py-4 text-right space-x-2 whitespace-nowrap">
+                               <button type="button" onClick={() => handleUpdateCoins(u.ip, Number(grantAmount) || 100, false, grantReason || 'admin_grant')} className="text-[9px] font-black text-emerald-400/70 hover:text-emerald-400">+N</button>
+                               <button type="button" onClick={() => handleUpdateCoins(u.ip, -Math.abs(Number(grantAmount) || 50), false, grantReason || 'admin_revoke')} className="text-[9px] font-black text-rose-400/70 hover:text-rose-400">−N</button>
+                               <button type="button" onClick={() => handleUpdateCoins(u.ip, Number(grantAmount) || 0, true, grantReason || 'admin_set')} className="text-[9px] font-black text-amber-400/70 hover:text-amber-400">SET</button>
                             </td>
                           </tr>
                         ))}
@@ -1379,27 +1527,93 @@ export function AdminDashboard({ onJoinRoom }) {
 
                 <div className="rounded-[40px] bg-white/[0.02] border border-white/5 overflow-hidden shadow-2xl">
                    <div className="p-8 border-b border-white/5 flex justify-between items-center bg-white/[0.01]">
-                     <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400 italic">Live Economy Audit</h3>
-                     <button onClick={fetchEconomyLogs} className="text-[8px] font-bold text-white/20 hover:text-white uppercase">Refresh Logs 🔄</button>
+                     <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400 italic">Ledger Journal</h3>
+                     <button type="button" onClick={fetchEconomyJournal} className="text-[8px] font-bold text-white/20 hover:text-white uppercase">Refresh</button>
                   </div>
-                  <div className="overflow-x-auto max-h-[500px] custom-scrollbar p-6 space-y-4">
-                    {economyLogs.map((log, i) => (
-                      <div key={log.id || i} className="p-4 rounded-2xl bg-black border border-white/5 flex items-center justify-between group hover:border-indigo-500/30 transition-all">
+                  <div className="overflow-x-auto max-h-[500px] custom-scrollbar p-6 space-y-3">
+                    {economyJournal.map((entry, i) => (
+                      <div key={`${entry.at}-${i}`} className="p-4 rounded-2xl bg-black border border-white/5 flex items-center justify-between group hover:border-indigo-500/30 transition-all">
                         <div>
-                          <div className="text-[10px] font-black text-white tracking-widest">{log.ip}</div>
-                          <div className="text-[8px] text-white/20 font-bold uppercase mt-1">{log.action || 'Claimed Bonus'}</div>
+                          <div className="text-[10px] font-black text-white tracking-widest font-mono">{entry.ip}</div>
+                          <div className="text-[8px] text-white/30 font-bold uppercase mt-1">{entry.reason || 'adjustment'}</div>
                         </div>
                         <div className="text-right">
-                          <div className="text-sm font-black text-indigo-400 italic">+🪙 {log.amount}</div>
-                          <div className="text-[8px] text-white/10 mt-1">{new Date(log.created_at).toLocaleTimeString()}</div>
+                          <div className={`text-sm font-black italic ${Number(entry.delta) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {Number(entry.delta) >= 0 ? '+' : ''}{entry.delta} 🪙
+                          </div>
+                          <div className="text-[8px] text-white/15 mt-1">bal {entry.balanceAfter} · {entry.at ? new Date(entry.at).toLocaleTimeString() : ''}</div>
                         </div>
                       </div>
                     ))}
-                    {economyLogs.length === 0 && (
-                      <div className="py-20 text-center opacity-10 text-[9px] font-black uppercase tracking-[0.4em]">No activity logs in buffer</div>
+                    {economyJournal.length === 0 && economyLogs.map((log, i) => (
+                      <div key={log.id || i} className="p-4 rounded-2xl bg-black border border-white/5 flex items-center justify-between">
+                        <div>
+                          <div className="text-[10px] font-black text-white tracking-widest">{log.ip}</div>
+                          <div className="text-[8px] text-white/20 font-bold uppercase mt-1">{log.action || 'activity'}</div>
+                        </div>
+                        <div className="text-sm font-black text-indigo-400 italic">+🪙 {log.amount}</div>
+                      </div>
+                    ))}
+                    {economyJournal.length === 0 && economyLogs.length === 0 && (
+                      <div className="py-20 text-center opacity-10 text-[9px] font-black uppercase tracking-[0.4em]">No journal entries yet</div>
                     )}
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'audio' && (
+            <div className="space-y-8 animate-fade-in">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-3xl font-black italic uppercase tracking-tight">Audio <span className="text-cyan-400">Rooms</span></h2>
+                  <p className="text-sm text-white/30 mt-2 font-bold uppercase tracking-wide text-[11px]">Live voice channels · lock / unlock / destroy</p>
+                </div>
+                <button type="button" onClick={fetchAudioChannels} className="px-4 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-[10px] font-black uppercase tracking-widest hover:bg-cyan-500/20">
+                  Refresh ({audioChannels.length})
+                </button>
+              </div>
+              <div className="space-y-4">
+                {audioChannels.map((ch) => (
+                  <div key={ch.id} className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 flex flex-col lg:flex-row lg:items-center gap-4 justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <h3 className="text-lg font-black text-white truncate">{ch.topic || 'Untitled room'}</h3>
+                        {ch.locked && <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">Locked</span>}
+                        {ch.isPrivate && <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-violet-500/20 text-violet-300 border border-violet-500/30">Private</span>}
+                      </div>
+                      <div className="text-[10px] text-white/30 font-mono mt-1 truncate">{ch.id}</div>
+                      <div className="text-[11px] text-white/50 mt-2 font-bold">
+                        {ch.memberCount ?? ch.members?.length ?? 0} members · {ch.speakerCount ?? 0} speakers
+                      </div>
+                      {Array.isArray(ch.members) && ch.members.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {ch.members.slice(0, 8).map((m) => (
+                            <span key={m.socketId} className="text-[9px] px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-white/60">
+                              {m.nickname || 'anon'} · {m.role}{m.micMuted || m.forceMuted ? ' 🔇' : ''}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      <button type="button" onClick={() => handleAudioAction(ch.id, ch.locked ? 'unlock' : 'lock')} className="px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20">
+                        {ch.locked ? 'Unlock' : 'Lock'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => window.confirm(`Destroy channel "${ch.topic}"?`) && handleAudioAction(ch.id, 'destroy')}
+                        className="px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20"
+                      >
+                        Destroy
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {audioChannels.length === 0 && (
+                  <div className="py-24 text-center text-white/15 text-[10px] font-black uppercase tracking-[0.4em]">No live audio rooms</div>
+                )}
               </div>
             </div>
           )}

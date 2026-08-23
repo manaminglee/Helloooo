@@ -29,6 +29,8 @@ export function useCoins() {
     const [streak, setStreak] = useState(1);
     const [nextClaim, setNextClaim] = useState(0);
     const [canClaim, setCanClaim] = useState(false);
+    const [registered, setRegistered] = useState(false);
+    const [activeSeconds, setActiveSeconds] = useState(0);
     const [loading, setLoading] = useState(true);
     const retryTimerRef = useRef(null);
 
@@ -41,6 +43,8 @@ export function useCoins() {
                 setStreak(data.streak);
                 setCanClaim(data.canClaim);
                 setNextClaim(data.nextClaim ?? 0);
+                if (data.registered !== undefined) setRegistered(!!data.registered);
+                if (data.activeSeconds !== undefined) setActiveSeconds(Number(data.activeSeconds) || 0);
             } else if (retries > 0) {
                 retryTimerRef.current = setTimeout(() => fetchStatus(retries - 1), 2000);
             }
@@ -91,5 +95,18 @@ export function useCoins() {
         if (!canClaim && nextClaim <= 0) setCanClaim(true);
     }, [nextClaim]);
 
-    return { balance, streak, nextClaim, canClaim, claimCoins, refresh: fetchStatus, setBalance, history, addHistory };
+    return {
+        balance,
+        streak,
+        nextClaim,
+        canClaim,
+        claimCoins,
+        refresh: fetchStatus,
+        setBalance,
+        history,
+        addHistory,
+        registered,
+        activeSeconds,
+        loading,
+    };
 }

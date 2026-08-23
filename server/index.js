@@ -360,6 +360,8 @@ const SPEND_MAX_AMOUNT = 10000; // absolute sanity cap, even for table-priced sp
 
 const ipActivity = new Map(); // ip -> { firstSeen, lastSeen, persisted }
 const coinUsers = new Map(); // ip -> { coins, last_claim, streak, ... }
+/** Assigned after registerEconomy — used by claim/spend/admin routes via late binding. */
+let economy = null;
 
 async function getCoinUser(ip) {
   if (coinUsers.has(ip)) return coinUsers.get(ip);
@@ -393,30 +395,36 @@ async function persistCoinUser(ip) {
 
   // 3-minute threshold for initial registry (180 seconds)
   if (activity && (Date.now() - activity.firstSeen > 180000)) {
-    u.registered = true;
-    u.coins = (u.coins || 0) + 40; // CREDIT 40 COINS ON REGISTRATION
+    await updateCoinUser(ip, { registered: true });
+    if (activity) activity.persisted = true;
+
+    let balance = Math.max(0, Number(coinUsers.get(ip)?.coins) || 0);
+    if (typeof economy !== 'undefined' && economy?.credit) {
+      const res = await economy.credit(ip, 40, 'Initial Registration (3m)', { registration: true });
+      balance = res.ok ? res.balance : balance + 40;
+    } else {
+      balance += 40;
+      await updateCoinUser(ip, { coins: balance });
+    }
 
     if (supabase) {
-      await supabase.from('user_coins').upsert(u);
       await supabase.from('activity_logs').insert({ ip, action: 'registered_ip', amount: 40, details: 'Identity Verified (3m Cycle)' });
     } else {
       saveLocalDb();
     }
 
-    if (activity) activity.persisted = true;
-    console.log(`[DB] Registered IP ${ip} - 40 Coins Synthesized.`);
-
-    // Broadcast updated balance to all sockets sharing this IP
+    const fresh = coinUsers.get(ip);
     for (const [sid, user] of users.entries()) {
       if (user.ip === ip) {
         io.to(sid).emit('coins-updated', {
-          coins: u.coins,
+          coins: fresh?.coins ?? balance,
           reason: 'Initial Registration (3m)',
           registered: true,
-          activeSeconds: u.active_seconds || 0,
+          activeSeconds: fresh?.active_seconds || 0,
         });
       }
     }
+    console.log(`[DB] Registered IP ${ip} - 40 Coins Synthesized.`);
   }
 }
 
@@ -855,46 +863,42 @@ app.get('/api/settings', (req, res) => {
   });
 });
 
-// 3-Minute Activity Reward (40 Coins) - Synchronized with Socket.io
+// 3-Minute Activity Reward (40 Coins) — locked ledger path
 app.post('/api/coins/activity-reward', async (req, res) => {
-  const ip = req.ip === '::1' ? '127.0.0.1' : req.ip;
+  const ip = getClientIp(req);
   const now = Date.now();
-  const MIN_INTERVAL = 180000; // 3 minutes
+  const MIN_INTERVAL = 180000;
 
   try {
+    if (!economy?.runLocked || !economy?.applyCredit) {
+      return res.status(503).json({ error: 'Economy unavailable' });
+    }
     const activity = ipActivity.get(ip);
     if (!activity) return res.status(403).json({ error: 'Uplink not recognized' });
 
-    // Verify they actually spent at least 3m since first seen OR since last claim
-    const cUser = await getCoinUser(ip);
-    const lastClaim = Number(cUser.last_reward_claimed) || 0;
-    const timeSinceLast = now - (lastClaim || activity.firstSeen);
-
-    if (timeSinceLast < MIN_INTERVAL) {
-      return res.status(429).json({ error: 'Sync cycle incomplete. Wait for uplink.' });
-    }
-
-    const reward = 40;
-    const nextBalance = (cUser.coins || 0) + reward;
-
-    await updateCoinUser(ip, {
-      coins: nextBalance,
-      last_reward_claimed: now,
-      registered: true
+    const result = await economy.runLocked(ip, async () => {
+      const cUser = await getCoinUser(ip);
+      const lastClaim = Number(cUser.last_reward_claimed) || 0;
+      const timeSinceLast = now - (lastClaim || activity.firstSeen);
+      if (timeSinceLast < MIN_INTERVAL) {
+        return { ok: false, status: 429, error: 'Sync cycle incomplete. Wait for uplink.' };
+      }
+      await updateCoinUser(ip, {
+        last_reward_claimed: now,
+        registered: true,
+      });
+      const credited = await economy.applyCredit(ip, 40, 'activity_reward_3m');
+      if (!credited.ok) return { ok: false, status: 400, error: credited.error || 'Credit failed' };
+      if (supabase) {
+        supabase.from('activity_logs').insert({ ip, action: 'claimed_3m_bonus', amount: 40 }).then(() => {}).catch(() => {});
+      }
+      return { ok: true, balance: credited.balance };
     });
 
-    if (supabase) {
-      await supabase.from('activity_logs').insert({ ip, action: 'claimed_3m_bonus', amount: reward });
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
     }
-
-    // Notify all connected sockets
-    for (const [sid, user] of users.entries()) {
-      if (user.ip === ip) {
-        io.to(sid).emit('coins-updated', { coins: nextBalance, reason: 'Activity Sustained' });
-      }
-    }
-
-    res.json({ success: true, balance: nextBalance, message: 'Activity recognized. 40 Coins synthesized.' });
+    res.json({ success: true, balance: result.balance, message: 'Activity recognized. 40 Coins synthesized.' });
   } catch (e) {
     res.status(500).json({ error: 'Economy link failure' });
   }
@@ -904,22 +908,38 @@ app.post('/api/coins/activity-reward', async (req, res) => {
 // Primary Admin Hub consolidated further down at line 1068
 
 app.post('/api/admin/coins/update', requireAdmin, async (req, res) => {
-  const { ip, amount, set } = req.body || {};
-  if (!ip) return res.status(400).json({ error: 'IP required' });
+  const { ip, amount, set, reason } = req.body || {};
+  const rawIp = String(ip || '').trim().slice(0, 64);
+  if (!rawIp) return res.status(400).json({ error: 'IP required' });
+
+  const amt = Math.floor(Number(amount));
+  if (!Number.isFinite(amt)) return res.status(400).json({ error: 'amount required' });
+  const MAX = 100000;
+  if (Math.abs(amt) > MAX) return res.status(400).json({ error: `Amount capped at ±${MAX}` });
 
   try {
-    const u = await getCoinUser(ip);
-    const newBalance = set ? Number(amount) : (u.coins || 0) + Number(amount);
-    await updateCoinUser(ip, { coins: newBalance });
-
-    // Notify all sockets with this IP
-    for (const [sid, user] of users.entries()) {
-      if (user.ip === ip) {
-        io.to(sid).emit('coins-updated', { coins: newBalance, reason: 'Admin Adjustment' });
-      }
+    if (!economy?.credit || !economy?.debit || !economy?.setBalance) {
+      return res.status(503).json({ error: 'Economy unavailable' });
     }
-
-    res.json({ success: true, newBalance });
+    const note = sanitize(String(reason || 'Admin Adjustment'), 80);
+    let result;
+    if (set) {
+      if (amt < 0) return res.status(400).json({ error: 'Set balance cannot be negative' });
+      result = await economy.setBalance(rawIp, amt, note, { admin: true });
+    } else if (amt === 0) {
+      return res.status(400).json({ error: 'non-zero amount required' });
+    } else if (amt > 0) {
+      result = await economy.credit(rawIp, amt, note, { admin: true });
+    } else {
+      result = await economy.debit(rawIp, Math.abs(amt), note, { admin: true });
+    }
+    if (!result?.ok) {
+      return res.status(400).json({ error: result?.error || 'Update failed' });
+    }
+    if (typeof moderation !== 'undefined' && moderation?.audit) {
+      moderation.audit('admin_coin_adjust', { ip: rawIp, amount: amt, set: !!set, reason: note });
+    }
+    res.json({ success: true, newBalance: result.balance });
   } catch (e) {
     res.status(500).json({ error: 'Update failed' });
   }
@@ -1797,7 +1817,7 @@ app.post('/api/admin/withdrawals/status', requireAdmin, async (req, res) => {
 
 app.post('/api/creators/verify-ref', async (req, res) => {
   const { code } = req.body || {};
-  const visitorIp = req.ip === '::1' ? '127.0.0.1' : req.ip;
+  const visitorIp = getClientIp(req);
   if (!code) return res.status(400).json({ error: 'Empty Signal' });
   try {
     let creator = null;
@@ -1846,8 +1866,12 @@ app.post('/api/creators/verify-ref', async (req, res) => {
       await getCoinUser(visitorIp);
     }
     const u = await getCoinUser(visitorIp);
-    const updatedCoins = (u.coins || 0) + 5;
-    await updateCoinUser(visitorIp, { coins: updatedCoins });
+    if (economy?.credit) {
+      await economy.credit(visitorIp, 5, 'referral_bonus', { creatorId: creator.id });
+    } else {
+      const updatedCoins = (u.coins || 0) + 5;
+      await updateCoinUser(visitorIp, { coins: updatedCoins });
+    }
     res.json({ success: true, message: 'Referral node synchronized' });
   } catch (e) { res.status(500).json({ error: 'Sync failed' }); }
 });
@@ -2238,6 +2262,8 @@ app.get('/api/admin/overview', requireAdmin, async (req, res) => {
     ip: u.ip,
     coins: u.coins,
     streak: u.streak,
+    registered: !!u.registered,
+    activeSeconds: u.active_seconds || 0,
     persisted: ipActivity.get(u.ip)?.persisted || u.registered || false
   }));
 
@@ -2478,13 +2504,13 @@ app.get('/api/turn', (req, res) => {
 const COIN_CLAIM_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 app.post('/api/user/credit-age', async (req, res) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || (req.ip === '::1' ? '127.0.0.1' : req.ip);
+  const ip = getClientIp(req);
   await getCoinUser(ip);
   res.json({ success: true });
 });
 
 app.get('/api/user/coins', async (req, res) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || (req.ip === '::1' ? '127.0.0.1' : req.ip);
+  const ip = getClientIp(req);
   try {
     const user = await getCoinUser(ip);
     const now = Date.now();
@@ -2494,7 +2520,9 @@ app.get('/api/user/coins', async (req, res) => {
       coins: user.coins,
       streak: user.streak,
       canClaim: now >= nextClaim,
-      nextClaim: Math.max(0, nextClaim - now)
+      nextClaim: Math.max(0, nextClaim - now),
+      registered: !!user.registered,
+      activeSeconds: user.active_seconds || 0,
     });
   } catch (e) {
     res.status(500).json({ error: 'Platform sync delayed' });
@@ -2502,48 +2530,53 @@ app.get('/api/user/coins', async (req, res) => {
 });
 
 app.post('/api/user/claim', async (req, res) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || (req.ip === '::1' ? '127.0.0.1' : req.ip);
-  const user = await getCoinUser(ip);
+  const ip = getClientIp(req);
   const now = Date.now();
   const waitTime = COIN_CLAIM_INTERVAL_MS;
 
-  if (now < (Number(user.last_claim) || 0) + waitTime) {
-    return res.status(400).json({ error: 'Too early to claim' });
+  try {
+    if (!economy?.runLocked || !economy?.applyCredit) {
+      return res.status(503).json({ error: 'Economy unavailable' });
+    }
+
+    const result = await economy.runLocked(ip, async () => {
+      const user = await getCoinUser(ip);
+      if (now < (Number(user.last_claim) || 0) + waitTime) {
+        return { ok: false, error: 'Too early to claim' };
+      }
+
+      const today = new Date().toDateString();
+      const yesterday = new Date(now - 86400000).toDateString();
+      let streak = Number(user.streak) || 1;
+      if (user.last_claim_date === yesterday) streak += 1;
+      else if (user.last_claim_date !== today) streak = 1;
+
+      const bonus = streak > 1 ? Math.min((streak - 1) * 5, 50) : 0;
+      const payout = 30 + bonus;
+
+      await updateCoinUser(ip, {
+        last_claim: now,
+        last_claim_date: today,
+        streak,
+      });
+      const credited = await economy.applyCredit(ip, payout, 'daily_claim', { streak, bonus });
+      if (!credited.ok) return { ok: false, error: credited.error || 'Claim failed' };
+      return { ok: true, coins: credited.balance, streak, bonus };
+    });
+
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json({ coins: result.coins, streak: result.streak, bonus: result.bonus });
+  } catch (e) {
+    res.status(500).json({ error: 'Claim failed' });
   }
-
-  // Streak logic (daily check)
-  const today = new Date().toDateString();
-  const yesterday = new Date(now - 86400000).toDateString();
-
-  if (user.last_claim_date === yesterday) {
-    user.streak += 1;
-  } else if (user.last_claim_date !== today) {
-    user.streak = 1;
-  }
-
-  // 30 coins base + bonus (5 per streak day, max 50 bonus)
-  const bonus = user.streak > 1 ? Math.min((user.streak - 1) * 5, 50) : 0;
-  const nextBalance = (user.coins || 0) + (30 + bonus);
-
-  await updateCoinUser(ip, {
-    coins: nextBalance,
-    last_claim: now,
-    last_claim_date: today,
-    streak: user.streak
-  });
-
-  res.json({ coins: nextBalance, streak: user.streak, bonus });
 });
 
 app.post('/api/user/spend', async (req, res) => {
-  const ip = req.ip === '::1' ? '127.0.0.1' : req.ip;
+  const ip = getClientIp(req);
   const amount = Number(req.body?.amount);
-  // Anti-mint: only accept small positive integer amounts.
   if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount <= 0 || amount > SPEND_MAX_AMOUNT) {
     return res.status(400).json({ error: 'Invalid amount' });
   }
-  // Anti-mint: spend reason must map to the server-side price table; the
-  // server decides what gets charged, never the client.
   const reason = String(req.body?.reason || '');
   const price = SPEND_PRICES[reason];
   if (price === undefined) {
@@ -2554,15 +2587,12 @@ app.post('/api/user/spend', async (req, res) => {
     return res.status(400).json({ error: 'Invalid amount for this purchase' });
   }
   try {
-    const user = await getCoinUser(ip);
-
-    if (!user || (user.coins || 0) < charge) {
-      return res.status(400).json({ error: 'Insufficient coins' });
+    if (!economy?.debit) return res.status(503).json({ error: 'Economy unavailable' });
+    const result = await economy.debit(ip, charge, `spend_${reason}`, { reason });
+    if (!result.ok) {
+      return res.status(400).json({ error: result.error || 'Insufficient coins' });
     }
-
-    const nextBalance = user.coins - charge;
-    await updateCoinUser(ip, { coins: nextBalance });
-    res.json({ success: true, balance: nextBalance });
+    res.json({ success: true, balance: result.balance });
   } catch (e) {
     res.status(500).json({ error: 'Spend failed' });
   }
@@ -2722,13 +2752,13 @@ const uniqueFeatures = registerUniqueFeatures(app, io, {
 });
 
 app.get('/api/pro/status', async (req, res) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || (req.ip === '::1' ? '127.0.0.1' : req.ip);
+  const ip = getClientIp(req);
   const status = await persistence.getProStatus(ip);
   res.json(status);
 });
 
 app.post('/api/pro/activate', async (req, res) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || (req.ip === '::1' ? '127.0.0.1' : req.ip);
+  const ip = getClientIp(req);
   const code = String(req.body?.code || '').trim();
   if (!code) return res.status(400).json({ ok: false, error: 'Code required' });
   const result = await persistence.activatePro(ip, { code });
@@ -2774,7 +2804,7 @@ const moderation = registerModeration(app, io, {
   ADMIN_ROOM,
 });
 
-const economy = registerEconomy(app, io, {
+economy = registerEconomy(app, io, {
   users,
   getCoinUser,
   updateCoinUser,
@@ -3362,9 +3392,13 @@ io.on('connection', (socket) => {
       return socket.emit('error', { message: 'Insufficient Mana (25 Coins Required).' });
     }
 
-    // Server-authoritative deduction (only after all validation passed)
-    const nextBalance = balance - 25;
-    await updateCoinUser(ip, { coins: nextBalance });
+    if (!economy?.debit) {
+      return socket.emit('error', { message: 'Economy unavailable.' });
+    }
+    const spent = await economy.debit(ip, 25, 'realm_specialize', { roomId });
+    if (!spent.ok) {
+      return socket.emit('error', { message: spent.error || 'Insufficient Mana (25 Coins Required).' });
+    }
 
     room.interest = sanitized;
     io.to(roomId).emit('group-renamed', { interest: sanitized, nickname: u.nickname });
@@ -3373,13 +3407,6 @@ io.on('connection', (socket) => {
     if (supabase) {
       await supabase.from('group_rooms').upsert({ id: roomId, interest: sanitized, creator_ip: ip });
       await supabase.from('activity_logs').insert({ ip, action: 'renamed_room', amount: 25, details: `Topic: ${sanitized} (Room: ${roomId})` });
-    }
-
-    // Sync all IP sockets
-    for (const [sid, user] of users.entries()) {
-      if (user.ip === ip) {
-        io.to(sid).emit('coins-updated', { coins: nextBalance, reason: 'Realm Specialized' });
-      }
     }
   });
 
@@ -3567,17 +3594,12 @@ io.on('connection', (socket) => {
     const amount = Math.min(Math.max(Math.floor(Number(rawAmount) || 0), 1), 500);
     if (amount <= 0) return;
 
-    const cUser = await getCoinUser(ip);
-    if ((cUser.coins || 0) < amount) {
-      return socket.emit('error', { message: 'Insufficient coins' });
+    if (!economy?.debit) {
+      return socket.emit('error', { message: 'Economy unavailable.' });
     }
-
-    const nextBalance = (cUser.coins || 0) - amount;
-    await updateCoinUser(ip, { coins: nextBalance });
-    for (const [sid, user] of users.entries()) {
-      if (user.ip === ip) {
-        io.to(sid).emit('coins-updated', { coins: nextBalance, reason: 'creator-tip' });
-      }
+    const spent = await economy.debit(ip, amount, 'creator_tip', { roomId, targetSocketId });
+    if (!spent.ok) {
+      return socket.emit('error', { message: spent.error || 'Insufficient coins' });
     }
 
     const creator = target.creatorData;
@@ -3661,16 +3683,12 @@ io.on('connection', (socket) => {
       return socket.emit('error', { message: 'Invalid amount.' });
     }
 
-    const cUser = await getCoinUser(ip);
-    if ((cUser.coins || 0) < charge) return socket.emit('error', { message: 'Insufficient coins' });
-    const nextBalance = cUser.coins - charge;
-    await updateCoinUser(ip, { coins: nextBalance });
-
-    // Notify all sockets with this IP
-    for (const [sid, user] of users.entries()) {
-      if (user.ip === ip) {
-        io.to(sid).emit('coins-updated', { coins: nextBalance, reason: reasonKey });
-      }
+    if (!economy?.debit) {
+      return socket.emit('error', { message: 'Economy unavailable.' });
+    }
+    const spent = await economy.debit(ip, charge, `spend_${reasonKey}`, { reason: reasonKey });
+    if (!spent.ok) {
+      return socket.emit('error', { message: spent.error || 'Insufficient coins' });
     }
     console.log(`[COINS] User ${socket.id} spent ${charge} for ${reasonKey}`);
   });
@@ -3712,14 +3730,14 @@ io.on('connection', (socket) => {
     if (cUser.registered && finalActive >= 3600) {
       coinsEarned = 30;
       finalActive -= 3600;
-      const nextBalance = (cUser.coins || 0) + coinsEarned;
       await updateCoinUser(ip, {
-        coins: nextBalance,
         active_seconds: finalActive,
         total_active_seconds: nextTotal,
       });
-      cUser.coins = nextBalance;
       cUser.active_seconds = finalActive;
+      if (economy?.credit) {
+        await economy.credit(ip, coinsEarned, 'hourly_active_reward');
+      }
     } else {
       await updateCoinUser(ip, {
         active_seconds: finalActive,
@@ -3733,15 +3751,17 @@ io.on('connection', (socket) => {
       await persistCoinUser(ip);
     }
 
-    const fresh = coinUsers.get(ip) || cUser;
-    for (const [sid, user] of users.entries()) {
-      if (user.ip === ip) {
-        io.to(sid).emit('coins-updated', {
-          coins: fresh.coins,
-          activeSeconds: fresh.active_seconds || 0,
-          registered: !!fresh.registered,
-          reason: coinsEarned ? '1 Hour Active Reward' : undefined,
-        });
+    // Credit already emits coins-updated; still push activity progress when no payout.
+    if (!coinsEarned) {
+      const fresh = coinUsers.get(ip) || cUser;
+      for (const [sid, user] of users.entries()) {
+        if (user.ip === ip) {
+          io.to(sid).emit('coins-updated', {
+            coins: fresh.coins,
+            activeSeconds: fresh.active_seconds || 0,
+            registered: !!fresh.registered,
+          });
+        }
       }
     }
   });
@@ -3759,16 +3779,11 @@ io.on('connection', (socket) => {
     }
     const cUser = await getCoinUser(ip);
 
-    if (cUser.coins < 5) return socket.emit('error', { message: 'Need 5 coins for 3D Emoji' });
-    const nextBalance = cUser.coins - 5;
-    await updateCoinUser(ip, { coins: nextBalance });
+    if ((cUser.coins || 0) < 5) return socket.emit('error', { message: 'Need 5 coins for 3D Emoji' });
+    if (!economy?.debit) return socket.emit('error', { message: 'Economy unavailable.' });
+    const spent = await economy.debit(ip, 5, '3d_emoji', { roomId });
+    if (!spent.ok) return socket.emit('error', { message: spent.error || 'Need 5 coins for 3D Emoji' });
 
-    // Notify all sockets with this IP
-    for (const [sid, user] of users.entries()) {
-      if (user.ip === ip) {
-        io.to(sid).emit('coins-updated', { coins: nextBalance, reason: '3D Emoji' });
-      }
-    }
     io.to(roomId).emit('3d-emoji', { roomId, emoji, nickname: u?.nickname || 'Someone', socketId: socket.id });
   });
 
@@ -3791,16 +3806,11 @@ io.on('connection', (socket) => {
     const cUser = await getCoinUser(ip);
 
     const cost = type === 'video' ? 15 : 10;
-    if (cUser.coins < cost) return socket.emit('error', { message: `Need ${cost} coins for Media` });
-    const nextBalance = cUser.coins - cost;
-    await updateCoinUser(ip, { coins: nextBalance });
+    if ((cUser.coins || 0) < cost) return socket.emit('error', { message: `Need ${cost} coins for Media` });
+    if (!economy?.debit) return socket.emit('error', { message: 'Economy unavailable.' });
+    const spent = await economy.debit(ip, cost, `media_${type}`, { roomId, type });
+    if (!spent.ok) return socket.emit('error', { message: spent.error || `Need ${cost} coins for Media` });
 
-    // Notify all sockets with this IP
-    for (const [sid, user] of users.entries()) {
-      if (user.ip === ip) {
-        io.to(sid).emit('coins-updated', { coins: nextBalance, reason: 'Media Upload' });
-      }
-    }
     io.to(roomId).emit('media-message', { id: generateId('med'), roomId, type, content, nickname: u?.nickname || 'Someone', ts: Date.now(), socketId: socket.id });
   });
 
