@@ -13,8 +13,9 @@ test.describe('Helloooo smoke (anonymous)', () => {
     await page.goto('/');
     await expect(page).toHaveTitle(/Helloooo/i);
 
-    const videoBtn = page.getByRole('button', { name: /Video Chat/i });
-    const groupBtn = page.getByRole('button', { name: /Group Video/i });
+    // Use exact aria-labels from LandingHero mode cards (avoids matching "Start video chat")
+    const videoBtn = page.getByRole('button', { name: 'Video Chat: 1-on-1 live video' });
+    const groupBtn = page.getByRole('button', { name: 'Group Video: Up to 4 on camera' });
 
     await expect(videoBtn).toBeVisible();
     await expect(groupBtn).toBeVisible();
@@ -29,7 +30,7 @@ test.describe('Helloooo smoke (anonymous)', () => {
   test('interest entry and text mode navigation', async ({ page }) => {
     await page.goto('/');
 
-    const textBtn = page.getByRole('button', { name: /Text Chat/i });
+    const textBtn = page.getByRole('button', { name: 'Text Chat: Anonymous messaging' });
     await expect(textBtn).toBeEnabled({ timeout: 20000 });
     await textBtn.click();
 
