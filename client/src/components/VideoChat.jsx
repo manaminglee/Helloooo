@@ -2173,19 +2173,30 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     );
   };
 
-  const renderDeskChatPanel = (sidebar = false) => (
+  const renderDeskChatPanel = (sidebar = false) => {
+    const chatReady = status === 'connected';
+    return (
     <div ref={chatPanelRef} className={`mm-desk-chat${sidebar ? ' mm-desk-chat--sidebar' : ''}`} id="video-chat-messages-wrap">
       <div className="mm-desk-chat__banner">
         <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-        You&apos;re chatting anonymously
+        {chatReady ? "You're chatting anonymously" : status === 'searching' ? 'Matching… chat unlocks when connected' : 'Chat ready when you match'}
       </div>
       <div className="mm-desk-chat__messages custom-scrollbar" id="video-chat-messages">
         {messages.filter((m) => !m.system || m.isIntro).map((m, i) => (
           <DeskChatBubble key={m.id || i} m={m} isMe={m.socketId === socket?.id} myCountry={chatMyCountry} peerCountry={chatPeerCountry} onViewCreator={setShowProfileHandle} />
         ))}
+        {!chatReady && messages.filter((m) => !m.system || m.isIntro).length === 0 && (
+          <div className="mm-desk-chat__empty">
+            <span className="mm-desk-chat__empty-icon" aria-hidden>💬</span>
+            <p className="mm-desk-chat__empty-title">
+              {status === 'searching' ? 'Looking for someone…' : status === 'idle' ? 'Start a video chat' : 'Waiting to connect'}
+            </p>
+            <p className="mm-desk-chat__empty-hint">Messages with your match will appear here</p>
+          </div>
+        )}
         <div ref={chatEndRef} />
       </div>
-      {strangerTyping && (
+      {strangerTyping && chatReady && (
         <div className="mm-desk-chat__typing">
           Stranger is typing…
           <span className="mm-desk-chat__typing-dots"><span /><span /><span /></span>
@@ -2197,16 +2208,19 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           type="text"
           value={input}
           onChange={(e) => handleInputChange(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); sendMsg(); } }}
-          placeholder="Type a message..."
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (chatReady) sendMsg(); } }}
+          placeholder={chatReady ? 'Type a message...' : 'Chat unlocks when matched'}
           className="mm-desk-chat__input"
+          disabled={!chatReady}
+          aria-disabled={!chatReady}
         />
-        <button type="button" onClick={sendMsg} className="mm-desk-chat__send" aria-label="Send">
+        <button type="button" onClick={sendMsg} className="mm-desk-chat__send" aria-label="Send" disabled={!chatReady || !input.trim()}>
           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
         </button>
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div className={`${desktopLayout ? 'mm-desk-shell' : 'mm-mobile-shell'} h-[100dvh] min-h-0 flex flex-col text-white overflow-hidden font-sans select-none`}>
@@ -2418,21 +2432,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               )}
               {isSidebarDesk && (
                 <div className="mm-desk-sidebar">
-                  {status === 'connected' ? (
-                    renderDeskChatPanel(true)
-                  ) : (
-                    <div className="mm-desk-sidebar__idle">
-                      <p className="text-sm font-semibold text-white/50 mb-1">
-                        {status === 'searching' ? 'Looking for someone…' : status === 'idle' ? 'Start a chat to message' : 'Connect to chat'}
-                      </p>
-                      <p className="text-xs text-white/30">Chat appears here when matched</p>
-                    </div>
-                  )}
+                  {renderDeskChatPanel(true)}
                   {renderDeskToolbar('mm-desk-toolbar--inline')}
                 </div>
               )}
             </div>
-            {!isSidebarDesk && status === 'connected' && renderDeskChatPanel(false)}
+            {!isSidebarDesk && renderDeskChatPanel(false)}
           </div>
         ) : (
           <>

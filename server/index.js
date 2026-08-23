@@ -412,7 +412,8 @@ async function persistCoinUser(ip) {
         io.to(sid).emit('coins-updated', {
           coins: u.coins,
           reason: 'Initial Registration (3m)',
-          registered: true
+          registered: true,
+          activeSeconds: u.active_seconds || 0,
         });
       }
     }
@@ -3711,24 +3712,37 @@ io.on('connection', (socket) => {
     if (cUser.registered && finalActive >= 3600) {
       coinsEarned = 30;
       finalActive -= 3600;
-      // Payout 30 coins
       const nextBalance = (cUser.coins || 0) + coinsEarned;
       await updateCoinUser(ip, {
         coins: nextBalance,
         active_seconds: finalActive,
-        total_active_seconds: nextTotal
+        total_active_seconds: nextTotal,
       });
-      io.to(socket.id).emit('coins-updated', { coins: nextBalance, reason: '1 Hour Active Reward' });
+      cUser.coins = nextBalance;
+      cUser.active_seconds = finalActive;
     } else {
       await updateCoinUser(ip, {
         active_seconds: finalActive,
-        total_active_seconds: nextTotal
+        total_active_seconds: nextTotal,
       });
+      cUser.active_seconds = finalActive;
     }
 
-    // If they hit 3m but aren't registered yet, trigger persistence
+    // If they hit 3m but aren't registered yet, trigger persistence (+40 coins)
     if (!cUser.registered && nextTotal >= 180) {
       await persistCoinUser(ip);
+    }
+
+    const fresh = coinUsers.get(ip) || cUser;
+    for (const [sid, user] of users.entries()) {
+      if (user.ip === ip) {
+        io.to(sid).emit('coins-updated', {
+          coins: fresh.coins,
+          activeSeconds: fresh.active_seconds || 0,
+          registered: !!fresh.registered,
+          reason: coinsEarned ? '1 Hour Active Reward' : undefined,
+        });
+      }
     }
   });
 

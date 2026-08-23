@@ -677,7 +677,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
           </section>
 
           {/* INTEREST DOCK - centered */}
-          <section ref={startRef} className="mm-landing-section mm-landing-section--medium mm-landing-anchor mm-landing-fade-in mm-landing-fade-in-delay-2">
+          <section ref={startRef} className="mm-landing-section mm-landing-section--medium mm-landing-anchor mm-landing-fade-in mm-landing-fade-in-delay-2 mm-landing-step-panel">
             <div className="mm-landing-glass p-6 sm:p-8">
               <div className="flex flex-col items-center text-center relative z-[1] w-full">
                 <span className="mm-landing-section-label">Step 1</span>
