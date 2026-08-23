@@ -26,6 +26,7 @@ const creatorEmail = require('./creatorEmail');
 const creatorNotifications = require('./creatorNotifications');
 const adminLiveMonitor = require('./adminLiveMonitor');
 const { registerAudioChannels } = require('./audioChannels');
+const { registerYoutubeLiveHandlers, stopAllForSocket } = require('./youtubeLive');
 const { registerRaceGame } = require('./raceGame');
 const { registerEconomy } = require('./economy');
 const { registerModeration } = require('./moderation');
@@ -3319,6 +3320,9 @@ io.on('connection', (socket) => {
     const u = users.get(socket.id);
     const room = rooms.get(roomId);
     if (!u || !room) return;
+    if (!u.isCreator) {
+      return socket.emit('error', { message: 'Only verified creators can specialize room topics.' });
+    }
     if (room.mode !== 'group_video' && room.mode !== 'group_text') return;
 
     // Validate BEFORE charging: membership first, then topic. No charge on failure.
@@ -3519,7 +3523,11 @@ io.on('connection', (socket) => {
   on('peer-recording-status', (data) => {
     const { roomId, recording } = data || {};
     const room = rooms.get(roomId);
+    const u = users.get(socket.id);
     if (!room || !room.users.has(socket.id)) return;
+    if (!!recording && !u?.isCreator) {
+      return socket.emit('error', { message: 'Recording is for verified creators only.' });
+    }
     socket.to(roomId).emit('peer-recording-status', { socketId: socket.id, recording: !!recording });
   });
 
@@ -3604,6 +3612,10 @@ io.on('connection', (socket) => {
   on('spend-coins', async (data) => {
     const { amount, reason } = data || {};
     const reasonKey = String(reason || '');
+    const u = users.get(socket.id);
+    if (reasonKey === 'room-boost' && !u?.isCreator) {
+      return socket.emit('error', { message: 'Room boost is for verified creators only.' });
+    }
     const price = SPEND_PRICES[reasonKey];
     if (price === undefined) {
       // Unknown reason => reject without charging (anti free-form mint).
@@ -3700,6 +3712,9 @@ io.on('connection', (socket) => {
   on('send-3d-emoji', async (data) => {
     const { roomId, emoji } = data || {};
     const u = users.get(socket.id);
+    if (!u?.isCreator) {
+      return socket.emit('error', { message: '3D emoji effects are for verified creators only.' });
+    }
     // Membership check BEFORE charging.
     const room = rooms.get(roomId);
     if (!room || !room.users.has(socket.id)) {
@@ -3778,7 +3793,10 @@ io.on('connection', (socket) => {
     });
   });
 
+  registerYoutubeLiveHandlers(socket, on, { users });
+
   on('disconnect', () => {
+    stopAllForSocket(socket.id);
     pairQueues.text = pairQueues.text.filter((e) => e.socketId !== socket.id);
     pairQueues.video = pairQueues.video.filter((e) => e.socketId !== socket.id);
     for (const [key, q] of groupQueues.entries()) {

@@ -15,7 +15,9 @@ import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNoti
 import { playConnectSound, playMessageSound, playDisconnectSound, playWaveSound } from '../utils/sounds';
 import { mmDebug } from '../utils/mmDebug';
 import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream, releaseMediaStream } from '../utils/webrtcMedia';
+import { createGroupGridCapture, pickRecorderMimeType } from '../utils/groupGridCapture';
 import { MiniChatGameModal } from './MiniChatGamePanel';
+import { CreatorLiveModal } from './CreatorLiveModal';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { useUniqueSession } from '../hooks/useUniqueSession';
 import { useAdminMonitorFrames } from '../hooks/useAdminMonitorFrames';
@@ -359,7 +361,13 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const [active3dEmoji, setActive3dEmoji] = useState(null);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isLiveStreaming, setIsLiveStreaming] = useState(false);
+  const [showLiveModal, setShowLiveModal] = useState(false);
+  const [creatorLiveActive, setCreatorLiveActive] = useState(false);
   const recorderRef = useRef(null);
+  const liveRecorderRef = useRef(null);
+  const gridCaptureRef = useRef(null);
+  const isRecordingRef = useRef(false);
   const chunksRef = useRef([]);
   const [toast, setToast] = useState(null);
   const [cameraBlur, setCameraBlur] = useState(false);
@@ -513,7 +521,33 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     } catch { /* ignore */ }
   };
 
+  const stopGridCapture = useCallback(() => {
+    isRecordingRef.current = false;
+    if (recorderRef.current) {
+      try { recorderRef.current.stop(); } catch { /* ignore */ }
+      recorderRef.current = null;
+    }
+    if (liveRecorderRef.current) {
+      try { liveRecorderRef.current.stop(); } catch { /* ignore */ }
+      liveRecorderRef.current = null;
+    }
+    gridCaptureRef.current?.stop();
+    gridCaptureRef.current = null;
+  }, []);
+
+  const getGridStreams = useCallback(() => {
+    const ordered = [localStreamRef.current, ...peers.slice(0, 3).map((p) => p.stream)];
+    while (ordered.length < 4) ordered.push(null);
+    return ordered;
+  }, [peers]);
+
   const releaseLocalMedia = useCallback(() => {
+    stopGridCapture();
+    if (isLiveStreaming && socket && isCreator) {
+      socket.emit('youtube-live-stop', { roomId: roomIdRef.current || roomIdProp });
+    }
+    setIsRecording(false);
+    setIsLiveStreaming(false);
     if (localStreamRef.current) {
       releaseMediaStream(localStreamRef.current, localVideoRef.current);
       localStreamRef.current = null;
@@ -523,7 +557,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       try { pc.close(); } catch { /* ignore */ }
     });
     peerConnectionsRef.current.clear();
-  }, []);
+  }, [stopGridCapture, isLiveStreaming, socket, isCreator, roomIdProp]);
 
   const finishLeaveRoom = useCallback(() => {
     releaseLocalMedia();
@@ -574,45 +608,97 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     return () => socket.off('connect', onConnect);
   }, [socket, nickname]);
 
-  const startRecording = () => {
-    if (peers.length === 0) { setToast('⚠️ No active users to record.'); return; }
-    // Record the first peer for now, or use a complex Canvas recorder if needed.
-    // For MVP consistency with VideoChat:
-    const targetStream = peers[0]?.stream;
-    if (!targetStream) { setToast('⚠️ No remote user stream available.'); return; }
+  const ensureGridCapture = () => {
+    if (!gridCaptureRef.current) {
+      gridCaptureRef.current = createGroupGridCapture({ width: 1280, height: 720, fps: 24 });
+    }
+    gridCaptureRef.current.start(getGridStreams());
+    return gridCaptureRef.current;
+  };
 
-    if (!MediaRecorder.isTypeSupported('video/webm')) {
+  const startRecording = () => {
+    if (!isCreator) { setToast('⚠️ Recording is for verified creators only.'); return; }
+    if (!localStreamRef.current) { setToast('⚠️ Start your camera first.'); return; }
+    const mimeType = pickRecorderMimeType();
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
       setToast('⚠️ WebM recording not supported on this browser.');
       return;
     }
-
-    const recorder = new MediaRecorder(targetStream, { mimeType: 'video/webm' });
+    const capture = ensureGridCapture();
+    const combined = capture.getCombinedStream();
     chunksRef.current = [];
+    isRecordingRef.current = true;
+    const recorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 2_500_000 });
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) chunksRef.current.push(e.data);
     };
     recorder.onstop = () => {
+      isRecordingRef.current = false;
       const blob = new Blob(chunksRef.current, { type: 'video/webm' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Creator_Group_Clip_${Date.now()}.webm`;
+      a.download = `Helloooo_GroupGrid_${Date.now()}.webm`;
       a.click();
+      URL.revokeObjectURL(url);
+      if (!isLiveStreaming) stopGridCapture();
+      setIsRecording(false);
+      emitRecordingStatus(false);
     };
-    recorder.start();
+    recorder.start(1000);
     recorderRef.current = recorder;
     setIsRecording(true);
     emitRecordingStatus(true);
-    setToast('🎥 Group Recording Active');
+    setToast('🎥 Recording 2×2 grid');
   };
 
   const stopRecording = () => {
-    if (recorderRef.current) {
-      recorderRef.current.stop();
-      setIsRecording(false);
-      emitRecordingStatus(false);
-      setToast('🎥 Recording Offline');
+    if (!recorderRef.current) return;
+    recorderRef.current.stop();
+    recorderRef.current = null;
+    setToast('🎥 Recording saved');
+  };
+
+  const startYoutubeLive = async (streamKey) => {
+    if (!isCreator || !socket) return;
+    if (!localStreamRef.current) { setToast('⚠️ Start your camera first.'); return; }
+    const mimeType = pickRecorderMimeType();
+    const capture = ensureGridCapture();
+    const combined = capture.getCombinedStream();
+    const rid = roomIdRef.current || roomIdProp;
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('Live connect timeout')), 12000);
+      const onStarted = () => { clearTimeout(t); socket.off('youtube-live-started', onStarted); socket.off('error', onErr); resolve(); };
+      const onErr = ({ message }) => { clearTimeout(t); socket.off('youtube-live-started', onStarted); socket.off('error', onErr); reject(new Error(message || 'Live failed')); };
+      socket.once('youtube-live-started', onStarted);
+      socket.once('error', onErr);
+      socket.emit('youtube-live-start', { roomId: rid, streamKey });
+    });
+    const recorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 2_500_000 });
+    recorder.ondataavailable = async (e) => {
+      if (e.data.size > 0) socket.emit('youtube-live-chunk', await e.data.arrayBuffer());
+    };
+    recorder.onstop = () => {
+      socket.emit('youtube-live-stop', { roomId: rid });
+      if (!isRecordingRef.current) stopGridCapture();
+      setIsLiveStreaming(false);
+    };
+    recorder.start(500);
+    liveRecorderRef.current = recorder;
+    setIsLiveStreaming(true);
+    setToast('🔴 Live on YouTube');
+  };
+
+  const stopYoutubeLive = () => {
+    if (liveRecorderRef.current) {
+      liveRecorderRef.current.stop();
+      liveRecorderRef.current = null;
+    } else if (socket && isCreator) {
+      socket.emit('youtube-live-stop', { roomId: roomIdRef.current || roomIdProp });
     }
+    setIsLiveStreaming(false);
+    if (!isRecordingRef.current) stopGridCapture();
+    setToast('Live stream ended');
   };
 
   // Fetch active groups/interests on mount and when modal opens
@@ -628,6 +714,11 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   }, []);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  useEffect(() => {
+    if (!isRecording && !isLiveStreaming) return;
+    gridCaptureRef.current?.updateStreams(getGridStreams());
+  }, [peers, isRecording, isLiveStreaming, getGridStreams, localStreamReady]);
 
   // Toast auto-dismiss
   useEffect(() => {
@@ -1281,6 +1372,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       setTimeout(() => setLocalReactions(prev => prev.filter(r => r.id !== id)), 4000);
     };
     const onPeerRecording = ({ recording }) => setPeerRecording(!!recording);
+    const onCreatorLive = ({ live }) => setCreatorLiveActive(!!live);
     const onTipReceived = ({ fromNickname, amount }) => setToast(`💰 ${fromNickname} tipped you ${amount} coins!`);
     socket.on('3d-emoji', on3dEmoji);
     socket.on('media-message', onMediaMessage);
@@ -1290,6 +1382,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     socket.on('hand-raise', onHandRaise);
     socket.on('room-reaction', onRoomReaction);
     socket.on('peer-recording-status', onPeerRecording);
+    socket.on('creator-live-status', onCreatorLive);
     socket.on('creator-tip-received', onTipReceived);
     return () => {
       socket.off('3d-emoji', on3dEmoji);
@@ -1297,6 +1390,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       socket.off('hand-raise', onHandRaise);
       socket.off('room-reaction', onRoomReaction);
       socket.off('peer-recording-status', onPeerRecording);
+      socket.off('creator-live-status', onCreatorLive);
       socket.off('creator-tip-received', onTipReceived);
       socket.off('error', onServerError);
       socket.off('room-full', onRoomFull);
@@ -1331,6 +1425,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   };
 
   const send3dEmoji = (emoji) => {
+    if (!isCreator) { setToast('⚠️ Creator feature only'); return; }
     if (balance < 5) { setToast('⚠️ Need 5 coins!'); return; }
     if (socket && (roomIdRef.current || roomId)) {
       // Server authoritatively charges coins on send-3d-emoji — no client spend-coins
@@ -1536,14 +1631,14 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           <button type="button" onClick={dismissSafetyNudge} aria-label="Dismiss">✕</button>
         </div>
       )}
-      {peerRecording && (
+      {peerRecording && !isCreator && (
         <div className="mm-group-status-chip mm-group-status-chip--danger" role="status">
-          Partner may be recording this session
+          A creator may be recording this session
         </div>
       )}
-      {PHASE_4_UNIQUE.structuredModes && unique.modePrompt && !isQueuing && (
-        <div className="mm-group-status-chip mm-group-status-chip--prompt">
-          “{unique.modePrompt}”
+      {creatorLiveActive && !isCreator && (
+        <div className="mm-group-status-chip mm-group-status-chip--danger" role="status">
+          🔴 Creator is live on YouTube
         </div>
       )}
     </div>
@@ -1639,7 +1734,13 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           <main className="mm-group-desk-body">
             <div className="mm-group-desk-stage">
               {statusBanners}
-              {isRecording && <RecordingIndicator />}
+              {isRecording && isCreator && <RecordingIndicator />}
+              {isLiveStreaming && isCreator && (
+                <div className="absolute top-4 right-4 z-[100] flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-600/25 border border-rose-500/40 backdrop-blur-md">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                  <span className="text-[9px] font-black uppercase tracking-[0.2em] text-rose-300">Live</span>
+                </div>
+              )}
               <FloatingVideoReactions reactions={localReactions.map((r) => ({ id: r.id, emoji: r.emoji, x: r.x, y: r.y }))} />
               <div className="mm-group-desk-grid">
                 <VideoTile
@@ -1684,7 +1785,6 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                   {PHASE_3_PRO.miniChatGames && (roomIdRef.current || roomId) && (
                     <button type="button" onClick={() => setShowGameModal(true)} className="opacity-60 hover:opacity-100" title="Mini game">🎲</button>
                   )}
-                  <button type="button" onClick={generateAiSpark} disabled={isAiGenerating} className="opacity-60 hover:opacity-100" title="Icebreaker">📌</button>
                 </div>
               </div>
               <div id="group-video-chat-messages" className="mm-group-desk-chat__messages custom-scrollbar">
@@ -1740,14 +1840,29 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" /></svg>
               Leave
             </button>
-            <button
-              type="button"
-              className={`mm-group-desk-tool mm-group-desk-tool--rec ${isRecording ? 'mm-group-desk-tool--rec-on' : ''}`}
-              onClick={isRecording ? stopRecording : startRecording}
-            >
-              <span className={`w-2.5 h-2.5 rounded-full ${isRecording ? 'bg-rose-500 animate-pulse' : 'border-2 border-current'}`} />
-              Record
-            </button>
+            {isCreator && (
+              <>
+                <button
+                  type="button"
+                  className={`mm-group-desk-tool mm-group-desk-tool--rec ${isRecording ? 'mm-group-desk-tool--rec-on' : ''}`}
+                  onClick={isRecording ? stopRecording : startRecording}
+                >
+                  <span className={`w-2.5 h-2.5 rounded-full ${isRecording ? 'bg-rose-500 animate-pulse' : 'border-2 border-current'}`} />
+                  Record
+                </button>
+                <button
+                  type="button"
+                  className={`mm-group-desk-tool ${isLiveStreaming ? 'mm-group-desk-tool--rec-on' : ''}`}
+                  onClick={() => (isLiveStreaming ? stopYoutubeLive() : setShowLiveModal(true))}
+                >
+                  <span className={`w-2.5 h-2.5 rounded-full ${isLiveStreaming ? 'bg-rose-500 animate-pulse' : 'bg-rose-500/60'}`} />
+                  {isLiveStreaming ? 'Live' : 'Go Live'}
+                </button>
+                <button type="button" className="mm-group-desk-tool" onClick={() => setShowRenameModal(true)} title="Specialize room topic">
+                  ✏️ Topic
+                </button>
+              </>
+            )}
           </footer>
         </>
       ) : (
@@ -1779,7 +1894,13 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           <main className="mm-group-mobile-main">
             <div className="mm-group-mobile-grid">
               {statusBanners}
-              {isRecording && <RecordingIndicator />}
+              {isRecording && isCreator && <RecordingIndicator />}
+              {isLiveStreaming && isCreator && (
+                <div className="absolute top-4 right-4 z-[100] flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-600/25 border border-rose-500/40 backdrop-blur-md">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                  <span className="text-[9px] font-black uppercase tracking-[0.2em] text-rose-300">Live</span>
+                </div>
+              )}
               <FloatingVideoReactions reactions={localReactions.map((r) => ({ id: r.id, emoji: r.emoji, x: r.x, y: r.y }))} />
               <VideoTile
                 deskStyle
@@ -1908,6 +2029,22 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
           {isCreator && (
             <div className="mm-group-mobile-creator-bar">
+              <button
+                type="button"
+                onClick={isRecording ? stopRecording : startRecording}
+                className={`mm-group-mobile-creator-bar__btn ${isRecording ? 'ring-2 ring-rose-500' : ''}`}
+                title="Record 2×2 grid"
+              >
+                ⏺
+              </button>
+              <button
+                type="button"
+                onClick={() => (isLiveStreaming ? stopYoutubeLive() : setShowLiveModal(true))}
+                className={`mm-group-mobile-creator-bar__btn ${isLiveStreaming ? 'ring-2 ring-rose-500' : ''}`}
+                title={isLiveStreaming ? 'Stop YouTube live' : 'Go live on YouTube'}
+              >
+                📡
+              </button>
               {EMOJIS_3D.slice(0, 4).map((e) => (
                 <button
                   key={e.char}
@@ -1929,7 +2066,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
   {/* MINIMAL RENAME OVERLAY — Inline focus */ }
   {
-    showRenameModal && (
+    isCreator && showRenameModal && (
       <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[260] w-72 bg-[#1a1d21]/95 backdrop-blur-3xl border border-white/10 rounded-3xl p-5 shadow-2xl animate-fade-in flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <h5 className="text-[10px] font-black uppercase tracking-widest text-amber-500">Specialize Topic (25c)</h5>
@@ -1992,7 +2129,6 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         onToggleScreenShare={startScreenShare}
         onFlipCamera={() => setFacingMode((p) => (p === 'user' ? 'environment' : 'user'))}
         onOpenDevices={() => setShowDevicePicker(true)}
-        onIcebreaker={generateAiSpark}
         onCopyLink={copyRoomLink}
         onHandRaise={toggleHandRaise}
         handRaised={handRaised}
@@ -2003,12 +2139,11 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         pipSize={pipSize}
         showGames
         balance={balance}
-        onRoomBoost={() => {
+        onRoomBoost={isCreator ? () => {
           if (balance < 25) { setToast('⚠️ Need 25 coins'); return; }
-          // Server price table authoritatively charges for reason 'room-boost' (25)
           socket?.emit('spend-coins', { reason: 'room-boost' });
           setToast('Pod boosted in public room browser!');
-        }}
+        } : undefined}
         peerOptions={peers.map((p) => ({ id: p.socketId, label: p.nickname || 'User' }))}
         onPinPeer={(id) => setPinnedId(id)}
         onPinLocal
@@ -2047,6 +2182,14 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           onSendPrompt={(text) => sendMessage(text)}
         />
       )}
+
+      <CreatorLiveModal
+        open={showLiveModal}
+        onClose={() => setShowLiveModal(false)}
+        isLive={isLiveStreaming}
+        onStart={startYoutubeLive}
+        onStop={() => { stopYoutubeLive(); setShowLiveModal(false); }}
+      />
 
       {toast && (
         <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-[200] max-w-[90vw] px-4 py-3 rounded-2xl bg-black/90 border border-white/10 text-xs font-bold text-white shadow-2xl animate-fade-in-up">
