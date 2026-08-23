@@ -5511,7 +5511,126 @@ textarea {
   padding: calc(4.25rem + env(safe-area-inset-top, 0)) max(1rem, env(safe-area-inset-left)) 2.5rem max(1rem, env(safe-area-inset-right));
   display: flex;
   flex-direction: column;
+  align-items: center;
+}
+
+/* Hero — centered headline + horizontal trust chips */
+.mm-landing-hero {
+  width: 100%;
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 2.25rem 0 1.25rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.mm-landing-hero__brand {
+  margin-bottom: 1.25rem;
+  display: flex;
+  justify-content: center;
+}
+
+.mm-landing-hero__title {
+  margin-top: 1rem;
+  max-width: 40rem;
+  text-wrap: balance;
+}
+
+.mm-landing-hero__sub {
+  margin-top: 1rem;
+  max-width: 34rem;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.mm-landing-trust-row {
+  list-style: none;
+  margin: 1.35rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: stretch;
+  justify-content: center;
+  gap: 0.45rem;
+  width: 100%;
+  max-width: 36rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.mm-landing-trust-row::-webkit-scrollbar {
+  display: none;
+}
+
+.mm-landing-trust-chip {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+}
+
+.mm-landing-trust-chip__icon {
+  font-size: 0.85rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.mm-landing-trust-chip__label {
+  font-size: 0.625rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (min-width: 480px) {
+  .mm-landing-trust-chip {
+    gap: 0.45rem;
+    padding: 0.6rem 0.9rem;
+  }
+  .mm-landing-trust-chip__label {
+    font-size: 0.7rem;
+  }
+}
+
+@media (min-width: 640px) {
+  .mm-landing-hero {
+    padding: 3rem 0 1.75rem;
+  }
+  .mm-landing-trust-row {
+    gap: 0.65rem;
+    max-width: 40rem;
+  }
+  .mm-landing-trust-chip {
+    padding: 0.65rem 1.1rem;
+  }
+  .mm-landing-trust-chip__label {
+    font-size: 0.75rem;
+  }
+}
+
+/* Names row — full width, left-aligned exception */
+.mm-landing-names {
+  width: 100%;
+  max-width: 48rem;
+  text-align: left;
+  align-self: stretch;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 @media (min-width: 640px) {
