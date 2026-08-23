@@ -1,5 +1,5 @@
 /* Helloooo - Service Worker (static assets only) */
-const CACHE = 'helloooo-static-v11';
+const CACHE = 'helloooo-static-v13';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();

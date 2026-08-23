@@ -1,10 +1,14 @@
 /**
  * Age verification + Cloudflare Turnstile - shown first before preloader
  */
-import { useState } from 'react';
-import { Turnstile } from 'react-turnstile';
+import { useState, Suspense } from 'react';
+import { lazyRetry } from '../utils/lazyRetry';
 import { API_BASE } from '../config/apiBase';
 import { HellooooBrand, HellooooLogo, HELLOOOO_EMOJI } from './HellooooBrand';
+
+const Turnstile = lazyRetry(() =>
+  import('react-turnstile').then((m) => ({ default: m.Turnstile }))
+);
 
 const apiBase = API_BASE;
 // Use env key or Cloudflare test key (always passes) for dev
@@ -58,12 +62,11 @@ export function AgeVerificationGate({ onVerified }) {
       if (data.success) {
         await finishVerified();
       } else {
-        setError('Verification failed. Please try again.');
+        setError(data.error || 'Security check failed. Please try again.');
         setTurnstileToken(null);
       }
-    } catch (e) {
-      setError('Connection error. Please try again.');
-      setTurnstileToken(null);
+    } catch {
+      setError('Could not verify. Check your connection and try again.');
     } finally {
       setIsVerifying(false);
     }
@@ -94,15 +97,17 @@ export function AgeVerificationGate({ onVerified }) {
         </p>
 
         {!skipTurnstile && (
-          <div className="flex justify-center mb-6">
-            <Turnstile
-              sitekey={turnstileSiteKey}
-              onVerify={handleTurnstileVerify}
-              onError={handleTurnstileError}
-              onExpire={handleTurnstileError}
-              theme="dark"
-              size="normal"
-            />
+          <div className="flex justify-center mb-6 min-h-[65px]">
+            <Suspense fallback={<div className="text-xs text-white/40 py-4">Loading security check…</div>}>
+              <Turnstile
+                sitekey={turnstileSiteKey}
+                onVerify={handleTurnstileVerify}
+                onError={handleTurnstileError}
+                onExpire={handleTurnstileError}
+                theme="dark"
+                size="normal"
+              />
+            </Suspense>
           </div>
         )}
 

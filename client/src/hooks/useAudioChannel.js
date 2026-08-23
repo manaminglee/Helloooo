@@ -172,9 +172,19 @@ export function useAudioChannel(socket, iceServers) {
   useEffect(() => {
     if (!socket) return undefined;
 
-    const onJoined = async ({ channelId, topic, you, peers }) => {
+    const onJoined = async ({ channelId, topic, you, peers, maxSpeakers, wallpaper, gamesEnabled, pendingJoins }) => {
       channelIdRef.current = channelId;
-      setChannel({ channelId, topic, you, wallpaper: null, gamesEnabled: true, pendingJoins: [] });
+      setChannel({
+        channelId,
+        topic,
+        you,
+        wallpaper: wallpaper || null,
+        gamesEnabled: gamesEnabled !== false,
+        pendingJoins: pendingJoins || [],
+        maxSpeakers: maxSpeakers || 6,
+      });
+      setMembers([you, ...(peers || [])].filter(Boolean));
+      setMicMuted(you?.micMuted !== false);
       setConnecting(false);
       setError(null);
 
@@ -246,6 +256,12 @@ export function useAudioChannel(socket, iceServers) {
       } : prev);
     };
     const onSpeaking = ({ socketId, micMuted: muted }) => {
+      // Keep member.micMuted in sync — otherwise avatars stay "muted" forever
+      // because audio:mic only emits speaking events, not a full state dump.
+      setMembers((prev) =>
+        prev.map((m) => (m.socketId === socketId ? { ...m, micMuted: !!muted } : m))
+      );
+      if (socketId === socket.id) setMicMuted(!!muted);
       setSpeakingIds((prev) => {
         const next = new Set(prev);
         if (muted) next.delete(socketId);

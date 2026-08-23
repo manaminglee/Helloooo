@@ -107,7 +107,19 @@ async function verifyPassword(plain, creator) {
       return false;
     }
   }
-  if (creator.password && creator.password === plain) return 'legacy';
+  // Legacy / schema-fallback: bcrypt hash may be stored in `password` when
+  // `password_hash` column is missing on older Supabase schemas.
+  if (creator.password) {
+    const stored = String(creator.password);
+    if (stored.startsWith('$2a$') || stored.startsWith('$2b$') || stored.startsWith('$2y$')) {
+      try {
+        return await bcrypt.compare(String(plain), stored);
+      } catch {
+        return false;
+      }
+    }
+    if (stored === plain) return 'legacy';
+  }
   return false;
 }
 

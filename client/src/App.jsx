@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, Suspense } from 'react';
 import { LandingPage } from './components/LandingPage';
 import { AgeVerificationGate } from './components/AgeVerificationGate';
-import { CreatorPublicProfile } from './components/CreatorPublicProfile';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { UnblockPaymentModal } from './components/UnblockPaymentModal';
 import { ToastProvider, useToast } from './components/Toast';
@@ -10,7 +9,6 @@ import { verifyStripeReturn } from './utils/paymentCheckout';
 import { LowPowerProvider } from './context/LowPowerContext';
 import { useSocket } from './hooks/useSocket';
 import { useCoins } from './hooks/useCoins';
-import { useIceServers } from './hooks/useIceServers';
 import { loadReconnectSession, clearReconnectSession, saveReconnectSession } from './utils/reconnectSession';
 import { API_BASE } from './config/apiBase';
 import { lazyRetry, clearChunkReloadFlag } from './utils/lazyRetry';
@@ -25,6 +23,9 @@ const GiftOverlayLazy = lazyRetry(() =>
   import('./components/GiftDrawer').then((m) => ({ default: m.GiftOverlay }))
 );
 const VideoChat = lazyRetry(() => import('./components/VideoChat'));
+const CreatorPublicProfile = lazyRetry(() =>
+  import('./components/CreatorPublicProfile').then((m) => ({ default: m.CreatorPublicProfile }))
+);
 
 const LoadingFallback = () => (
   <div className="flex items-center justify-center min-h-[50vh] w-full">
@@ -74,7 +75,6 @@ function AppShell() {
   const [roomJoinNotice, setRoomJoinNotice] = useState('');
   const { socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds, isPro, subscription } = useSocket();
   const coinState = useCoins();
-  const { iceServers } = useIceServers();
   const coinStateWithAds = useMemo(
     () => ({ ...coinState, adsEnabled, adScripts }),
     [coinState, adsEnabled, adScripts]
@@ -361,7 +361,11 @@ function AppShell() {
       );
     }
     if (appState === STATES.CREATOR_PROFILE && creatorHandle) {
-      return <CreatorPublicProfile handle={creatorHandle} />;
+      return (
+        <Suspense fallback={<LoadingFallback />}>
+          <CreatorPublicProfile handle={creatorHandle} />
+        </Suspense>
+      );
     }
     if (appState === STATES.LANDING || (appState === STATES.CHAT && !mode)) {
       return (
@@ -447,9 +451,9 @@ function AppShell() {
           <div className="mm-page-enter">
             <GroupAudioRoom
               socket={socket}
-              iceServers={iceServers}
               coins={coinState?.balance ?? 0}
               nickname={isCreator ? nickname : (joinMeta.displayNickname || nickname)}
+              initialChannelId={roomId}
               onExit={roomId ? handleLeaveRoom : handleCancelQueue}
             />
           </div>

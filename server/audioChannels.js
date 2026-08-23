@@ -30,7 +30,7 @@ const MAX_MEMBERS = Number(process.env.AUDIO_MAX_MEMBERS) || 24;
 const MAX_SPEAKERS = Number(process.env.AUDIO_MAX_SPEAKERS) || 6;
 const TOPIC_MAX = 48;
 const CHAT_MAX = 280;
-const WALLPAPER_MAX = 400 * 1024; // data-URL cap ~400KB
+const WALLPAPER_MAX = 550 * 1024; // data-URL cap (~400KB image after base64)
 const JOIN_WINDOW_MS = 10000;
 const JOIN_MAX = 8;
 const SIGNAL_WINDOW_MS = 10000;
@@ -48,6 +48,7 @@ function registerAudioChannels(app, io, deps) {
     isAdminRequest,
     audit,
     onChannelEmpty,
+    onChannelChange,
   } = deps;
 
   /** channelId -> channel */
@@ -113,6 +114,13 @@ function registerAudioChannels(app, io, deps) {
 
   const broadcastState = (c) => {
     io.to(c.id).emit('audio:state', channelState(c));
+    if (typeof onChannelChange === 'function') {
+      try {
+        onChannelChange(c);
+      } catch (_) {
+        /* presence must never break room state */
+      }
+    }
   };
 
   const listChannels = () =>
@@ -159,12 +167,23 @@ function registerAudioChannels(app, io, deps) {
       return;
     }
 
-    // Host left — promote the longest-standing remaining member.
+    // Host left — room stays open. Prefer co-taker, else longest-standing member.
     if (member.role === 'host') {
-      const next = [...c.members.values()].sort((a, b) => a.joinedAt - b.joinedAt)[0];
+      const remaining = [...c.members.values()].sort((a, b) => a.joinedAt - b.joinedAt);
+      const next = remaining.find((m) => m.role === 'moderator') || remaining[0];
       if (next) {
         next.role = 'host';
         next.forceMuted = false;
+        if (next.slot == null) next.slot = 0;
+        io.to(channelId).emit('audio:chat-message', {
+          channelId,
+          id: generateId('achm'),
+          socketId: next.socketId,
+          nickname: next.nickname,
+          text: `👑 ${next.nickname} is now room admin — keep talking`,
+          system: true,
+          ts: Date.now(),
+        });
       }
     }
     broadcastState(c);
@@ -235,6 +254,9 @@ function registerAudioChannels(app, io, deps) {
       you: memberView(member),
       peers,
       maxSpeakers: channel.maxSpeakers,
+      wallpaper: channel.wallpaper || null,
+      gamesEnabled: channel.gamesEnabled !== false,
+      pendingJoins: [...(channel.pendingJoins || [])],
     });
     socket.to(channel.id).emit('audio:peer-joined', { channelId: channel.id, member: memberView(member) });
     broadcastState(channel);
@@ -295,8 +317,31 @@ function registerAudioChannels(app, io, deps) {
       const userData = users.get(socket.id);
       const channel = getChannel(data.channelId);
       if (!userData || !channel) return socket.emit('audio:error', { message: 'Channel not found.' });
-      if (channel.members.has(socket.id)) return;
       if (typeof data.nickname === 'string') userData.nickname = sanitize(data.nickname, 30);
+
+      // Re-sync if the client lost state but the server still has membership.
+      if (channel.members.has(socket.id)) {
+        const member = channel.members.get(socket.id);
+        if (!memberships.has(socket.id)) memberships.set(socket.id, new Set());
+        memberships.get(socket.id).add(channel.id);
+        socket.join(channel.id);
+        const peers = [...channel.members.values()]
+          .filter((m) => m.socketId !== socket.id)
+          .map(memberView);
+        socket.emit('audio:joined', {
+          channelId: channel.id,
+          topic: channel.topic,
+          you: memberView(member),
+          peers,
+          maxSpeakers: channel.maxSpeakers,
+          wallpaper: channel.wallpaper || null,
+          gamesEnabled: channel.gamesEnabled !== false,
+          pendingJoins: [...(channel.pendingJoins || [])],
+        });
+        broadcastState(channel);
+        return;
+      }
+
       joinChannel(socket, channel, userData, ip);
     });
 
@@ -342,6 +387,8 @@ function registerAudioChannels(app, io, deps) {
         socketId: socket.id,
         micMuted: me.micMuted,
       });
+      // Also push member list so UI badges stay correct for late joiners.
+      broadcastState(channel);
     });
 
     on('audio:chat', (data) => {
@@ -479,7 +526,7 @@ function registerAudioChannels(app, io, deps) {
       }
       const wallpaper = data.wallpaper == null ? null : String(data.wallpaper);
       if (wallpaper && (!wallpaper.startsWith('data:image/') || wallpaper.length > WALLPAPER_MAX)) {
-        return socket.emit('audio:error', { message: 'Wallpaper must be a small image (max ~300KB).' });
+        return socket.emit('audio:error', { message: 'Wallpaper must be a small image (under ~400KB). Try another photo.' });
       }
       channel.wallpaper = wallpaper;
       broadcastState(channel);

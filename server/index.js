@@ -30,6 +30,8 @@ const { registerYoutubeLiveHandlers, stopAllForSocket } = require('./youtubeLive
 const { registerRaceGame } = require('./raceGame');
 const { registerEconomy } = require('./economy');
 const { registerModeration } = require('./moderation');
+const { createMatchQueue } = require('./matchQueue');
+const { createInfra } = require('./infra');
 const { promises: dnsPromises } = require('dns');
 
 const APP_VERSION = (() => {
@@ -213,8 +215,10 @@ const settings = {
 const interestToRoom = new Map();
 const rooms = new Map();
 const users = new Map();
-// 1:1 queues: mode -> [{ socketId, userData, interest }]
+// 1:1 queues: mode -> [{ socketId, userData, interest }] (memory fallback; Redis when REDIS_URL set)
 const pairQueues = { text: [], video: [] };
+const matchQueue = createMatchQueue();
+const infra = createInfra();
 // Group queues: interestKey -> [{ socketId, userData }]
 const groupQueues = new Map();
 
@@ -696,8 +700,7 @@ function terminateUserSession(socketId, message, io, { blockIp = false } = {}) {
     userData.rooms.delete(roomId);
   }
 
-  pairQueues.text = pairQueues.text.filter((e) => e.socketId !== socketId);
-  pairQueues.video = pairQueues.video.filter((e) => e.socketId !== socketId);
+  void matchQueue.removeFromQueues(socketId);
   for (const [key, q] of groupQueues.entries()) {
     groupQueues.set(key, q.filter((e) => e.socketId !== socketId));
   }
@@ -1124,40 +1127,97 @@ app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
     password_hash,
     created_at: new Date().toISOString()
   };
+
+  /** Insert with retries that strip unknown columns (older Supabase schemas). */
+  async function insertCreatorRow(row) {
+    const payload = { ...row };
+    if (payload.email == null) delete payload.email;
+    if (payload.avatar_url == null) delete payload.avatar_url;
+
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const { error } = await supabase.from('creators').insert(payload);
+      if (!error) return { ok: true };
+
+      // Unique constraint (handle / referral_code / email)
+      if (error.code === '23505') {
+        return { ok: false, conflict: true, message: error.message };
+      }
+
+      const msg = String(error.message || error.details || '');
+      const colMatch =
+        msg.match(/Could not find the ['"](\w+)['"] column/i) ||
+        msg.match(/column ["'](\w+)["'] of relation/i) ||
+        msg.match(/unknown column ["']?(\w+)["']?/i);
+      if (colMatch && Object.prototype.hasOwnProperty.call(payload, colMatch[1])) {
+        const col = colMatch[1];
+        console.warn(`[CREATORS] register: stripping missing column "${col}" and retrying`);
+        if (col === 'password_hash' && payload.password_hash) {
+          // Keep credentials usable on schemas that only have `password`.
+          payload.password = payload.password_hash;
+        }
+        delete payload[col];
+        continue;
+      }
+
+      console.error('[CREATORS] register insert failed', error.code, msg);
+      return { ok: false, message: msg || 'Database save failed' };
+    }
+    return { ok: false, message: 'Database save failed after schema retries' };
+  }
+
   try {
     if (supabase) {
       const { data: existing } = await supabase.from('creators').select('id').ilike('handle_name', entry.handle_name).maybeSingle();
       if (existing) return res.status(400).json({ error: 'Handle already registered.' });
 
-      const { error: insertError } = await supabase.from('creators').insert(entry);
-      if (insertError) return res.status(500).json({ error: 'Database save failed' });
+      const inserted = await insertCreatorRow(entry);
+      if (!inserted.ok) {
+        if (inserted.conflict) return res.status(400).json({ error: 'Handle or access code already registered.' });
+        return res.status(500).json({ error: 'Database save failed. Please try again.' });
+      }
     } else {
       const existing = localDb.creators.find(c => c.handle_name.toLowerCase() === entry.handle_name.toLowerCase());
       if (existing) return res.status(400).json({ error: 'Handle already registered.' });
       localDb.creators.push(entry);
       saveLocalDb();
     }
-    res.json({ success: true, message: 'Application submitted. Save your access code and use your password to log in after approval.', accessCode: referral_code });
-    await notifyCreatorAction(entry, {
+
+    res.json({
+      success: true,
+      message: 'Application submitted. Save your access code and use your password to log in after approval.',
+      accessCode: referral_code,
+    });
+
+    // Side-effects after response — never turn a successful register into a 500.
+    notifyCreatorAction(entry, {
       type: 'application_submitted',
       title: 'Application received',
       message: 'Your creator application is pending review. You will be notified here when an admin updates your status.',
       important: false,
-    });
-    emitToAdmins('creator-new-application', {
-      id: entry.id,
-      handle_name: entry.handle_name,
-      platform: entry.platform,
-      profile_link: entry.profile_link,
-      email: entry.email,
-      referral_code: entry.referral_code,
-      status: 'pending',
-      coins_earned: 0,
-      referral_count: 0,
-      created_at: entry.created_at
-    });
+    }).catch((e) => console.error('[CREATORS] notify failed', e.message));
+
+    try {
+      emitToAdmins('creator-new-application', {
+        id: entry.id,
+        handle_name: entry.handle_name,
+        platform: entry.platform,
+        profile_link: entry.profile_link,
+        email: entry.email,
+        referral_code: entry.referral_code,
+        status: 'pending',
+        coins_earned: 0,
+        referral_count: 0,
+        created_at: entry.created_at
+      });
+    } catch (e) {
+      console.error('[CREATORS] admin emit failed', e.message);
+    }
+
     creatorEmail.notifyAdminNewApplication(entry).catch((e) => console.error('[EMAIL] admin notify failed', e.message));
-  } catch (e) { res.status(500).json({ error: 'Registration failed' }); }
+  } catch (e) {
+    console.error('[CREATORS] register failed', e);
+    if (!res.headersSent) res.status(500).json({ error: 'Registration failed' });
+  }
 });
 
 app.post('/api/creators/login', creatorLoginLimiter, async (req, res) => {
@@ -2279,6 +2339,7 @@ app.get('/api/admin/overview', requireAdmin, async (req, res) => {
   const turnUser = (process.env.TURN_USERNAME || '').trim();
   const turnPass = (process.env.TURN_PASSWORD || '').trim();
   const turnConfigured = !!(turnUrl && turnUser && turnPass);
+  const queueStats = await matchQueue.getStats();
 
   res.json({
     ...settings,
@@ -2288,12 +2349,14 @@ app.get('/api/admin/overview', requireAdmin, async (req, res) => {
       signalMaxPerMinute: SIGNAL_MAX_PER_MINUTE,
       stunEndpoints: 2,
       relayFallback: !turnConfigured,
+      matchQueue: queueStats.backend,
     },
     users: users.size,
     rooms: rooms.size,
     queues: {
-      text: pairQueues.text.length,
-      video: pairQueues.video.length,
+      text: queueStats.text,
+      video: queueStats.video,
+      backend: queueStats.backend,
     },
     roomList,
     userList,
@@ -2434,8 +2497,7 @@ app.post('/api/admin/killswitch', requireAdmin, (req, res) => {
     kickCount++;
   }
   // Clear serverside caches just in case
-  pairQueues.text = [];
-  pairQueues.video = [];
+  void matchQueue.clearAll();
   rooms.clear();
   interestToRoom.clear();
   users.clear();
@@ -2445,7 +2507,8 @@ app.post('/api/admin/killswitch', requireAdmin, (req, res) => {
 });
 
 // Health
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  const qStats = await matchQueue.getStats().catch(() => ({ backend: 'unknown', text: 0, video: 0 }));
   res.json({
     status: 'ok',
     db: supabase ? (supabaseHealthy === false ? 'unavailable' : 'supabase') : 'local',
@@ -2453,6 +2516,15 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     users: users.size,
     rooms: rooms.size,
+    matchQueue: qStats.backend,
+    waiting: { text: qStats.text, video: qStats.video },
+    architecture: {
+      edge: 'Cloudflare / WAF (DNS) → HTTPS/WSS',
+      gateway: 'Express (API + Socket.IO) · rate limits · gift validation',
+      redis: qStats.backend === 'redis' ? 'match · rooms · limits' : 'fallback:memory',
+      postgres: supabase ? 'wallet · coins · gifts · users · audit' : 'local_json',
+      media: 'WebRTC mesh (LiveKit optional later)',
+    },
   });
 });
 
@@ -2804,6 +2876,9 @@ const moderation = registerModeration(app, io, {
   ADMIN_ROOM,
 });
 
+// Channel lookup for gift membership checks — filled after audioChannels registers.
+const audioChannelLookup = { get: (_id) => null };
+
 economy = registerEconomy(app, io, {
   users,
   getCoinUser,
@@ -2813,6 +2888,8 @@ economy = registerEconomy(app, io, {
   isAdminRequest,
   sanitize,
   audit: moderation.audit,
+  getAudioChannel: (id) => audioChannelLookup.get(id),
+  rateLimit: (key, opts) => infra.rateLimit(key, opts),
 });
 
 // Forward declaration: the game needs the channel registry, and channels need
@@ -2827,8 +2904,21 @@ const audioChannels = registerAudioChannels(app, io, {
   userBlocks,
   isAdminRequest,
   audit: moderation.audit,
-  onChannelEmpty: (channelId) => raceGame?.destroyForChannel(channelId),
+  onChannelEmpty: (channelId) => {
+    raceGame?.destroyForChannel(channelId);
+    void infra.clearRoomPresence(channelId);
+  },
+  onChannelChange: (channel) => {
+    if (!channel) return;
+    void infra.setRoomPresence(channel.id, {
+      kind: 'audio',
+      topic: channel.topic,
+      members: channel.members?.size || 0,
+      speakers: [...(channel.members?.values?.() || [])].filter((m) => m.role !== 'listener').length,
+    });
+  },
 });
+audioChannelLookup.get = (id) => audioChannels.getChannel(id);
 
 raceGame = registerRaceGame(app, io, {
   users,
@@ -3069,7 +3159,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Find partner for 1:1 text or video
+  // Find partner for 1:1 text or video (Redis queue or in-memory fallback)
   on('find-partner', async (data) => {
     const userData = users.get(socket.id);
     if (!userData) return;
@@ -3087,8 +3177,6 @@ io.on('connection', (socket) => {
     userData.region = region;
     userData.language = language;
 
-    // Drop any lingering room membership so rematch isn't blocked by stale state
-    // (e.g. left a group UI without leave-room, or a crashed pair room).
     if (userData.rooms && userData.rooms.size > 0) {
       for (const rid of [...userData.rooms]) {
         const room = rooms.get(rid);
@@ -3103,84 +3191,76 @@ io.on('connection', (socket) => {
     const myBlocks = userBlocks.get(ip);
     const canMatch = (e) => {
       if (e.socketId === socket.id) return false;
-      const otherIp = users.get(e.socketId)?.ip;
+      const otherIp = users.get(e.socketId)?.ip || e.userData?.ip;
       if (!otherIp || blockedIps.has(otherIp)) return false;
       if (myBlocks && myBlocks.has(otherIp)) return false;
       if (userBlocks.get(otherIp)?.has(ip)) return false;
       return true;
     };
 
-    // Prevent double-queueing: drop any stale queue entries for this socket
-    // from ALL mode queues before matching or (re-)queueing.
-    pairQueues.text = pairQueues.text.filter((e) => e.socketId !== socket.id);
-    pairQueues.video = pairQueues.video.filter((e) => e.socketId !== socket.id);
-
-    // Also prune queue entries whose sockets are gone or stuck in rooms
-    const pruneQueue = (q) => q.filter((e) => {
-      const ud = users.get(e.socketId);
-      if (!ud || !io.sockets.sockets.get(e.socketId)) return false;
-      if (ud.rooms && ud.rooms.size > 0) return false;
-      return true;
-    });
-    pairQueues.text = pruneQueue(pairQueues.text);
-    pairQueues.video = pruneQueue(pairQueues.video);
-
-    const queue = pairQueues[mode];
-    const repFn = (otherIp) => persistence.getReputationBoost(otherIp);
-    // Candidates must still be connected and not already inside a room.
     const isAvailable = (e) => {
       const ud = users.get(e.socketId);
       if (!ud || !io.sockets.sockets.get(e.socketId)) return false;
       if (ud.rooms && ud.rooms.size > 0) return false;
       return true;
     };
-    let match = await enhancements.pickSmartMatch(queue.filter((e) => e.interest === interest && isAvailable(e)), interest, region, language, canMatch, repFn);
-    if (!match) match = await enhancements.pickSmartMatch(queue.filter(isAvailable), interest, region, language, canMatch, repFn);
 
-    if (match) {
-      // Atomic claim: pickSmartMatch awaits between selection and claim, so the
-      // entry may already be gone. Re-validate via indexOf — never splice(-1, 1),
-      // which would silently delete an unrelated user from the queue tail.
-      let idx = queue.indexOf(match);
-      if (idx === -1) {
-        // Queue changed mid-selection: retry the selection once.
-        match = await enhancements.pickSmartMatch(queue.filter(isAvailable), interest, region, language, canMatch, repFn);
-        idx = match ? queue.indexOf(match) : -1;
-        if (idx === -1) match = null;
-      }
-      if (match) {
-        queue.splice(idx, 1);
-        const otherData = users.get(match.socketId);
-        const otherSocket = io.sockets.sockets.get(match.socketId);
-        if (!otherData || !otherSocket) {
-          // Matched peer vanished between claim and room creation: fall through
-          // and re-queue the requester instead of silently dropping them.
-          match = null;
-        }
-      }
-    }
+    const repFn = (otherIp) => persistence.getReputationBoost(otherIp);
+    const entry = { socketId: socket.id, userData, interest, region, language, conversationMode, topicContract };
 
-    if (match) {
+    const result = await matchQueue.findOrEnqueue({
+      mode,
+      entry,
+      isCreator: !!userData.isCreator,
+      canMatch,
+      isAvailable,
+      pickSmartMatch: enhancements.pickSmartMatch,
+      interest,
+      region,
+      language,
+      repFn,
+    });
+
+    if (result.status === 'matched' && result.match) {
+      const match = result.match;
       const otherData = users.get(match.socketId);
+      const otherSocket = io.sockets.sockets.get(match.socketId);
+      if (!otherData || !otherSocket) {
+        await matchQueue.findOrEnqueue({
+          mode,
+          entry,
+          isCreator: !!userData.isCreator,
+          canMatch,
+          isAvailable,
+          pickSmartMatch: enhancements.pickSmartMatch,
+          interest,
+          region,
+          language,
+          repFn,
+        });
+        socket.emit('waiting-for-partner', { mode, interest });
+        return;
+      }
+
       const room = createRoom(interest, mode, socket.id, { id: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator }, PAIR_MAX);
       uniqueFeatures.enrichPartnerMatch(room, socket.id, data);
       addUserToRoom(room, match.socketId, { id: otherData.id, nickname: otherData.nickname, country: otherData.country, isCreator: otherData.isCreator });
       userData.rooms.add(room.id);
       otherData.rooms.add(room.id);
       socket.join(room.id);
-      io.sockets.sockets.get(match.socketId).join(room.id);
+      otherSocket.join(room.id);
 
       const myPeer = { socketId: socket.id, userId: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator };
       const otherPeer = { socketId: match.socketId, userId: otherData.id, nickname: otherData.nickname, country: otherData.country, isCreator: otherData.isCreator };
 
       const sessionConfig = uniqueFeatures.emitSessionConfig(room.id);
       socket.emit('partner-found', { roomId: room.id, peer: otherPeer, country: userData.country, sessionConfig });
-      io.sockets.sockets.get(match.socketId).emit('partner-found', { roomId: room.id, peer: myPeer, country: otherData.country, sessionConfig });
+      otherSocket.emit('partner-found', { roomId: room.id, peer: myPeer, country: otherData.country, sessionConfig });
 
       const reconnectToken = enhancements.issueReconnectToken(socket.id, { roomId: room.id, nickname: userData.nickname, mode });
       socket.emit('reconnect-token', { token: reconnectToken });
       const otherToken = enhancements.issueReconnectToken(match.socketId, { roomId: room.id, nickname: otherData.nickname, mode });
-      io.sockets.sockets.get(match.socketId).emit('reconnect-token', { token: otherToken });
+      otherSocket.emit('reconnect-token', { token: otherToken });
 
       if (userData.isCreator) {
         pushRoomChatMessage(room, buildCreatorIntroMessage(room.id, socket.id, userData));
@@ -3191,19 +3271,14 @@ io.on('connection', (socket) => {
 
       const history = room.messages || [];
       socket.emit('chat-history', { roomId: room.id, messages: history });
-      io.sockets.sockets.get(match.socketId).emit('chat-history', { roomId: room.id, messages: history });
+      otherSocket.emit('chat-history', { roomId: room.id, messages: history });
     } else {
-      const entry = { socketId: socket.id, userData, interest, region, language, conversationMode, topicContract };
-      if (userData.isCreator) queue.unshift(entry);
-      else queue.push(entry);
       socket.emit('waiting-for-partner', { mode, interest });
     }
   });
 
   on('cancel-find-partner', () => {
-    ['text', 'video'].forEach((m) => {
-      pairQueues[m] = pairQueues[m].filter((e) => e.socketId !== socket.id);
-    });
+    void matchQueue.removeFromQueues(socket.id);
   });
 
   // Join group by interest (find or create room, max 4)
@@ -3844,8 +3919,7 @@ io.on('connection', (socket) => {
 
   on('disconnect', () => {
     stopAllForSocket(socket.id);
-    pairQueues.text = pairQueues.text.filter((e) => e.socketId !== socket.id);
-    pairQueues.video = pairQueues.video.filter((e) => e.socketId !== socket.id);
+    void matchQueue.removeFromQueues(socket.id);
     for (const [key, q] of groupQueues.entries()) {
       groupQueues.set(key, q.filter(u => u.socketId !== socket.id));
     }
@@ -3863,9 +3937,20 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, HOST || '0.0.0.0', () => {
-  console.log(`Helloooo server listening on port ${PORT} (${NODE_ENV})`);
-});
+(async () => {
+  try {
+    const redisUrl = (process.env.REDIS_URL || process.env.REDIS_TLS_URL || '').trim();
+    await matchQueue.init({ io, redisUrl, memoryQueues: pairQueues });
+    infra.bindRedis(matchQueue.getClient());
+  } catch (err) {
+    console.error('[matchQueue] Startup init error:', err.message);
+  }
+
+  server.listen(PORT, HOST || '0.0.0.0', () => {
+    console.log(`Helloooo server listening on port ${PORT} (${NODE_ENV})`);
+    if (matchQueue.isRedis()) console.log('[matchQueue] Redis matchmaking active');
+  });
+})();
 
 // --- Graceful shutdown: drain, flush, close, exit (with hard 5s deadline) ---
 let shuttingDown = false;
@@ -3885,6 +3970,7 @@ function gracefulShutdown(signal) {
   forceTimer.unref();
 
   try { clearInterval(statsInterval); } catch { /* ignore */ }
+  void matchQueue.shutdown();
   try { server.close(); } catch { /* ignore */ } // stop accepting new HTTP connections
   try {
     io.close(() => {

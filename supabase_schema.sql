@@ -397,4 +397,87 @@ ALTER TABLE referral_clicks ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow full access" ON referral_clicks;
 CREATE POLICY "Allow full access" ON referral_clicks FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
+-- =============================================================================
+-- 17. Platform architecture: Wallet ledger · Gifts · Audit (Postgres / Supabase)
+-- Maps to: Redis (Match/Rooms/Limits) + Postgres (Wallet/Coins/Gifts/Users) + Audit Logs
+-- =============================================================================
+
+-- Coin wallet movement ledger (economy.js journal → durable)
+CREATE TABLE IF NOT EXISTS coin_ledger (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ip TEXT NOT NULL,
+  delta INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  balance_after INTEGER,
+  meta JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_coin_ledger_ip_created ON coin_ledger(ip, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_coin_ledger_reason ON coin_ledger(reason);
+
+ALTER TABLE coin_ledger ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON coin_ledger;
+CREATE POLICY "Allow full access" ON coin_ledger FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+-- Gift events (validated gifts after debit)
+CREATE TABLE IF NOT EXISTS gift_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  gift_id TEXT NOT NULL,
+  gift_name TEXT,
+  cost INTEGER NOT NULL DEFAULT 0,
+  from_socket_id TEXT,
+  to_socket_id TEXT,
+  from_user_id TEXT,
+  to_user_id TEXT,
+  from_ip TEXT,
+  to_ip TEXT,
+  channel_id TEXT,
+  creator_earned INTEGER DEFAULT 0,
+  blast BOOLEAN DEFAULT FALSE,
+  meta JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_gift_events_created ON gift_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_gift_events_channel ON gift_events(channel_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_gift_events_from_ip ON gift_events(from_ip, created_at DESC);
+
+ALTER TABLE gift_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON gift_events;
+CREATE POLICY "Allow full access" ON gift_events FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+-- Security / admin audit trail (moderation.audit → durable)
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  action TEXT NOT NULL,
+  details JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON audit_logs;
+CREATE POLICY "Allow full access" ON audit_logs FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+-- Voice / video room presence snapshots (optional durability; live state prefers Redis)
+CREATE TABLE IF NOT EXISTS room_sessions (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL DEFAULT 'pair', -- pair | audio | group_video
+  topic TEXT,
+  mode TEXT,
+  member_count INTEGER DEFAULT 0,
+  meta JSONB DEFAULT '{}',
+  opened_at TIMESTAMPTZ DEFAULT NOW(),
+  closed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_room_sessions_kind ON room_sessions(kind, opened_at DESC);
+
+ALTER TABLE room_sessions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access" ON room_sessions;
+CREATE POLICY "Allow full access" ON room_sessions FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
 -- === End Migration ===

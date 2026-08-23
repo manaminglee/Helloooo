@@ -1,9 +1,13 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
-import { AdminDashboard } from './components/AdminDashboard';
 import { isChunkLoadError } from './utils/lazyRetry';
 import './index.css';
+
+// Admin is a separate route — never ship it in the main landing bundle.
+const AdminDashboard = lazy(() =>
+  import('./components/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
+);
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -88,6 +92,7 @@ class ErrorBoundary extends React.Component {
 }
 
 const path = window.location.pathname || '/';
+const isAdminRoute = path.startsWith('/admin') || path === '/matrix-admin';
 
 // Service worker: versioned cache (bump CACHE in public/sw.js when deploying breaking changes)
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
@@ -100,10 +105,22 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   }).catch(() => {});
 }
 
+const bootFallback = (
+  <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#07060f', color: '#c084fc', fontFamily: 'system-ui,sans-serif', fontSize: 14 }}>
+    Loading Helloooo…
+  </div>
+);
+
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <ErrorBoundary>
-      {path.startsWith('/admin') ? <AdminDashboard /> : <App />}
+      {isAdminRoute ? (
+        <Suspense fallback={bootFallback}>
+          <AdminDashboard />
+        </Suspense>
+      ) : (
+        <App />
+      )}
     </ErrorBoundary>
   </React.StrictMode>
 );

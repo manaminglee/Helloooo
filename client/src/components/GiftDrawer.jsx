@@ -7,17 +7,27 @@ const TIER_STYLES = {
   legendary: 'border-amber-400/50 shadow-[0_0_18px_rgba(251,191,36,0.25)]',
 };
 
+const ROLE_SHORT = { host: 'Admin', moderator: 'Co', speaker: 'Stage', listener: 'View' };
+
 /**
- * Gift picker with categories, send-to-one / send-to-all, and coin packages.
+ * Gift picker with profile targets, send-to-one / send-to-all, and coin packages.
  */
-export function GiftDrawer({ socket, channelId, members = [], coins = 0, open, onClose }) {
+export function GiftDrawer({
+  socket,
+  channelId,
+  members = [],
+  coins = 0,
+  open,
+  onClose,
+  initialTarget = null,
+}) {
   const [gifts, setGifts] = useState([]);
   const [categories, setCategories] = useState([{ id: 'all', label: 'All' }]);
   const [packages, setPackages] = useState([]);
   const [category, setCategory] = useState('all');
   const [target, setTarget] = useState(null);
   const [toAll, setToAll] = useState(false);
-  const [tab, setTab] = useState('gifts'); // gifts | packs
+  const [tab, setTab] = useState('gifts');
   const [notice, setNotice] = useState(null);
   const [sending, setSending] = useState(false);
 
@@ -59,15 +69,27 @@ export function GiftDrawer({ socket, channelId, members = [], coins = 0, open, o
     };
   }, [socket]);
 
-  const others = members.filter((m) => m.socketId !== socket?.id);
-  const stagePeople = members.filter((m) => m.role !== 'listener' && m.socketId !== socket?.id);
+  const others = useMemo(
+    () => members.filter((m) => m.socketId !== socket?.id),
+    [members, socket?.id]
+  );
+  const stagePeople = useMemo(
+    () => members.filter((m) => m.role !== 'listener' && m.socketId !== socket?.id),
+    [members, socket?.id]
+  );
 
   useEffect(() => {
+    if (!open) return;
+    if (initialTarget && others.some((m) => m.socketId === initialTarget)) {
+      setTarget(initialTarget);
+      setToAll(false);
+      return;
+    }
     if (!target && others.length) setTarget(others[0].socketId);
     if (target && !others.some((m) => m.socketId === target)) {
       setTarget(others[0]?.socketId || null);
     }
-  }, [others, target]);
+  }, [open, initialTarget, others, target]);
 
   const filtered = useMemo(() => {
     if (category === 'all') return gifts;
@@ -167,17 +189,29 @@ export function GiftDrawer({ socket, channelId, members = [], coins = 0, open, o
 
             {!toAll && (
               others.length > 0 ? (
-                <select
-                  value={target || ''}
-                  onChange={(e) => setTarget(e.target.value)}
-                  className="w-full mb-2 bg-white/5 border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none"
-                >
-                  {others.map((m) => (
-                    <option key={m.socketId} value={m.socketId} className="bg-[#12151c]">
-                      {m.nickname} · {m.role}
-                    </option>
-                  ))}
-                </select>
+                <div className="mm-gift-targets mb-3" role="listbox" aria-label="Gift recipient">
+                  {others.map((m) => {
+                    const selected = target === m.socketId;
+                    return (
+                      <button
+                        key={m.socketId}
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        onClick={() => setTarget(m.socketId)}
+                        className={`mm-gift-target ${selected ? 'mm-gift-target--active' : ''}`}
+                      >
+                        <span className="mm-gift-target__avatar" data-gift-avatar={m.socketId}>
+                          {(m.nickname || '?').slice(0, 1).toUpperCase()}
+                          {m.role === 'host' && <span className="mm-gift-target__crown">👑</span>}
+                          {m.role === 'moderator' && <span className="mm-gift-target__crown">🛡️</span>}
+                        </span>
+                        <span className="mm-gift-target__name truncate">{m.nickname}</span>
+                        <span className="mm-gift-target__role">{ROLE_SHORT[m.role] || m.role}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               ) : (
                 <p className="mb-2 text-[11px] text-white/40">Invite someone to the room to send a gift.</p>
               )
@@ -229,13 +263,13 @@ export function GiftDrawer({ socket, channelId, members = [], coins = 0, open, o
             {notice.text}
           </p>
         )}
-        <p className="mt-2 text-[10px] text-white/30">Everyone sees the gift animation + chat line.</p>
+        <p className="mt-2 text-[10px] text-white/30">Tap a profile on stage to gift them · animation flies to their seat.</p>
       </div>
     </div>
   );
 }
 
-/** Full-screen animation layer for incoming gifts. */
+/** Full-screen animation that flies gifts toward the recipient&apos;s stage avatar. */
 export function GiftOverlay({ socket }) {
   const [flying, setFlying] = useState([]);
 
@@ -243,8 +277,18 @@ export function GiftOverlay({ socket }) {
     if (!socket) return undefined;
     const onGift = (payload) => {
       const id = `${payload.at}_${Math.random().toString(36).slice(2, 7)}`;
-      setFlying((prev) => [...prev.slice(-5), { ...payload, id }]);
-      setTimeout(() => setFlying((prev) => prev.filter((g) => g.id !== id)), 3600);
+      let targetX = window.innerWidth / 2;
+      let targetY = window.innerHeight * 0.35;
+      const el =
+        (payload.toSocketId && document.querySelector(`[data-audio-member="${payload.toSocketId}"]`)) ||
+        (payload.toSocketId && document.querySelector(`[data-gift-avatar="${payload.toSocketId}"]`));
+      if (el) {
+        const r = el.getBoundingClientRect();
+        targetX = r.left + r.width / 2;
+        targetY = r.top + r.height / 2;
+      }
+      setFlying((prev) => [...prev.slice(-5), { ...payload, id, targetX, targetY }]);
+      setTimeout(() => setFlying((prev) => prev.filter((g) => g.id !== id)), 2800);
     };
     socket.on('gift:received', onGift);
     return () => socket.off('gift:received', onGift);
@@ -257,23 +301,19 @@ export function GiftOverlay({ socket }) {
       {flying.map((g, i) => (
         <div
           key={g.id}
-          className="absolute left-1/2 -translate-x-1/2 text-center animate-[giftFloat_3.4s_ease-out_forwards]"
-          style={{ bottom: `${16 + (i % 3) * 6}%`, animationDelay: `${i * 80}ms` }}
+          className="mm-gift-fly"
+          style={{
+            '--gift-tx': `${g.targetX}px`,
+            '--gift-ty': `${g.targetY}px`,
+            animationDelay: `${i * 60}ms`,
+          }}
         >
-          <div className="text-6xl drop-shadow-[0_0_18px_rgba(251,191,36,0.6)]">{g.icon}</div>
-          <div className="mt-1 text-xs text-white/90 font-semibold bg-black/55 rounded-full px-3 py-1 backdrop-blur-sm">
-            {g.fromNickname} → {g.blast ? 'Everyone' : g.toNickname} · {g.name}
+          <div className="mm-gift-fly__icon">{g.icon}</div>
+          <div className="mm-gift-fly__label">
+            {g.fromNickname} → {g.blast ? 'Everyone' : g.toNickname}
           </div>
         </div>
       ))}
-      <style>{`
-        @keyframes giftFloat {
-          0%   { opacity: 0; transform: translate(-50%, 40px) scale(0.6); }
-          15%  { opacity: 1; transform: translate(-50%, 0) scale(1.15); }
-          30%  { transform: translate(-50%, -10px) scale(1); }
-          100% { opacity: 0; transform: translate(-50%, -240px) scale(0.9); }
-        }
-      `}</style>
     </div>
   );
 }

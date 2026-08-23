@@ -1,7 +1,6 @@
 /**
  * VideoChat – 1:1 anonymous video chat with WebRTC
- * Full Omegle-style: searching→matched→skip
- * Layout: remote video (main) | local video (pip) | side chat
+ * Fast connect: media → warm WebRTC → signaling → match → instant SDP/ICE → video
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { countryToFlag } from '../utils/countryFlag';
@@ -57,6 +56,7 @@ import {
   VideoMoreSheet,
   VideoReactionBar,
   VideoSessionBanners,
+  VideoConnectPipeline,
 } from './VideoSessionUI';
 
 function MessageSpark({ x, y }) {
@@ -397,13 +397,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (coinState?.balance !== undefined) setCoins(coinState.balance);
   }, [coinState?.balance]);
   const { balance, streak, canClaim, nextClaim, claimCoins, history, addHistory } = coinState || {};
-  const { iceServers, loading: iceLoading } = useIceServers();
+  const { iceServers } = useIceServers();
   const [messages, setMessages] = useState([]);
   const [sparks, setSparks] = useState([]);
   const [input, setInput] = useState('');
   const [roomId, setRoomId] = useState(null);
   const [peer, setPeer] = useState(null);
   const [status, setStatus] = useState('searching');
+  const [connectPhase, setConnectPhase] = useState('boot');
   const [replyingTo, setReplyingTo] = useState(null);
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
@@ -498,6 +499,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const pendingAnswerRef = useRef(null);
   const negotiationRetryRef = useRef(null);
   const findPartnerEmittedRef = useRef(false);
+  const warmPcRef = useRef(null);
   const peerInfoRef = useRef(new Map());
   const chatEndRef = useRef(null);
   const chatPanelRef = useRef(null);
@@ -506,8 +508,25 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   useEffect(() => {
     isMounted.current = true;
+    setConnectPhase('boot');
     return () => { isMounted.current = false; };
   }, []);
+
+  const disposeWarmPc = useCallback(() => {
+    const pc = warmPcRef.current;
+    if (!pc) return;
+    try {
+      pc.onicecandidate = null;
+      pc.close();
+    } catch { /* ignore */ }
+    warmPcRef.current = null;
+  }, []);
+
+  const emitWebRtcSignal = useCallback((remoteId, type, signal) => {
+    const rid = roomIdRef.current;
+    if (!socket || !rid || !remoteId) return;
+    socket.emit('webrtc-signal', { roomId: rid, targetSocketId: remoteId, type, signal });
+  }, [socket]);
 
   const bindLocalVideo = useCallback((el) => {
     localVideoRef.current = el;
@@ -940,10 +959,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         setMicBlocked(false);
         setCameraError(null);
         if (localVideoRef.current) attachStreamToVideo(localVideoRef.current, s);
+        setConnectPhase((p) => (p === 'boot' ? 'media' : p));
       } catch (err) {
         mmDebug('camera.error', err);
         setAudioOnly(false);
         setCameraError('We could not access your camera or microphone. Please allow permissions and try again.');
+        setConnectPhase('media');
       }
     })();
     return () => {
@@ -955,6 +976,51 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       }
     };
   }, [selectedAudioDeviceId, facingMode]);
+
+  // Pre-warm WebRTC + ICE gathering while waiting for a match (faster SDP on partner-found).
+  useEffect(() => {
+    if (status !== 'searching' && status !== 'idle') {
+      disposeWarmPc();
+      return undefined;
+    }
+    if (!localStreamRef.current || !iceServers?.length) return undefined;
+    if (warmPcRef.current && warmPcRef.current.connectionState !== 'closed') return undefined;
+
+    const stream = localStreamRef.current;
+    const pc = new RTCPeerConnection({
+      iceServers,
+      iceCandidatePoolSize: 10,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+      iceTransportPolicy: 'all',
+    });
+    stream.getTracks().forEach((t) => {
+      try { pc.addTrack(t, stream); } catch { /* ignore */ }
+    });
+    pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
+      .then((offer) => pc.setLocalDescription(offer))
+      .catch(() => { /* warm-up is best-effort */ });
+    warmPcRef.current = pc;
+    setConnectPhase((p) => (['boot', 'media'].includes(p) ? 'webrtc' : p));
+
+    return () => {
+      if (statusRef.current !== 'searching' && statusRef.current !== 'idle') {
+        disposeWarmPc();
+      }
+    };
+  }, [status, localStream, iceServers, disposeWarmPc]);
+
+  useEffect(() => {
+    if (connected) {
+      setConnectPhase((p) => (['boot', 'media', 'webrtc'].includes(p) ? 'signaling' : p));
+    }
+  }, [connected]);
+
+  useEffect(() => {
+    if (status === 'connected' && hasLiveRemoteVideo(peer?.stream)) {
+      setConnectPhase('video');
+    }
+  }, [status, peer?.stream]);
 
   useEffect(() => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -1031,10 +1097,43 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     el.play?.().catch(() => { });
   }, [peer?.stream, remoteVolume]);
 
+  const hardClosePeer = useCallback((remoteId) => {
+    const closeOne = (id, pc) => {
+      try {
+        pc.onicecandidate = null;
+        pc.ontrack = null;
+        pc.onconnectionstatechange = null;
+        pc.oniceconnectionstatechange = null;
+        pc.getReceivers?.().forEach((r) => {
+          try { r.track?.stop(); } catch { /* ignore */ }
+        });
+        pc.getSenders?.().forEach((s) => {
+          try { s.replaceTrack?.(null); } catch { /* ignore */ }
+        });
+        pc.close();
+      } catch { /* ignore */ }
+      peerConnectionsRef.current.delete(id);
+      pendingCandidatesRef.current.delete(id);
+    };
+    if (remoteId) {
+      const pc = peerConnectionsRef.current.get(remoteId);
+      if (pc) closeOne(remoteId, pc);
+    } else {
+      peerConnectionsRef.current.forEach((pc, id) => closeOne(id, pc));
+      peerConnectionsRef.current.clear();
+    }
+    if (remoteVideoRef.current) {
+      try { remoteVideoRef.current.srcObject = null; } catch { /* ignore */ }
+    }
+    if (pcRef.current && (!remoteId || peerConnectionsRef.current.size === 0)) {
+      pcRef.current = null;
+    }
+  }, []);
+
   const clearRoom = useCallback(() => {
     if (healthTimerRef.current) clearTimeout(healthTimerRef.current);
-    peerConnectionsRef.current.forEach((pc) => pc.close());
-    peerConnectionsRef.current.clear();
+    disposeWarmPc();
+    hardClosePeer();
     pendingCandidatesRef.current.clear();
     pendingOfferRef.current = null;
     pendingAnswerRef.current = null;
@@ -1044,12 +1143,19 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       negotiationRetryRef.current = null;
     }
     peerInfoRef.current.clear();
-    setPeer(null);
+    setPeer((prev) => {
+      if (prev?.stream) {
+        prev.stream.getTracks().forEach((t) => {
+          try { t.stop(); t.enabled = false; } catch { /* ignore */ }
+        });
+      }
+      return null;
+    });
     setRoomId(null);
     setMessages([]);
     roomIdRef.current = null;
     setP2pHealth('good');
-  }, []);
+  }, [hardClosePeer, disposeWarmPc]);
 
   const releaseAllMedia = useCallback(() => {
     const stopStream = (stream) => {
@@ -1067,7 +1173,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
     peerConnectionsRef.current.forEach((pc) => {
-      try { pc.close(); } catch { /* ignore */ }
+      try {
+        pc.onicecandidate = null;
+        pc.ontrack = null;
+        pc.close();
+      } catch { /* ignore */ }
     });
     peerConnectionsRef.current.clear();
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
@@ -1081,6 +1191,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (getPrefs().notifyBrowser) void ensureNotifyPermission();
     clearRoom();
     findPartnerEmittedRef.current = false;
+    setConnectPhase(localStreamRef.current ? 'webrtc' : 'media');
     setStatus('searching');
   };
 
@@ -1111,17 +1222,19 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (statusRef.current === 'connected' && connectedSecsRef.current >= 3 && selectedInterests.length > 0) {
       setToast(`Anonymous session ended (~${connectedSecsRef.current}s). Topics: ${selectedInterests.join(', ')} — not stored on our servers.`);
     }
-    if (socket) {
-      if (roomIdRef.current) socket.emit('leave-room', { roomId: roomIdRef.current });
-      else socket.emit('cancel-find-partner');
-    }
+    const rid = roomIdRef.current;
+    // Tear down local media path first so the UI unhooks instantly.
     clearRoom();
     findPartnerEmittedRef.current = false;
+    setConnectPhase(connected ? 'signaling' : 'webrtc');
     setStatus('searching');
     setGoodVibesSent(false); setGoodVibesMatch(false); setCameraBlur(false);
     setStrangerFilter('none'); setStrangerBlur(false);
-    // Single find-partner emit: the auto-emit effect fires once status is 'searching'
-  }, [socket, interest, status, clearRoom, selectedInterests, maybeShowRating, saveSessionVibe]);
+    if (socket) {
+      if (rid) socket.emit('leave-room', { roomId: rid });
+      else socket.emit('cancel-find-partner');
+    }
+  }, [socket, clearRoom, selectedInterests, maybeShowRating, saveSessionVibe]);
 
   const handleStop = useCallback(() => {
     if (statusRef.current === 'connected') saveSessionVibe();
@@ -1129,14 +1242,17 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (statusRef.current === 'connected' && connectedSecsRef.current >= 3 && selectedInterests.length > 0) {
       setToast(`Anonymous session ended (~${connectedSecsRef.current}s). Topics: ${selectedInterests.join(', ')} — not stored on our servers.`);
     }
+    const rid = roomIdRef.current;
     releaseAllMedia();
-    if (roomIdRef.current && socket) socket.emit('leave-room', { roomId: roomIdRef.current });
-    socket?.emit('cancel-find-partner');
     clearRoom();
+    disposeWarmPc();
+    setConnectPhase('boot');
     setStatus('idle');
     setGoodVibesSent(false); setGoodVibesMatch(false); setCameraBlur(false);
     setStrangerFilter('none'); setStrangerBlur(false);
-  }, [socket, clearRoom, selectedInterests, maybeShowRating, saveSessionVibe, releaseAllMedia]);
+    if (rid && socket) socket.emit('leave-room', { roomId: rid });
+    socket?.emit('cancel-find-partner');
+  }, [socket, clearRoom, selectedInterests, maybeShowRating, saveSessionVibe, releaseAllMedia, disposeWarmPc]);
 
   const handleBack = () => { handleStop(); onBack?.(); };
 
@@ -1486,11 +1602,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   const createPeerConnection = useCallback((remoteId) => {
     if (peerConnectionsRef.current.has(remoteId)) return peerConnectionsRef.current.get(remoteId);
+    disposeWarmPc();
     const pc = new RTCPeerConnection({
       iceServers,
       iceCandidatePoolSize: 10,
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
+      iceTransportPolicy: 'all',
     });
 
     const stream = localStreamRef.current;
@@ -1507,9 +1625,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
     pc.onicecandidate = (e) => {
       const rid = roomIdRef.current;
-      if (e.candidate && socket && rid) {
-        socket.emit('webrtc-signal', { roomId: rid, targetSocketId: remoteId, type: 'ice-candidate', signal: e.candidate });
-      }
+      if (!socket || !rid) return;
+      emitWebRtcSignal(remoteId, 'ice-candidate', e.candidate || null);
     };
 
     pc.ontrack = (e) => {
@@ -1528,6 +1645,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           isCreator: typeof info.isCreator === 'boolean' ? info.isCreator : prev?.isCreator,
         };
       });
+      if (track.kind === 'video' && track.readyState === 'live') {
+        setConnectPhase('video');
+      }
     };
 
     pc.onconnectionstatechange = () => {
@@ -1552,7 +1672,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           if (cur === pc && pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') {
             setP2pHealth((h) => (h === 'failed' ? 'failed' : 'unstable'));
           }
-        }, 4000);
+        }, 2500);
       }
 
       if (ice === 'failed' || ice === 'disconnected') {
@@ -1563,7 +1683,17 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     peerConnectionsRef.current.set(remoteId, pc);
     pcRef.current = pc;
     return pc;
-  }, [socket, iceServers]);
+  }, [socket, iceServers, disposeWarmPc, emitWebRtcSignal]);
+
+  // Hot-swap TURN credentials onto live peer connections once they load.
+  useEffect(() => {
+    if (!iceServers?.length) return;
+    peerConnectionsRef.current.forEach((pc) => {
+      try {
+        pc.setConfiguration({ iceServers });
+      } catch { /* ignore */ }
+    });
+  }, [iceServers]);
 
   const makingOffer = useRef(false);
   const ignoreOffer = useRef(false);
@@ -1574,9 +1704,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     const pc = createPeerConnection(remoteId);
     try {
       makingOffer.current = true;
+      setConnectPhase('negotiating');
       const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
       await pc.setLocalDescription(offer);
-      socket.emit('webrtc-signal', { roomId: rid, targetSocketId: remoteId, type: 'offer', signal: pc.localDescription });
+      emitWebRtcSignal(remoteId, 'offer', pc.localDescription);
+      emitWebRtcSignal(remoteId, 'ice-candidate', null);
       mmDebug('offer', remoteId, pc.signalingState);
     } catch (err) {
       mmDebug('offer.err', err);
@@ -1584,7 +1716,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     } finally {
       makingOffer.current = false;
     }
-  }, [socket, createPeerConnection]);
+  }, [socket, createPeerConnection, emitWebRtcSignal]);
 
   const doAnswer = useCallback(async (remoteId, offer) => {
     if (!socket) return;
@@ -1595,6 +1727,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     }
     const pc = createPeerConnection(remoteId);
     try {
+      setConnectPhase('negotiating');
       const isOffer = offer.type === 'offer';
       const collision = isOffer && (makingOffer.current || pc.signalingState !== 'stable');
       const polite = socket.id < remoteId;
@@ -1612,7 +1745,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       if (isOffer) {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        socket.emit('webrtc-signal', { roomId: rid, targetSocketId: remoteId, type: 'answer', signal: pc.localDescription });
+        emitWebRtcSignal(remoteId, 'answer', pc.localDescription);
+        emitWebRtcSignal(remoteId, 'ice-candidate', null);
 
         const pend = pendingCandidatesRef.current.get(remoteId) || [];
         for (const c of pend) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => { });
@@ -1622,7 +1756,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       mmDebug('negotiation.err', err);
       pendingAnswerRef.current = { from: remoteId, signal: offer };
     }
-  }, [socket, createPeerConnection]);
+  }, [socket, createPeerConnection, emitWebRtcSignal]);
 
   useEffect(() => {
     if (!localStream || !roomIdRef.current) return;
@@ -1638,12 +1772,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     }
   }, [localStream, peer?.socketId, doOffer, doAnswer]);
 
-  // Wait for camera + ICE servers before matching (prevents black-screen negotiations).
+  // Match as soon as camera is ready — STUN fallback is already in iceServers;
+  // waiting on TURN fetch only delays first connect.
   useEffect(() => {
-    if (!socket || !connected || status !== 'searching' || roomIdRef.current || iceLoading) return;
+    if (!socket || !connected || status !== 'searching' || roomIdRef.current) return;
     if (!localStreamRef.current) return;
     if (findPartnerEmittedRef.current) return;
     findPartnerEmittedRef.current = true;
+    setConnectPhase('matching');
     let creatorToken = '';
     try {
       creatorToken = window.localStorage.getItem('mm_creatorId') || '';
@@ -1656,7 +1792,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       topicContract,
       creatorToken: isCreator || creatorToken ? creatorToken : undefined,
     });
-  }, [socket, connected, status, localStream, iceLoading, interest, nickname, conversationMode, topicContract, isCreator]);
+  }, [socket, connected, status, localStream, interest, nickname, conversationMode, topicContract, isCreator]);
 
   // Auto-recover if connected but remote video never arrives.
   useEffect(() => {
@@ -1683,6 +1819,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const addIce = useCallback(async (remoteId, candidate) => {
     const pc = peerConnectionsRef.current.get(remoteId);
     const pend = pendingCandidatesRef.current.get(remoteId) || [];
+    // End-of-candidates
+    if (candidate == null) {
+      if (pc) {
+        try { await pc.addIceCandidate(null); } catch { /* ignore */ }
+      }
+      return;
+    }
     if (!pc) {
       pend.push(candidate);
       pendingCandidatesRef.current.set(remoteId, pend);
@@ -1690,7 +1833,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     }
     const add = async (c) => {
       try {
-        await pc.addIceCandidate(new RTCIceCandidate(c));
+        await pc.addIceCandidate(c == null ? null : new RTCIceCandidate(c));
         return true;
       } catch {
         return false;
@@ -1710,12 +1853,16 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (!socket) return;
 
     const onPartnerFound = (data) => {
+      disposeWarmPc();
       roomIdRef.current = data.roomId;
       setRoomId(data.roomId);
       const p = data.peer;
+      setConnectPhase('matched');
+      playMatch();
       if (p?.socketId) {
         peerInfoRef.current.set(p.socketId, { nickname: p.nickname, country: p.country, isCreator: p.isCreator });
         setPeer({ socketId: p.socketId, nickname: p.nickname, country: p.country, isCreator: p.isCreator, stream: null });
+        createPeerConnection(p.socketId);
         if (socket.id < p.socketId) {
           if (localStreamRef.current) doOffer(p.socketId);
           else pendingOfferRef.current = p.socketId;
@@ -1736,7 +1883,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         setShowStrangerReveal(true);
       }
       onJoined?.(data.roomId);
-      playMatch();
       if (getPrefs().notifyBrowser) notifyIfBackground('Match found', 'Someone joined your Helloooo video chat 👋.');
     };
 
@@ -1754,8 +1900,18 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       }
     };
 
-    const onUserLeft = () => {
-      setPeer(null);
+    const onUserLeft = (data) => {
+      const leftId = data?.socketId || [...peerConnectionsRef.current.keys()][0];
+      // Drop the peer connection immediately so audio/video stop with no lag.
+      hardClosePeer(leftId);
+      setPeer((prev) => {
+        if (prev?.stream) {
+          prev.stream.getTracks().forEach((t) => {
+            try { t.stop(); t.enabled = false; } catch { /* ignore */ }
+          });
+        }
+        return null;
+      });
       setStatus('disconnected');
       setPartnerLeft(true);
       playDisconnectSound();
@@ -1764,10 +1920,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       userLeftTimerRef.current = setTimeout(() => {
         if (!isMounted.current || statusRef.current === 'idle' || statusRef.current === 'searching') return;
         handleSkip();
-      }, 700);
+      }, 80);
 
       clearTimeout(partnerLeftTimerRef.current);
-      partnerLeftTimerRef.current = setTimeout(() => setPartnerLeft(false), 5000);
+      partnerLeftTimerRef.current = setTimeout(() => setPartnerLeft(false), 2500);
     };
 
     const onRoomEndedByAdmin = (data) => {
@@ -1826,8 +1982,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             pendingCandidatesRef.current.set(from, []);
           } catch (err) { mmDebug('setRemoteDesc', err); }
         }
-      } else if (data.type === 'ice-candidate' && data.signal) {
-        addIce(from, data.signal);
+      } else if (data.type === 'ice-candidate') {
+        addIce(from, data.signal ?? null);
       }
     };
 
@@ -1878,8 +2034,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       }
       setMessages((m) => [...m, { id: nextMsgId('sys'), system: true, text: '✅ Reconnected to chat server.', ts: Date.now() }]);
       // Re-enter matchmaking after reconnect (socket.id changed; old queue entry is gone)
-      if (!roomIdRef.current && statusRef.current === 'searching' && localStreamRef.current && !iceLoading) {
+      if (!roomIdRef.current && statusRef.current === 'searching' && localStreamRef.current) {
         findPartnerEmittedRef.current = true;
+        setConnectPhase('matching');
         let creatorToken = '';
         try {
           creatorToken = window.localStorage.getItem('mm_creatorId') || '';
@@ -1926,7 +2083,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       socket.off('connect', onSocketConnect);
       socket.off('disconnect', onSocketDisconnect);
     };
-  }, [socket, interest, nickname, conversationMode, topicContract, isCreator, iceLoading, onJoined, doOffer, doAnswer, addIce, handleBack, handleSkip, autoStrangerBlur, isMobile, showChat, chatCollapsed]);
+  }, [socket, interest, nickname, conversationMode, topicContract, isCreator, onJoined, doOffer, doAnswer, addIce, handleBack, handleSkip, createPeerConnection, hardClosePeer, autoStrangerBlur, isMobile, showChat, chatCollapsed, disposeWarmPc, emitWebRtcSignal]);
 
   useEffect(() => {
     if (!isTranslatorActive) return;
@@ -2378,7 +2535,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 {status === 'searching' && (
                   <div className="mm-desk-pane__placeholder">
                     <div className="mm-omegle-search__spinner mb-3" aria-hidden />
-                    <p className="text-sm font-semibold text-white/80">Looking for someone…</p>
+                    <p className="text-sm font-semibold text-white/80 mb-3">Looking for someone…</p>
+                    <VideoConnectPipeline phase={connectPhase} />
                   </div>
                 )}
                 {status === 'idle' && (
@@ -2388,6 +2546,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 )}
                 {status === 'connected' && (
                   <>
+                    {connectPhase !== 'video' && (
+                      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40">
+                        <VideoConnectPipeline phase={connectPhase} compact />
+                      </div>
+                    )}
                     <RemoteVideoComponent stream={peer?.stream} muted={mutedStranger} strangerFilter={strangerFilter} strangerBlur={strangerBlur || (!unique.consentComplete && autoStrangerBlur)} />
                     {peer?.isCreator && (
                       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 px-3 py-1.5 rounded-full bg-black/55 border border-violet-500/30 text-[9px] font-black uppercase tracking-widest text-violet-200 pointer-events-none">
@@ -2472,7 +2635,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               <div className="mm-omegle-search">
                 <div className="mm-omegle-search__spinner" aria-hidden />
                 <p className="text-sm font-semibold text-white mb-1">Looking for someone…</p>
-                <p className="text-xs text-white/45 text-center max-w-[16rem]">Matching you with a random stranger.</p>
+                <p className="text-xs text-white/45 text-center max-w-[16rem] mb-3">Matching you with a random stranger.</p>
+                <VideoConnectPipeline phase={connectPhase} />
               </div>
             )}
             {(status === 'idle' || status === 'searching') && (
@@ -2490,6 +2654,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             )}
             {status === 'connected' && (
               <div className="relative w-full h-full">
+                {connectPhase !== 'video' && (
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40">
+                    <VideoConnectPipeline phase={connectPhase} compact />
+                  </div>
+                )}
                 <SecurityShield />
                 {isRecording && <RecordingIndicator />}
                 <div

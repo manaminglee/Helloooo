@@ -14,7 +14,22 @@ export default defineConfig({
     },
   },
   build: {
-    sourcemap: true,
-    minify: false,
-  }
+    // Production must minify — previously `minify: false` shipped huge JS.
+    minify: 'esbuild',
+    sourcemap: false,
+    cssCodeSplit: true,
+    target: 'es2020',
+    chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('three')) return 'vendor-three';
+          if (id.includes('react-dom') || id.includes('node_modules/react/')) return 'vendor-react';
+          if (id.includes('react-turnstile')) return 'vendor-turnstile';
+          return 'vendor';
+        },
+      },
+    },
+  },
 });

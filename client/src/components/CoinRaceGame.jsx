@@ -34,6 +34,7 @@ export function CoinRaceGame({ socket, channelId, coins = 0 }) {
           status: 'racing',
           elapsedMs: t.t,
           players: prev.players.map((p) => ({ ...p, ...(byId.get(p.socketId) || {}) })),
+          coins: t.coins || prev.coins,
         };
       });
     };
@@ -78,7 +79,7 @@ export function CoinRaceGame({ socket, channelId, coins = 0 }) {
   /** Local cooldown mirrors the server's so the button feels honest. */
   const boost = () => {
     const now = Date.now();
-    if (now - boostLockRef.current < 900) return;
+    if (now - boostLockRef.current < 1050) return;
     boostLockRef.current = now;
     emit('game:boost');
   };
@@ -103,8 +104,10 @@ export function CoinRaceGame({ socket, channelId, coins = 0 }) {
         <div className="relative px-4 pt-4 pb-3">
           <div className="flex items-start justify-between gap-3 mb-1">
             <div className="min-w-0">
-              <h4 className="mm-h3 text-white flex items-center gap-2">🏁 Coin Race</h4>
-              <p className="mm-caption mt-0.5">Everyone in this channel races together.</p>
+              <h4 className="mm-h3 text-white flex items-center gap-2">🏁 Highway Heist</h4>
+              <p className="mm-caption mt-0.5">
+                Solo or versus · boost only near roadside coins · hazards punish spam. Hard loot.
+              </p>
             </div>
             <span className="text-xs font-bold text-amber-300 shrink-0 tabular-nums">🪙 {coins}</span>
           </div>
@@ -122,7 +125,7 @@ export function CoinRaceGame({ socket, channelId, coins = 0 }) {
               >
                 <span className="text-sm font-black">{fee === 0 ? 'FREE' : fee}</span>
                 <span className="text-[9px] font-semibold opacity-55">
-                  {fee === 0 ? 'practice' : 'coins'}
+                  {fee === 0 ? 'solo ok' : 'coins'}
                 </span>
               </button>
             ))}
@@ -150,7 +153,7 @@ export function CoinRaceGame({ socket, channelId, coins = 0 }) {
       <div className="flex items-center justify-between gap-2 px-3 py-2.5 border-b border-white/8 bg-white/[0.02]">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm">🏁</span>
-          <span className="text-xs font-bold text-white truncate">Coin Race</span>
+          <span className="text-xs font-bold text-white truncate">Highway Heist</span>
           <span
             className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
               game.status === 'racing'
@@ -160,7 +163,11 @@ export function CoinRaceGame({ socket, channelId, coins = 0 }) {
                 : 'bg-amber-400/20 text-amber-300'
             }`}
           >
-            {game.status === 'lobby' ? `starts ${countdown}s` : game.status}
+            {game.status === 'lobby'
+              ? `starts ${countdown}s`
+              : game.mode === 'solo'
+                ? 'solo heist'
+                : game.status}
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0 text-[11px] font-bold">
@@ -176,8 +183,16 @@ export function CoinRaceGame({ socket, channelId, coins = 0 }) {
         trackLength={game.trackLength}
         status={game.status}
         mySocketId={socket?.id}
-        height={game.players.length > 4 ? 300 : 240}
+        height={game.players.length > 4 ? 320 : 280}
+        coins={game.coins || []}
+        hazards={game.hazards || []}
       />
+
+      {game.status === 'racing' && inRace && (
+        <p className="px-3 py-1.5 text-[10px] text-amber-200/80 bg-amber-500/5 border-t border-white/5">
+          ⚡ Boost only when near a gold coin · orange triangles slow you · {me?.boostCharges ?? 0} boosts left · loot {me?.collectedValue || 0}
+        </p>
+      )}
 
       {/* Standings */}
       <div className="px-3 py-2 border-t border-white/8 space-y-1">
@@ -241,7 +256,7 @@ export function CoinRaceGame({ socket, channelId, coins = 0 }) {
           >
             ⚡ BOOST
             <span className="ml-1 flex gap-0.5">
-              {Array.from({ length: 6 }).map((_, i) => (
+              {Array.from({ length: 4 }).map((_, i) => (
                 <span
                   key={i}
                   className={`w-1.5 h-4 rounded-sm ${i < me.boostCharges ? 'bg-black/70' : 'bg-black/20'}`}
@@ -270,6 +285,7 @@ export function CoinRaceGame({ socket, channelId, coins = 0 }) {
                 </span>
                 <span className={r.prize > 0 ? 'text-amber-300 font-bold' : 'text-white/30'}>
                   {r.prize > 0 ? `+${r.prize} 🪙` : '—'}
+                  {r.collected ? ` · ${r.collected} loot` : ''}
                 </span>
               </div>
             ))}

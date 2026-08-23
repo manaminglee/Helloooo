@@ -1,28 +1,50 @@
-import { useState, useEffect, useRef, memo } from 'react';
+import { useState, useEffect, useRef, memo, Suspense } from 'react';
 import { useSocket } from '../hooks/useSocket';
 import { CoinBadge } from './CoinBadge';
 import { useCreators } from '../hooks/useCreators';
 import { useCreatorNotifications } from '../hooks/useCreatorNotifications';
-import { MiniTrendChart } from './MiniTrendChart';
 import { API_BASE } from '../config/apiBase';
 
 import { countryToFlag } from '../utils/countryFlag';
-import { PresenceMap } from './PresenceMap';
-import { CreatorMatrix } from './CreatorMatrix';
-import { CreatorNotificationBell } from './CreatorNotificationBell';
 import { AdSlot } from './AdSlot';
-import { RoomBrowser } from './RoomBrowser';
 import { useLowPower } from '../context/LowPowerContext';
 import { CREATOR_MIN_WITHDRAWAL_COINS } from '../utils/creatorAuth';
 import { validateCreatorHandle, validateCreatorPassword } from '../utils/creatorValidation';
-import { EventsHubStrip, ConversationModePicker, AiStatusPill } from './unique/UniqueSessionUI';
 import { fetchPublicEvents, fetchAiStatus } from '../services/nvidiaAiClient';
 import { loadSessionPrefs, saveSessionPrefs } from '../constants/conversationModes';
 import { PHASE_4_UNIQUE } from '../constants/features';
-import { SettingsPanel, SettingsGearButton } from './SettingsPanel';
+import { SettingsGearButton } from './SettingsGear';
 import LandingHero from './LandingHero';
 import { LandingModeCards } from './LandingModeCards';
 import { HellooooBrand, HellooooLogo, HELLOOOO_TAGLINE, HELLOOOO_EMOJI } from './HellooooBrand';
+import { lazyRetry } from '../utils/lazyRetry';
+import { CreatorNotificationBell } from './CreatorNotificationBell';
+
+// Below-the-fold / secondary UI — keep landing first paint light.
+const MiniTrendChart = lazyRetry(() =>
+  import('./MiniTrendChart').then((m) => ({ default: m.MiniTrendChart }))
+);
+const PresenceMap = lazyRetry(() =>
+  import('./PresenceMap').then((m) => ({ default: m.PresenceMap }))
+);
+const CreatorMatrix = lazyRetry(() =>
+  import('./CreatorMatrix').then((m) => ({ default: m.CreatorMatrix }))
+);
+const RoomBrowser = lazyRetry(() =>
+  import('./RoomBrowser').then((m) => ({ default: m.RoomBrowser }))
+);
+const SettingsPanel = lazyRetry(() =>
+  import('./SettingsPanel').then((m) => ({ default: m.SettingsPanel }))
+);
+const EventsHubStrip = lazyRetry(() =>
+  import('./unique/UniqueSessionUI').then((m) => ({ default: m.EventsHubStrip }))
+);
+const ConversationModePicker = lazyRetry(() =>
+  import('./unique/UniqueSessionUI').then((m) => ({ default: m.ConversationModePicker }))
+);
+const AiStatusPill = lazyRetry(() =>
+  import('./unique/UniqueSessionUI').then((m) => ({ default: m.AiStatusPill }))
+);
 
 const BlueTick = () => (
   <span className="inline-flex items-center justify-center w-3 h-3 bg-violet-500 rounded-full ml-1.5 shadow-[0_0_14px_rgba(167,139,250,0.45)]">
@@ -655,7 +677,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
           {/* Names block — centered vertical stack */}
           <section className="mm-landing-section mm-landing-names mm-landing-fade-in">
             <div className="mm-landing-names__stack mm-landing-fade-in mm-landing-fade-in-delay-1">
-              <AiStatusPill online={aiOnline} />
+              <Suspense fallback={null}>
+                <AiStatusPill online={aiOnline} />
+              </Suspense>
               <input
                 type="text"
                 value={joinMeta.displayNickname || ''}
@@ -770,19 +794,23 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
           </section>
 
           {PHASE_4_UNIQUE.communityEvents && publicEvents.length > 0 && (
-            <EventsHubStrip events={publicEvents} />
+            <Suspense fallback={null}>
+              <EventsHubStrip events={publicEvents} />
+            </Suspense>
           )}
 
           {PHASE_4_UNIQUE.structuredModes && (
             <section className="mm-landing-section mm-landing-section--narrow mm-landing-fade-in mm-landing-fade-in-delay-2">
               <div className="mm-neural-panel p-6 sm:p-8">
                 <span className="mm-neural-badge mb-4 inline-block">NVIDIA AI · Session setup</span>
-                <ConversationModePicker
-                  mode={sessionMode}
-                  contract={sessionContract}
-                  onMode={handleSessionMode}
-                  onContract={handleSessionContract}
-                />
+                <Suspense fallback={null}>
+                  <ConversationModePicker
+                    mode={sessionMode}
+                    contract={sessionContract}
+                    onMode={handleSessionMode}
+                    onContract={handleSessionContract}
+                  />
+                </Suspense>
               </div>
             </section>
           )}
@@ -797,22 +825,26 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
               <span className="mm-landing-section-label">Browse</span>
               <h3 className="mm-landing-section-title">Active rooms</h3>
             </div>
-            <RoomBrowser
-              connected={connected}
-              onJoinRoom={(room) => {
-                const nick = (joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
-                onJoin(room.interest || 'general', nick, room.mode, room.id, {
-                  language: languageFilter,
-                  region: userCountry || country,
-                  displayNickname: nick,
-                  conversationMode: sessionMode,
-                  topicContract: sessionContract,
-                });
-              }}
-            />
+            <Suspense fallback={<p className="text-sm text-white/40 text-center py-4">Loading rooms…</p>}>
+              <RoomBrowser
+                connected={connected}
+                onJoinRoom={(room) => {
+                  const nick = (joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
+                  onJoin(room.interest || 'general', nick, room.mode, room.id, {
+                    language: languageFilter,
+                    region: userCountry || country,
+                    displayNickname: nick,
+                    conversationMode: sessionMode,
+                    topicContract: sessionContract,
+                  });
+                }}
+              />
+            </Suspense>
           </section>
 
-          <PresenceMap onlineCount={onlineCount} />
+          <Suspense fallback={null}>
+            <PresenceMap onlineCount={onlineCount} />
+          </Suspense>
 
           <section className="mm-landing-section mm-landing-section--medium">
             <div className="mm-landing-insight">
@@ -885,28 +917,30 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             </div>
 
             {!approvalData && !waitingForApproval && !creatorStatus && (
-              <CreatorMatrix
-                embedded
-                creatorStatus={creatorStatus}
-                onOpenDashboard={() => { setShowCreatorModal(false); setShowDashboardModal(true); }}
-                onOpenApply={() => {}}
-                onOpenStatus={() => { setShowCreatorModal(false); setShowStatusModal(true); }}
-                onOpenLogin={() => { setShowCreatorModal(false); setShowLoginModal(true); }}
-                onEditProfile={() => {
-                  setProfileForm({
-                    bio: creatorStatus?.bio || '',
-                    avatar: creatorStatus?.avatar_url || ''
-                  });
-                  setShowProfileModal(true);
-                }}
-                onWithdraw={(upi) => requestWithdrawal(upi)}
-                onLogout={() => {
-                  localStorage.setItem('mm_logout_flag', '1');
-                  localStorage.removeItem('mm_creatorId');
-                  window.location.reload();
-                }}
-                showAlert={showAlert}
-              />
+              <Suspense fallback={<p className="text-sm text-white/40 text-center py-6">Loading…</p>}>
+                <CreatorMatrix
+                  embedded
+                  creatorStatus={creatorStatus}
+                  onOpenDashboard={() => { setShowCreatorModal(false); setShowDashboardModal(true); }}
+                  onOpenApply={() => {}}
+                  onOpenStatus={() => { setShowCreatorModal(false); setShowStatusModal(true); }}
+                  onOpenLogin={() => { setShowCreatorModal(false); setShowLoginModal(true); }}
+                  onEditProfile={() => {
+                    setProfileForm({
+                      bio: creatorStatus?.bio || '',
+                      avatar: creatorStatus?.avatar_url || ''
+                    });
+                    setShowProfileModal(true);
+                  }}
+                  onWithdraw={(upi) => requestWithdrawal(upi)}
+                  onLogout={() => {
+                    localStorage.setItem('mm_logout_flag', '1');
+                    localStorage.removeItem('mm_creatorId');
+                    window.location.reload();
+                  }}
+                  showAlert={showAlert}
+                />
+              </Suspense>
             )}
 
             <div className="text-center mb-6">
@@ -1293,7 +1327,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   <div className="space-y-6">
                     {/* GROWTH VELOCITY ANALYTICS */}
                     <div className="mb-8 animate-in-zoom" style={{ animationDelay: '100ms' }}>
-                      <MiniTrendChart data={dashboardAnalytics.length ? dashboardAnalytics : [0, 0, 0, 0, 0, 0, 0]} color="#a78bfa" />
+                      <Suspense fallback={null}>
+                        <MiniTrendChart data={dashboardAnalytics.length ? dashboardAnalytics : [0, 0, 0, 0, 0, 0, 0]} color="#a78bfa" />
+                      </Suspense>
                       <div className="flex justify-between mt-3 px-2 text-[8px] font-black uppercase text-white/10 tracking-[0.3em] italic">
                         <span className="flex items-center gap-2">
                           <span className="w-1 h-1 rounded-full bg-violet-400" />
@@ -1807,7 +1843,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   {/* STATS GRID */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div className="md:col-span-2 p-8 rounded-[40px] bg-white/[0.02] border border-white/5">
-                      <MiniTrendChart data={dashboardAnalytics.length ? dashboardAnalytics : [0, 0, 0, 0, 0, 0, 0]} color="#34d399" />
+                      <Suspense fallback={null}>
+                        <MiniTrendChart data={dashboardAnalytics.length ? dashboardAnalytics : [0, 0, 0, 0, 0, 0, 0]} color="#34d399" />
+                      </Suspense>
                       <p className="text-[9px] font-bold text-white/25 uppercase tracking-widest mt-3">7-day activity (referrals, tips, follows)</p>
                     </div>
                     <div className="p-10 rounded-[50px] bg-white/[0.02] border border-white/5 group hover:border-violet-500/30 transition-all">
@@ -1986,7 +2024,11 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
         </div>
       )}
 
-      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <Suspense fallback={null}>
+          <SettingsPanel onClose={() => setShowSettings(false)} />
+        </Suspense>
+      )}
     </div>
   );
 }

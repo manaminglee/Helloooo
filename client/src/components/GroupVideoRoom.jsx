@@ -950,7 +950,13 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
   const createPeerConnection = (remoteId) => {
     if (peerConnectionsRef.current.has(remoteId)) return peerConnectionsRef.current.get(remoteId);
-    const pc = new RTCPeerConnection({ iceServers, iceCandidatePoolSize: 10 });
+    const pc = new RTCPeerConnection({
+      iceServers,
+      iceCandidatePoolSize: 4,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+      iceTransportPolicy: 'all',
+    });
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current));
@@ -962,9 +968,13 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
     pc.onicecandidate = (e) => {
       const rid = roomIdRef.current || roomId;
-      if (e.candidate && socket && rid) {
-        socket.emit('webrtc-signal', { roomId: rid, targetSocketId: remoteId, type: 'ice-candidate', signal: e.candidate });
-      }
+      if (!socket || !rid) return;
+      socket.emit('webrtc-signal', {
+        roomId: rid,
+        targetSocketId: remoteId,
+        type: 'ice-candidate',
+        signal: e.candidate || null,
+      });
     };
 
     pc.ontrack = (e) => {
@@ -1049,6 +1059,12 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const addIce = async (remoteId, candidate) => {
     const pc = peerConnectionsRef.current.get(remoteId);
     const pend = pendingCandidatesRef.current.get(remoteId) || [];
+    if (candidate == null) {
+      if (pc) {
+        try { await pc.addIceCandidate(null); } catch { /* ignore */ }
+      }
+      return;
+    }
     if (!pc) {
       pend.push(candidate);
       pendingCandidatesRef.current.set(remoteId, pend);
@@ -1056,7 +1072,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     }
     const add = async (c) => {
       try {
-        await pc.addIceCandidate(new RTCIceCandidate(c));
+        await pc.addIceCandidate(c == null ? null : new RTCIceCandidate(c));
         return true;
       } catch { return false; }
     };
@@ -1243,9 +1259,16 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
         const pc = peerConnectionsRef.current.get(sid);
         if (pc) {
-          pc.onicecandidate = null;
-          pc.ontrack = null;
-          pc.close();
+          try {
+            pc.onicecandidate = null;
+            pc.ontrack = null;
+            pc.onconnectionstatechange = null;
+            pc.oniceconnectionstatechange = null;
+            pc.getReceivers?.().forEach((r) => {
+              try { r.track?.stop(); } catch { /* ignore */ }
+            });
+            pc.close();
+          } catch { /* ignore */ }
           peerConnectionsRef.current.delete(sid);
         }
         pendingCandidatesRef.current.delete(sid);
@@ -1293,7 +1316,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
             });
           } catch (err) { mmDebug('grp.setRemoteDesc', err); }
         }
-      } else if (data.type === 'ice-candidate' && data.signal) addIce(from, data.signal);
+      } else if (data.type === 'ice-candidate') addIce(from, data.signal ?? null);
     };
 
     const onSystemMsg = (data) => setMessages((m) => [...m, { id: nextMsgId('sys'), system: true, text: `📢 ADMIN: ${data.message}`, ts: Date.now() }]);

@@ -379,3 +379,53 @@ export function AudioOnlyFallback({ nickname, onRetryCamera, onAudioOnly, micBlo
     </div>
   );
 }
+
+const VIDEO_CONNECT_STEPS = [
+  { id: 'boot', label: 'Open Helloooo' },
+  { id: 'media', label: 'Camera & mic' },
+  { id: 'webrtc', label: 'WebRTC ready' },
+  { id: 'signaling', label: 'Signaling' },
+  { id: 'matching', label: 'Find match' },
+  { id: 'matched', label: 'Match found' },
+  { id: 'negotiating', label: 'SDP / ICE' },
+  { id: 'video', label: 'Video live' },
+];
+
+/** Fast-connect pipeline — shows where you are in the match → video flow. */
+export function VideoConnectPipeline({ phase = 'boot', compact = false }) {
+  const idx = Math.max(0, VIDEO_CONNECT_STEPS.findIndex((s) => s.id === phase));
+  const current = VIDEO_CONNECT_STEPS[idx] || VIDEO_CONNECT_STEPS[0];
+
+  if (compact) {
+    return (
+      <div className="mm-connect-pipeline mm-connect-pipeline--compact" aria-live="polite">
+        <span className="mm-connect-pipeline__pulse" aria-hidden />
+        <span className="mm-connect-pipeline__label">{current.label}</span>
+        {phase === 'matched' && <span className="mm-connect-pipeline__flash">⚡</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mm-connect-pipeline" aria-live="polite">
+      <p className="mm-connect-pipeline__title">Connecting</p>
+      <ol className="mm-connect-pipeline__steps">
+        {VIDEO_CONNECT_STEPS.map((step, i) => {
+          const done = i < idx;
+          const active = i === idx;
+          return (
+            <li
+              key={step.id}
+              className={`mm-connect-pipeline__step ${done ? 'mm-connect-pipeline__step--done' : ''} ${active ? 'mm-connect-pipeline__step--active' : ''}`}
+            >
+              <span className="mm-connect-pipeline__dot" aria-hidden>
+                {done ? '✓' : active && step.id === 'matched' ? '⚡' : i + 1}
+              </span>
+              <span className="mm-connect-pipeline__text">{step.label}</span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}

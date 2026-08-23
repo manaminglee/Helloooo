@@ -33,6 +33,8 @@ function registerEconomy(app, io, deps) {
     isAdminRequest,
     sanitize,
     audit,
+    getAudioChannel,
+    rateLimit: rateLimitFn,
   } = deps;
 
   /** ip -> Promise chain (async mutex) */
@@ -181,6 +183,33 @@ function registerEconomy(app, io, deps) {
 
   const tierFor = (ip) => TIERS[statsFor(ip).tier] || TIERS.none;
 
+  /** ip -> gift rate bucket */
+  const giftRates = new Map();
+  const GIFT_WINDOW_MS = 8000;
+  const GIFT_MAX = 6;
+
+  const giftRateOk = (key) => {
+    const now = Date.now();
+    const b = giftRates.get(key);
+    if (!b || now - b.start > GIFT_WINDOW_MS) {
+      giftRates.set(key, { start: now, count: 1 });
+      return true;
+    }
+    b.count += 1;
+    return b.count <= GIFT_MAX;
+  };
+
+  /** When gifting inside a voice room, both parties must be members. */
+  const assertChannelGift = (channelId, fromSocketId, toSocketId) => {
+    if (!channelId) return { ok: true };
+    if (typeof getAudioChannel !== 'function') return { ok: true };
+    const channel = getAudioChannel(channelId);
+    if (!channel) return { ok: false, error: 'Voice room not found' };
+    if (!channel.members.has(fromSocketId)) return { ok: false, error: 'Join the voice room first' };
+    if (!channel.members.has(toSocketId)) return { ok: false, error: 'That person left the room' };
+    return { ok: true };
+  };
+
   /**
    * Send a gift. Atomically debits the sender, credits the recipient's share,
    * and books the creator's earnings. Returns the animation payload.
@@ -193,6 +222,9 @@ function registerEconomy(app, io, deps) {
     if (!recipient) return { ok: false, error: 'Recipient not available' };
     // Same browser/NAT can share an IP — only block true self-gifts.
     if (toSocketId === fromSocketId) return { ok: false, error: 'You cannot gift yourself' };
+
+    const membership = assertChannelGift(channelId, fromSocketId, toSocketId);
+    if (!membership.ok) return membership;
 
     const spend = await debit(fromIp, gift.cost, `gift_sent_${gift.id}`, { toSocketId, channelId });
     if (!spend.ok) return spend;
@@ -241,13 +273,44 @@ function registerEconomy(app, io, deps) {
     }
 
     audit?.('gift_sent', { from: sender?.id, to: recipient.id, gift: gift.id, cost: gift.cost });
+
+    if (supabase) {
+      supabase
+        .from('gift_events')
+        .insert({
+          gift_id: gift.id,
+          gift_name: gift.name,
+          cost: gift.cost,
+          from_socket_id: fromSocketId,
+          to_socket_id: toSocketId,
+          from_user_id: sender?.id || null,
+          to_user_id: recipient.id || null,
+          from_ip: fromIp,
+          to_ip: recipient.ip || null,
+          channel_id: channelId || null,
+          creator_earned: share,
+          blast: false,
+          meta: { icon: gift.icon, tier: gift.tier },
+        })
+        .then(() => {})
+        .catch(() => {});
+    }
+
     return { ok: true, balance: spend.balance, gift: payload, creatorEarned: share };
   }
 
   async function sendGiftToAll({ fromIp, fromSocketId, giftId, channelId, targetIds }) {
     const gift = GIFTS.find((g) => g.id === giftId);
     if (!gift) return { ok: false, error: 'Unknown gift' };
-    const ids = [...new Set((targetIds || []).map(String))].filter((id) => id && id !== fromSocketId);
+
+    let ids = [...new Set((targetIds || []).map(String))].filter((id) => id && id !== fromSocketId);
+    if (channelId && typeof getAudioChannel === 'function') {
+      const channel = getAudioChannel(channelId);
+      if (!channel) return { ok: false, error: 'Voice room not found' };
+      if (!channel.members.has(fromSocketId)) return { ok: false, error: 'Join the voice room first' };
+      // Never trust client target list — only charge for real members.
+      ids = ids.filter((id) => channel.members.has(id));
+    }
     if (!ids.length) return { ok: false, error: 'No recipients' };
 
     const total = gift.cost * ids.length;
@@ -317,6 +380,14 @@ function registerEconomy(app, io, deps) {
 
     socket.on('gift:send', async (data) => {
       try {
+        if (typeof rateLimitFn === 'function') {
+          const rl = await rateLimitFn(`gift:${ip}`, { windowMs: 8000, max: 6 });
+          if (!rl.ok) {
+            return socket.emit('gift:error', { message: 'Slow down — too many gifts.' });
+          }
+        } else if (!giftRateOk(ip)) {
+          return socket.emit('gift:error', { message: 'Slow down — too many gifts.' });
+        }
         if (data?.toAll && data?.channelId) {
           const res = await sendGiftToAll({
             fromIp: ip,
