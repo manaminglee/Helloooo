@@ -1,0 +1,3 @@
+# Render / Nixpacks — ffmpeg required for YouTube Live RTMP relay
+[phases.setup]
+nixPkgs = ["ffmpeg"]

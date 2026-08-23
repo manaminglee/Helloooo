@@ -26,7 +26,7 @@ const creatorEmail = require('./creatorEmail');
 const creatorNotifications = require('./creatorNotifications');
 const adminLiveMonitor = require('./adminLiveMonitor');
 const { registerAudioChannels } = require('./audioChannels');
-const { registerYoutubeLiveHandlers, stopAllForSocket } = require('./youtubeLive');
+const { registerYoutubeLiveHandlers, stopAllForSocket, isFfmpegAvailable } = require('./youtubeLive');
 const { registerRaceGame } = require('./raceGame');
 const { registerEconomy } = require('./economy');
 const { registerModeration } = require('./moderation');
@@ -866,7 +866,17 @@ app.use(cors({
   credentials: true,
 }));
 
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '2mb' }));
+
+// Clearer response when body exceeds limit (e.g. huge avatar data-URL)
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.too.large' || err?.status === 413) {
+    return res.status(413).json({
+      error: 'Upload too large. Use a smaller avatar photo (under ~500KB after compression).',
+    });
+  }
+  return next(err);
+});
 
 app.use(rateLimit({
   windowMs: 60 * 1000,
@@ -1445,22 +1455,47 @@ app.get('/api/creators/follow-status', async (req, res) => {
   }
 });
 
-// Update Creator Profile (Avatar & Bio)
+// Update Creator Profile (Avatar, Bio, payout UPI)
 app.post('/api/creators/update-profile', async (req, res) => {
-  const { bio, avatar_url } = req.body || {};
+  const { bio, avatar_url, preferred_upi } = req.body || {};
 
   try {
     const { creator, ip } = await getApprovedCreatorForRequest(req);
     if (!creator || creator.status !== 'approved') return res.status(403).json({ error: 'Unauthorized' });
     await linkCreatorIpIfNeeded(creator, ip);
 
+    let nextAvatar = avatar_url != null && avatar_url !== '' ? String(avatar_url) : creator.avatar_url;
+    if (nextAvatar && nextAvatar !== creator.avatar_url) {
+      if (nextAvatar.startsWith('data:image/') && nextAvatar.length > 700_000) {
+        return res.status(413).json({
+          error: 'Avatar too large. Compress the image or pick a smaller photo.',
+        });
+      }
+      if (!nextAvatar.startsWith('data:image/') && !/^https?:\/\//i.test(nextAvatar)) {
+        return res.status(400).json({ error: 'Avatar must be an image or https URL.' });
+      }
+      nextAvatar = nextAvatar.slice(0, 700_000);
+    }
+
     const updates = {
-      bio: bio ? sanitize(bio, 150) : creator.bio,
-      avatar_url: avatar_url || creator.avatar_url
+      bio: bio != null ? sanitize(String(bio), 150) : creator.bio,
+      avatar_url: nextAvatar,
     };
 
+    if (preferred_upi != null && String(preferred_upi).trim() !== '') {
+      const upiCheck = creatorSecurity.validateUpi(preferred_upi);
+      if (!upiCheck.ok) return res.status(400).json({ error: upiCheck.error });
+      updates.preferred_upi = upiCheck.upi;
+    } else if (preferred_upi === '') {
+      updates.preferred_upi = '';
+    }
+
     if (supabase) {
-      await supabase.from('creators').update(updates).eq('id', creator.id);
+      const { error } = await supabase.from('creators').update(updates).eq('id', creator.id);
+      if (error) {
+        console.error('[CREATORS] update-profile', error.message);
+        return res.status(500).json({ error: 'Could not save profile. Try a smaller avatar.' });
+      }
     } else {
       Object.assign(creator, updates);
       saveLocalDb();
@@ -2593,6 +2628,7 @@ app.get('/health', async (req, res) => {
       redis: qStats.backend === 'redis' ? 'match · rooms · limits' : 'fallback:memory',
       postgres: supabase ? 'wallet · coins · gifts · users · audit' : 'local_json',
       media: 'WebRTC mesh (LiveKit optional later)',
+      youtubeLive: isFfmpegAvailable() ? 'ffmpeg-ready' : 'ffmpeg-missing',
     },
   });
 });

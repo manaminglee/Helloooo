@@ -202,14 +202,24 @@ export function useCreators() {
     }
   }, []);
 
-  const updateProfile = async (bio, avatar_url) => {
+  const updateProfile = async (bio, avatar_url, preferred_upi) => {
     try {
+      const body = { bio, avatar_url };
+      if (preferred_upi !== undefined) body.preferred_upi = preferred_upi;
       const res = await fetch(`${API_BASE}/api/creators/update-profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },
-        body: JSON.stringify({ bio, avatar_url }),
+        body: JSON.stringify(body),
       });
-      const data = await res.json();
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+      if (res.status === 413) {
+        return { error: data.error || 'Avatar too large. Pick a smaller photo.' };
+      }
       if (res.ok) fetchStatus();
       return data;
     } catch (e) {

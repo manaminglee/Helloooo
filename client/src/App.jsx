@@ -453,6 +453,7 @@ function AppShell() {
               socket={socket}
               coins={coinState?.balance ?? 0}
               nickname={isCreator ? nickname : (joinMeta.displayNickname || nickname)}
+              isCreator={isCreator}
               initialChannelId={roomId}
               onExit={roomId ? handleLeaveRoom : handleCancelQueue}
             />

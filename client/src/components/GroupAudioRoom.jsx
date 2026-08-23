@@ -2,8 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAudioChannel } from '../hooks/useAudioChannel';
 import { useIceServers } from '../hooks/useIceServers';
 import { useMessageTtl, formatTtl } from '../hooks/useMessageTtl';
+import { useYoutubeLive } from '../hooks/useYoutubeLive';
 import { CoinRaceGame } from './CoinRaceGame';
 import { GiftDrawer } from './GiftDrawer';
+import { CreatorLiveModal } from './CreatorLiveModal';
 
 const STAGE_SLOTS = 6;
 const ROLE_LABEL = { host: 'Admin', moderator: 'Co-taker', speaker: 'Speaker', listener: 'Viewer' };
@@ -181,7 +183,7 @@ function StageSlot({
   );
 }
 
-export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, nickname = 'Anonymous', initialChannelId = null, onExit }) {
+export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, nickname = 'Anonymous', initialChannelId = null, isCreator = false, onExit }) {
   const { iceServers: iceFromHook } = useIceServers();
   const iceServers = iceServersProp?.length ? iceServersProp : iceFromHook;
   const {
@@ -202,6 +204,19 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
   const [wallpaperMsg, setWallpaperMsg] = useState(null);
   const chatEndRef = useRef(null);
   const wallpaperInputRef = useRef(null);
+  const liveCameraRef = useRef(null);
+  const [showLiveModal, setShowLiveModal] = useState(false);
+  const [liveCamBusy, setLiveCamBusy] = useState(false);
+
+  const youtubeLive = useYoutubeLive({
+    socket,
+    enabled: isCreator,
+    roomId: channel?.channelId || channel?.id || null,
+    onStop: () => {
+      liveCameraRef.current?.getTracks().forEach((t) => t.stop());
+      liveCameraRef.current = null;
+    },
+  });
 
   useEffect(() => {
     if (!socket) return undefined;
@@ -282,8 +297,37 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
   };
 
   const handleLeave = () => {
+    if (youtubeLive.isLive) youtubeLive.stopLive();
+    liveCameraRef.current?.getTracks().forEach((t) => t.stop());
+    liveCameraRef.current = null;
     leave();
     onExit?.();
+  };
+
+  const ensureLiveCamera = async () => {
+    if (liveCameraRef.current) return liveCameraRef.current;
+    setLiveCamBusy(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: true,
+      });
+      liveCameraRef.current = stream;
+      return stream;
+    } finally {
+      setLiveCamBusy(false);
+    }
+  };
+
+  const startYoutubeLive = async (streamKey) => {
+    const stream = await ensureLiveCamera();
+    await youtubeLive.startLive(streamKey, stream);
+    setShowLiveModal(false);
+  };
+
+  const stopYoutubeLive = () => {
+    youtubeLive.stopLive();
+    setShowLiveModal(false);
   };
 
   const openGiftFor = (member) => {
@@ -511,6 +555,17 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
               {micMuted ? '🔇 Unmute' : '🎙 Live'}
             </button>
           )}
+          {isCreator && (
+            <button
+              type="button"
+              disabled={liveCamBusy}
+              onClick={() => (youtubeLive.isLive ? stopYoutubeLive() : setShowLiveModal(true))}
+              className={`mm-btn !px-4 ${youtubeLive.isLive ? '!bg-rose-500 !text-white !border-rose-400' : '!bg-rose-500/15 !text-rose-200 !border-rose-400/25'}`}
+              title={youtubeLive.isLive ? 'Stop YouTube live' : 'Go live on YouTube (opens camera)'}
+            >
+              {youtubeLive.isLive ? '🔴 Live' : '📡 Live'}
+            </button>
+          )}
           {channel.gamesEnabled !== false && (
             <button type="button" onClick={() => setRaceOpen(true)} className="mm-btn !px-4 !bg-violet-500/15 !text-violet-200 !border-violet-400/25" aria-label="Coin race">🏁</button>
           )}
@@ -630,6 +685,16 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
         initialTarget={giftTarget}
         onClose={() => { setGiftOpen(false); setGiftTarget(null); }}
       />
+
+      {isCreator && (
+        <CreatorLiveModal
+          open={showLiveModal}
+          onClose={() => setShowLiveModal(false)}
+          isLive={youtubeLive.isLive}
+          onStart={startYoutubeLive}
+          onStop={stopYoutubeLive}
+        />
+      )}
     </div>
   );
 }

@@ -281,6 +281,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='creators' AND column_name='email') THEN
         ALTER TABLE creators ADD COLUMN email TEXT;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='creators' AND column_name='preferred_upi') THEN
+        ALTER TABLE creators ADD COLUMN preferred_upi TEXT DEFAULT '';
+    END IF;
 END $$;
 
 -- 10. Creator password reset tokens

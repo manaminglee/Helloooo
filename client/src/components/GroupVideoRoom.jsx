@@ -16,6 +16,7 @@ import { playConnectSound, playMessageSound, playDisconnectSound, playWaveSound 
 import { mmDebug } from '../utils/mmDebug';
 import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream, releaseMediaStream } from '../utils/webrtcMedia';
 import { createGroupGridCapture, pickRecorderMimeType } from '../utils/groupGridCapture';
+import { useYoutubeLive } from '../hooks/useYoutubeLive';
 import { MiniChatGameModal } from './MiniChatGamePanel';
 import { CreatorLiveModal } from './CreatorLiveModal';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
@@ -365,11 +366,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const [active3dEmoji, setActive3dEmoji] = useState(null);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [isLiveStreaming, setIsLiveStreaming] = useState(false);
   const [showLiveModal, setShowLiveModal] = useState(false);
   const [creatorLiveActive, setCreatorLiveActive] = useState(false);
   const recorderRef = useRef(null);
-  const liveRecorderRef = useRef(null);
   const gridCaptureRef = useRef(null);
   const isRecordingRef = useRef(false);
   const chunksRef = useRef([]);
@@ -531,10 +530,6 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       try { recorderRef.current.stop(); } catch { /* ignore */ }
       recorderRef.current = null;
     }
-    if (liveRecorderRef.current) {
-      try { liveRecorderRef.current.stop(); } catch { /* ignore */ }
-      liveRecorderRef.current = null;
-    }
     gridCaptureRef.current?.stop();
     gridCaptureRef.current = null;
   }, []);
@@ -545,13 +540,22 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     return ordered;
   }, [peers]);
 
+  const youtubeLive = useYoutubeLive({
+    socket,
+    enabled: isCreator,
+    roomId: roomIdRef.current || roomIdProp || roomId,
+    onStop: () => {
+      if (!isRecordingRef.current) {
+        gridCaptureRef.current?.stop();
+        gridCaptureRef.current = null;
+      }
+    },
+  });
+
   const releaseLocalMedia = useCallback(() => {
+    if (youtubeLive.isLive) youtubeLive.stopLive();
     stopGridCapture();
-    if (isLiveStreaming && socket && isCreator) {
-      socket.emit('youtube-live-stop', { roomId: roomIdRef.current || roomIdProp });
-    }
     setIsRecording(false);
-    setIsLiveStreaming(false);
     if (localStreamRef.current) {
       releaseMediaStream(localStreamRef.current, localVideoRef.current);
       localStreamRef.current = null;
@@ -561,7 +565,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       try { pc.close(); } catch { /* ignore */ }
     });
     peerConnectionsRef.current.clear();
-  }, [stopGridCapture, isLiveStreaming, socket, isCreator, roomIdProp]);
+  }, [stopGridCapture, youtubeLive]);
 
   const finishLeaveRoom = useCallback(() => {
     releaseLocalMedia();
@@ -645,7 +649,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       a.download = `Helloooo_GroupGrid_${Date.now()}.webm`;
       a.click();
       URL.revokeObjectURL(url);
-      if (!isLiveStreaming) stopGridCapture();
+      if (!youtubeLive.isLive) stopGridCapture();
       setIsRecording(false);
       emitRecordingStatus(false);
     };
@@ -665,43 +669,28 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
   const startYoutubeLive = async (streamKey) => {
     if (!isCreator || !socket) return;
-    if (!localStreamRef.current) { setToast('⚠️ Start your camera first.'); return; }
-    const mimeType = pickRecorderMimeType();
+    if (!localStreamRef.current) {
+      setToast('⚠️ Start your camera first.');
+      throw new Error('Start your camera first.');
+    }
     const capture = ensureGridCapture();
     const combined = capture.getCombinedStream();
-    const rid = roomIdRef.current || roomIdProp;
-    await new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('Live connect timeout')), 12000);
-      const onStarted = () => { clearTimeout(t); socket.off('youtube-live-started', onStarted); socket.off('error', onErr); resolve(); };
-      const onErr = ({ message }) => { clearTimeout(t); socket.off('youtube-live-started', onStarted); socket.off('error', onErr); reject(new Error(message || 'Live failed')); };
-      socket.once('youtube-live-started', onStarted);
-      socket.once('error', onErr);
-      socket.emit('youtube-live-start', { roomId: rid, streamKey });
-    });
-    const recorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 2_500_000 });
-    recorder.ondataavailable = async (e) => {
-      if (e.data.size > 0) socket.emit('youtube-live-chunk', await e.data.arrayBuffer());
-    };
-    recorder.onstop = () => {
-      socket.emit('youtube-live-stop', { roomId: rid });
-      if (!isRecordingRef.current) stopGridCapture();
-      setIsLiveStreaming(false);
-    };
-    recorder.start(500);
-    liveRecorderRef.current = recorder;
-    setIsLiveStreaming(true);
-    setToast('🔴 Live on YouTube');
+    try {
+      await youtubeLive.startLive(streamKey, combined);
+      setShowLiveModal(false);
+      setToast('🔴 Live on YouTube');
+    } catch (err) {
+      if (!isRecordingRef.current) {
+        gridCaptureRef.current?.stop();
+        gridCaptureRef.current = null;
+      }
+      setToast(`⚠️ ${err.message || 'Could not go live'}`);
+      throw err;
+    }
   };
 
   const stopYoutubeLive = () => {
-    if (liveRecorderRef.current) {
-      liveRecorderRef.current.stop();
-      liveRecorderRef.current = null;
-    } else if (socket && isCreator) {
-      socket.emit('youtube-live-stop', { roomId: roomIdRef.current || roomIdProp });
-    }
-    setIsLiveStreaming(false);
-    if (!isRecordingRef.current) stopGridCapture();
+    youtubeLive.stopLive();
     setToast('Live stream ended');
   };
 
@@ -720,9 +709,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   useEffect(() => {
-    if (!isRecording && !isLiveStreaming) return;
+    if (!isRecording && !youtubeLive.isLive) return;
     gridCaptureRef.current?.updateStreams(getGridStreams());
-  }, [peers, isRecording, isLiveStreaming, getGridStreams, localStreamReady]);
+  }, [peers, isRecording, youtubeLive.isLive, getGridStreams, localStreamReady]);
 
   // Toast auto-dismiss
   useEffect(() => {
@@ -1767,7 +1756,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
             <div className="mm-group-desk-stage">
               {statusBanners}
               {isRecording && isCreator && <RecordingIndicator />}
-              {isLiveStreaming && isCreator && (
+              {youtubeLive.isLive && isCreator && (
                 <div className="absolute top-4 right-4 z-[100] flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-600/25 border border-rose-500/40 backdrop-blur-md">
                   <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
                   <span className="text-[9px] font-black uppercase tracking-[0.2em] text-rose-300">Live</span>
@@ -1884,11 +1873,11 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                 </button>
                 <button
                   type="button"
-                  className={`mm-group-desk-tool ${isLiveStreaming ? 'mm-group-desk-tool--rec-on' : ''}`}
-                  onClick={() => (isLiveStreaming ? stopYoutubeLive() : setShowLiveModal(true))}
+                  className={`mm-group-desk-tool ${youtubeLive.isLive ? 'mm-group-desk-tool--rec-on' : ''}`}
+                  onClick={() => (youtubeLive.isLive ? stopYoutubeLive() : setShowLiveModal(true))}
                 >
-                  <span className={`w-2.5 h-2.5 rounded-full ${isLiveStreaming ? 'bg-rose-500 animate-pulse' : 'bg-rose-500/60'}`} />
-                  {isLiveStreaming ? 'Live' : 'Go Live'}
+                  <span className={`w-2.5 h-2.5 rounded-full ${youtubeLive.isLive ? 'bg-rose-500 animate-pulse' : 'bg-rose-500/60'}`} />
+                  {youtubeLive.isLive ? 'Live' : 'Go Live'}
                 </button>
                 <button type="button" className="mm-group-desk-tool" onClick={() => setShowRenameModal(true)} title="Specialize room topic">
                   ✏️ Topic
@@ -1927,7 +1916,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
             <div className="mm-group-mobile-grid">
               {statusBanners}
               {isRecording && isCreator && <RecordingIndicator />}
-              {isLiveStreaming && isCreator && (
+              {youtubeLive.isLive && isCreator && (
                 <div className="absolute top-4 right-4 z-[100] flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-600/25 border border-rose-500/40 backdrop-blur-md">
                   <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
                   <span className="text-[9px] font-black uppercase tracking-[0.2em] text-rose-300">Live</span>
@@ -2071,9 +2060,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               </button>
               <button
                 type="button"
-                onClick={() => (isLiveStreaming ? stopYoutubeLive() : setShowLiveModal(true))}
-                className={`mm-group-mobile-creator-bar__btn ${isLiveStreaming ? 'ring-2 ring-rose-500' : ''}`}
-                title={isLiveStreaming ? 'Stop YouTube live' : 'Go live on YouTube'}
+                onClick={() => (youtubeLive.isLive ? stopYoutubeLive() : setShowLiveModal(true))}
+                className={`mm-group-mobile-creator-bar__btn ${youtubeLive.isLive ? 'ring-2 ring-rose-500' : ''}`}
+                title={youtubeLive.isLive ? 'Stop YouTube live' : 'Go live on YouTube'}
               >
                 📡
               </button>
@@ -2218,7 +2207,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       <CreatorLiveModal
         open={showLiveModal}
         onClose={() => setShowLiveModal(false)}
-        isLive={isLiveStreaming}
+        isLive={youtubeLive.isLive}
         onStart={startYoutubeLive}
         onStop={() => { stopYoutubeLive(); setShowLiveModal(false); }}
       />

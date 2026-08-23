@@ -29,6 +29,9 @@ import { getPrefs } from '../utils/userPrefs';
 import { SettingsPanel, SettingsGearButton } from './SettingsPanel';
 import { mmDebug } from '../utils/mmDebug';
 import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream } from '../utils/webrtcMedia';
+import { useYoutubeLive } from '../hooks/useYoutubeLive';
+import { buildVideoChatLiveStream, releaseLiveStream } from '../utils/dualVideoCapture';
+import { CreatorLiveModal } from './CreatorLiveModal';
 import { ChatInputWithEmoji } from './ChatInputWithEmoji';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { useUniqueSession } from '../hooks/useUniqueSession';
@@ -423,6 +426,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [isRecording, setIsRecording] = useState(false);
   const isRecordingRef = useRef(false);
   const recorderRef = useRef(null);
+  const liveCompositeRef = useRef(null);
+  const [showLiveModal, setShowLiveModal] = useState(false);
   const chunksRef = useRef([]);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [cameraError, setCameraError] = useState(null);
@@ -482,6 +487,18 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const remoteStageRef = useRef(null);
   const pcRef = useRef(null);
   const roomIdRef = useRef(null);
+
+  const youtubeLive = useYoutubeLive({
+    socket,
+    enabled: isCreator,
+    roomId: roomIdRef.current || roomId,
+    onStop: () => {
+      if (liveCompositeRef.current) {
+        releaseLiveStream(liveCompositeRef.current);
+        liveCompositeRef.current = null;
+      }
+    },
+  });
   const firstSocketConnectRef = useRef(true);
   const isMounted = useRef(true);
   const statusRef = useRef(status);
@@ -1183,8 +1200,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
       try { recorderRef.current.stop(); } catch { /* ignore */ }
     }
+    if (youtubeLive.isLive) youtubeLive.stopLive();
     setIsScreenSharing(false);
-  }, []);
+  }, [youtubeLive]);
 
   const handleStart = () => {
     if (!socket || !connected) return;
@@ -2178,6 +2196,31 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     }
   };
 
+  const startYoutubeLive = async (streamKey) => {
+    const local = localStreamRef.current;
+    if (!local) {
+      setToast('⚠️ Start your camera first.');
+      throw new Error('Start your camera first.');
+    }
+    const composite = buildVideoChatLiveStream(local, peer?.stream || null);
+    liveCompositeRef.current = composite;
+    try {
+      await youtubeLive.startLive(streamKey, composite);
+      setShowLiveModal(false);
+      setToast('🔴 Live on YouTube');
+    } catch (err) {
+      releaseLiveStream(composite);
+      liveCompositeRef.current = null;
+      setToast(`⚠️ ${err.message || 'Could not go live'}`);
+      throw err;
+    }
+  };
+
+  const stopYoutubeLive = () => {
+    youtubeLive.stopLive();
+    setToast('Live stream ended');
+  };
+
   const send3dEmoji = (emojiObj) => {
     if (coins < 5) { setToast('⚠️ Need 5 coins for 3D Emoji!'); return; }
     const r = roomIdRef.current;
@@ -2310,6 +2353,17 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           title="Toggle live captions panel"
         >
           CC
+        </button>
+      )}
+      {isCreator && (
+        <button
+          type="button"
+          onClick={() => (youtubeLive.isLive ? stopYoutubeLive() : setShowLiveModal(true))}
+          className={`mm-desk-tool ${youtubeLive.isLive ? 'mm-desk-tool--rec-on' : ''}`}
+          title={youtubeLive.isLive ? 'Stop YouTube live' : 'Go live on YouTube'}
+        >
+          <span className={`w-2 h-2 rounded-full ${youtubeLive.isLive ? 'bg-rose-500 animate-pulse' : 'bg-rose-500/60'}`} />
+          {youtubeLive.isLive ? 'Live' : 'YouTube'}
         </button>
       )}
       {!isSidebarDesk && (
@@ -2661,6 +2715,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 )}
                 <SecurityShield />
                 {isRecording && <RecordingIndicator />}
+                {youtubeLive.isLive && isCreator && (
+                  <div className="absolute top-3 left-3 z-30 flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-500/90 text-white text-[10px] font-black uppercase tracking-widest">
+                    <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                    Live on YouTube
+                  </div>
+                )}
                 <div
                   className={`h-full relative overflow-hidden ${peer?.isCreator ? 'cursor-pointer group' : 'cursor-default'}`}
                   onClick={() => peer?.isCreator && setShowProfileHandle(peer.nickname)}
@@ -2977,6 +3037,15 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         onSelectAudio={(id) => { setSelectedAudioDeviceId(id); localStorage.setItem('mm_audioDeviceId', id); }}
       />
       <TipCreatorModal open={showTipModal} onClose={() => setShowTipModal(false)} onTip={sendTip} balance={balance} creatorName={peer?.nickname} />
+      {isCreator && (
+        <CreatorLiveModal
+          open={showLiveModal}
+          onClose={() => setShowLiveModal(false)}
+          isLive={youtubeLive.isLive}
+          onStart={startYoutubeLive}
+          onStop={() => { stopYoutubeLive(); setShowLiveModal(false); }}
+        />
+      )}
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </div>
   );

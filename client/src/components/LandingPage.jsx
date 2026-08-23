@@ -19,6 +19,9 @@ import { LandingModeCards } from './LandingModeCards';
 import { HellooooBrand, HellooooLogo, HELLOOOO_TAGLINE, HELLOOOO_EMOJI } from './HellooooBrand';
 import { lazyRetry } from '../utils/lazyRetry';
 import { CreatorNotificationBell } from './CreatorNotificationBell';
+import { compressImageFile } from '../utils/compressImage';
+import { CreatorLiveStudio } from './CreatorLiveStudio';
+import { validateCreatorUpi } from '../utils/creatorValidation';
 
 // Below-the-fold / secondary UI — keep landing first paint light.
 const MiniTrendChart = lazyRetry(() =>
@@ -215,6 +218,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
     return picks[Math.floor(Math.random() * picks.length)];
   });
   const [profileForm, setProfileForm] = useState({ bio: '', avatar: '' });
+  const [dashboardUpi, setDashboardUpi] = useState('');
+  const [upiSaveMsg, setUpiSaveMsg] = useState('');
   const [loginForm, setLoginForm] = useState({ handle: '', password: '' });
   const [loginError, setLoginError] = useState('');
   const [isSecretAuthorized] = useState(() => new URLSearchParams(window.location.search).has('manage_creator'));
@@ -549,15 +554,19 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
     if (mode) handleStartInteraction(mode, true);
   };
 
-  const handleAvatarUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (file.size > 2 * 1024 * 1024) return (showAlert('File Too Large', 'Max avatar size is 2MB. Optimized Base64 will be stored.'));
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setProfileForm(prev => ({ ...prev, avatar: reader.result }));
-      };
-      reader.readAsDataURL(file);
+  const handleAvatarUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) {
+      showAlert('File Too Large', 'Pick a photo under 8MB — we compress it before upload.');
+      return;
+    }
+    try {
+      const dataUrl = await compressImageFile(file, { maxSide: 512, maxBytes: 380_000 });
+      setProfileForm((prev) => ({ ...prev, avatar: dataUrl }));
+    } catch (err) {
+      showAlert('Avatar Error', err?.message || 'Could not process that image.');
     }
   };
 
@@ -565,10 +574,53 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
     const res = await updateProfile(profileForm.bio, profileForm.avatar);
     if (res.success) {
       setShowProfileModal(false);
-      (showAlert('Profile Linked', 'Your identity has been updated on the network.'));
+      showAlert('Profile Linked', 'Your identity has been updated on the network.');
     } else {
-      (showAlert('Transmission Error', 'Profile uplink failed. Check connection.'));
+      showAlert('Transmission Error', res.error || 'Profile uplink failed. Try a smaller photo.');
     }
+  };
+
+  useEffect(() => {
+    if (creatorStatus?.preferred_upi != null) {
+      setDashboardUpi(creatorStatus.preferred_upi || '');
+    }
+  }, [creatorStatus?.preferred_upi]);
+
+  const referralUrl = typeof window !== 'undefined' && creatorStatus?.referral_code
+    ? `${window.location.origin}/?ref=${creatorStatus.referral_code}`
+    : '';
+  const referralQrSrc = referralUrl
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(referralUrl)}`
+    : '';
+
+  const jumpFromDashboard = (mode) => {
+    setShowDashboardModal(false);
+    handleStartInteraction(mode, true);
+  };
+
+  const saveDashboardUpi = async () => {
+    const check = validateCreatorUpi(dashboardUpi);
+    if (!check.ok) {
+      setUpiSaveMsg(check.error);
+      return;
+    }
+    const res = await updateProfile(undefined, undefined, check.upi);
+    if (res.success) {
+      setUpiSaveMsg('UPI saved for payouts.');
+      fetchStatus();
+    } else {
+      setUpiSaveMsg(res.error || 'Could not save UPI.');
+    }
+  };
+
+  const requestPayoutFromDashboard = async () => {
+    if ((creatorStatus?.coins_earned || 0) < CREATOR_MIN_WITHDRAWAL_COINS) return;
+    const saved = creatorStatus?.preferred_upi || dashboardUpi;
+    const upi = saved?.trim() || prompt('Enter UPI ID for Payout:');
+    if (!upi) return;
+    const res = await requestWithdrawal(upi);
+    if (res.error) showAlert('Payout blocked', res.error);
+    else showAlert('Transmitted', 'Withdrawal request sent to admin.');
   };
 
   const scrollToStart = () => startRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1816,6 +1868,21 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 </div>
               </div>
 
+              {/* QUICK ACTIONS */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-10 px-4">
+                <button type="button" onClick={() => jumpFromDashboard('video')} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-violet-500/30 hover:text-violet-300 transition-all">1:1 Video</button>
+                <button type="button" onClick={() => jumpFromDashboard('group_video')} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-violet-500/30 hover:text-violet-300 transition-all">Group Video</button>
+                <button type="button" onClick={() => jumpFromDashboard('group_text')} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-violet-500/30 hover:text-violet-300 transition-all">Voice Room</button>
+                <button type="button" onClick={() => { setProfileForm({ bio: creatorStatus.bio || '', avatar: creatorStatus.avatar_url || '' }); setShowProfileModal(true); }} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-emerald-500/30 hover:text-emerald-300 transition-all">Edit Profile</button>
+                <button type="button" onClick={() => { if (referralUrl) { navigator.clipboard.writeText(referralUrl); showAlert('Copied', 'Referral link copied.'); } }} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-indigo-500/30 hover:text-indigo-300 transition-all">Copy Referral</button>
+                <button type="button" onClick={() => { setShowDashboardModal(false); setShowForgotPasswordModal(true); }} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-amber-500/30 hover:text-amber-300 transition-all">Reset Password</button>
+              </div>
+
+              {/* YOUTUBE LIVE STUDIO */}
+              <div className="mb-12 px-4">
+                <CreatorLiveStudio socket={socket} enabled={creatorStatus.status === 'approved'} compact />
+              </div>
+
               {/* MAIN HUD GRID */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
 
@@ -1847,18 +1914,39 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
                   <div className="p-8 rounded-[40px] bg-indigo-500/5 border border-indigo-500/10 space-y-4">
                     <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Share Hub</h4>
-                    <div className="p-5 bg-black/40 rounded-2xl border border-white/5">
-                      <div className="text-[8px] font-black text-white/20 uppercase mb-2">Referral URL</div>
-                      <div className="text-[11px] font-bold text-white italic break-all mb-4">{`${typeof window !== 'undefined' ? window.location.origin : ''}/?ref=${creatorStatus.referral_code}`}</div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const u = `${window.location.origin}/?ref=${creatorStatus.referral_code}`;
-                          navigator.clipboard.writeText(u);
-                          showAlert('Copied', 'Referral link copied to clipboard.');
-                        }}
-                        className="w-full py-3 bg-white/5 border border-white/10 text-white text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-white hover:text-black transition-all"
-                      >Copy Link</button>
+                    <div className="p-5 bg-black/40 rounded-2xl border border-white/5 flex flex-col sm:flex-row gap-4 items-center">
+                      {referralQrSrc && (
+                        <img src={referralQrSrc} alt="Referral QR" className="w-24 h-24 rounded-xl border border-white/10 bg-white p-1 shrink-0" />
+                      )}
+                      <div className="flex-1 min-w-0 w-full">
+                        <div className="text-[8px] font-black text-white/20 uppercase mb-2">Referral URL</div>
+                        <div className="text-[11px] font-bold text-white italic break-all mb-4">{referralUrl}</div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => { navigator.clipboard.writeText(referralUrl); showAlert('Copied', 'Referral link copied to clipboard.'); }}
+                            className="flex-1 min-w-[120px] py-3 bg-white/5 border border-white/10 text-white text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-white hover:text-black transition-all"
+                          >Copy Link</button>
+                          <a
+                            href={`/creator/${encodeURIComponent(creatorStatus.handle_name || '')}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 min-w-[120px] py-3 text-center bg-violet-500/10 border border-violet-500/20 text-violet-300 text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-violet-500/20 transition-all"
+                          >Public Profile</a>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="p-5 bg-black/40 rounded-2xl border border-white/5 space-y-3">
+                      <div className="text-[8px] font-black text-white/20 uppercase">Saved UPI (payouts)</div>
+                      <input
+                        type="text"
+                        value={dashboardUpi}
+                        onChange={(e) => { setDashboardUpi(e.target.value); setUpiSaveMsg(''); }}
+                        placeholder="yourname@upi"
+                        className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm text-white placeholder:text-white/30 outline-none focus:border-emerald-500/40"
+                      />
+                      {upiSaveMsg && <p className="text-[10px] text-emerald-300/90">{upiSaveMsg}</p>}
+                      <button type="button" onClick={saveDashboardUpi} className="w-full py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[9px] font-black uppercase tracking-widest text-emerald-300 hover:bg-emerald-500/20">Save UPI</button>
                     </div>
                   </div>
                 </div>
@@ -1896,15 +1984,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       type="button"
                       disabled={(creatorStatus.coins_earned || 0) < CREATOR_MIN_WITHDRAWAL_COINS}
                       title={(creatorStatus.coins_earned || 0) < CREATOR_MIN_WITHDRAWAL_COINS ? `Need ${CREATOR_MIN_WITHDRAWAL_COINS.toLocaleString()} creator coins to request payout` : 'Request payout'}
-                      onClick={async () => {
-                        if ((creatorStatus.coins_earned || 0) < CREATOR_MIN_WITHDRAWAL_COINS) return;
-                        const upi = prompt('Enter UPI ID for Payout:');
-                        if (upi) {
-                          const res = await requestWithdrawal(upi);
-                          if (res.error) showAlert('Payout blocked', res.error);
-                          else showAlert('Transmitted', 'Withdrawal request sent to admin. Coins will be debited after verified.');
-                        }
-                      }}
+                      onClick={requestPayoutFromDashboard}
                       className="px-12 py-6 bg-emerald-500 text-black font-black uppercase tracking-widest text-xs rounded-[30px] hover:bg-white hover:scale-105 transition-all shadow-[0_20px_50px_rgba(16,185,129,0.3)] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                     >Request Payout</button>
                   </div>
@@ -1925,7 +2005,15 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       <div className="text-5xl font-black italic text-white tabular-nums group-hover:text-violet-400 transition-colors">{creatorStatus.followers_count || 0}</div>
                       <p className="text-[9px] font-bold text-white/20 uppercase tracking-[0.2em] mt-2 italic">Followers reached through profile</p>
                     </div>
-                    <div className="p-10 rounded-[50px] bg-white/[0.02] border border-white/5 group hover:border-indigo-500/30 transition-all">
+                    <div className="p-10 rounded-[50px] bg-white/[0.02] border border-white/5 group hover:border-rose-500/30 transition-all">
+                      <div className="flex justify-between items-start mb-4">
+                        <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Tips Received</span>
+                        <span className="text-2xl group-hover:scale-110 transition-transform">🎁</span>
+                      </div>
+                      <div className="text-5xl font-black italic text-white tabular-nums group-hover:text-rose-400 transition-colors">{creatorStatus.tips_received_total || 0}</div>
+                      <p className="text-[9px] font-bold text-white/20 uppercase tracking-[0.2em] mt-2 italic">Lifetime coins tipped to you</p>
+                    </div>
+                    <div className="p-10 rounded-[50px] bg-white/[0.02] border border-white/5 group hover:border-indigo-500/30 transition-all md:col-span-2">
                       <div className="flex justify-between items-start mb-4">
                         <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Influence Conversions</span>
                         <span className="text-2xl group-hover:scale-110 transition-transform">🔥</span>
@@ -1933,6 +2021,30 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       <div className="text-5xl font-black italic text-white tabular-nums group-hover:text-indigo-400 transition-colors uppercase">{creatorStatus.referral_count || 0}</div>
                       <p className="text-[9px] font-bold text-white/20 uppercase tracking-[0.2em] mt-2 italic">Users joined via your unique uplink</p>
                     </div>
+                  </div>
+
+                  {/* NOTIFICATIONS */}
+                  <div className="p-8 rounded-[40px] bg-white/[0.02] border border-white/5 max-h-72 overflow-y-auto">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="text-[10px] font-black text-white/35 uppercase tracking-widest">Notifications</div>
+                      {creatorUnreadCount > 0 && (
+                        <span className="text-[9px] font-black text-rose-400 uppercase">{creatorUnreadCount} unread</span>
+                      )}
+                    </div>
+                    {creatorNotificationsLoading && creatorNotifications.length === 0 ? (
+                      <p className="text-[10px] text-white/25">Loading…</p>
+                    ) : creatorNotifications.length === 0 ? (
+                      <p className="text-[10px] text-white/25">No admin alerts yet.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {creatorNotifications.slice(0, 8).map((n) => (
+                          <li key={n.id} className={`text-[10px] border-b border-white/[0.04] pb-2 ${!n.read ? 'text-white/75' : 'text-white/45'}`}>
+                            <div className="font-black text-white/90">{n.title}</div>
+                            <div className="text-white/50 mt-0.5">{n.message}</div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
 
                   {/* ACTIVITY & WITHDRAWAL LEDGER */}
