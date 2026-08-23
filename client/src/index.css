@@ -707,10 +707,14 @@ h1, h2, h3, .font-display {
   border-radius: 8px;
 }
 
-/* Watermarks & Glassmorphism */
+/* Watermarks — transparent brand mark, no glass plate */
 .glass-watermark {
-  @apply backdrop-blur-sm bg-black/40 border border-white/10 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-[0.2em] text-white/40;
-  text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  @apply px-0 py-0 text-[10px] font-black uppercase tracking-[0.2em] text-white/45;
+  background: transparent;
+  border: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 8px rgba(0, 0, 0, 0.65);
   backface-visibility: hidden;
 }
 
@@ -1148,7 +1152,9 @@ h1, h2, h3, .font-display {
 .video-tile video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
+  background: #000;
   display: block;
 }
 
@@ -2018,19 +2024,25 @@ h1, h2, h3, .font-display {
 .mm-desk-pane__tag .mm-country-flag { margin-left: 0.15rem; }
 .mm-video-watermark {
   position: absolute;
-  right: 0.55rem;
-  bottom: 0.55rem;
+  right: 0.5rem;
+  bottom: 0.5rem;
   z-index: 28;
   pointer-events: none;
-  padding: 0.2rem 0.45rem;
-  border-radius: 0.35rem;
-  font-weight: 800;
-  background: rgba(0, 0, 0, 0.42);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  opacity: 0.58;
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.95),
+    0 0 10px rgba(0, 0, 0, 0.75);
 }
 .mm-video-watermark .helloooo-brand {
   font-size: 0.5625rem;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
 }
 .mm-video-logo-placeholder {
   position: absolute;
@@ -2372,7 +2384,7 @@ h1, h2, h3, .font-display {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  padding: 0.85rem;
+  padding: 0.65rem;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -2381,16 +2393,27 @@ h1, h2, h3, .font-display {
 .mm-group-desk-grid {
   flex: 1 1 auto;
   min-height: 0;
+  width: 100%;
+  height: 100%;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  gap: 0.65rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  align-items: stretch;
+  justify-items: stretch;
 }
 
-.mm-group-desk-tile {
-  border-radius: 0.85rem;
+.mm-group-desk-tile,
+.mm-group-desk-grid > .video-tile {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 0.75rem;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: #000;
+  overflow: hidden;
 }
 
 .mm-group-desk-tile--speaking {
@@ -2400,6 +2423,85 @@ h1, h2, h3, .font-display {
 
 .mm-group-desk-tile .tile-label {
   display: none;
+}
+
+/* Floating status chips — no stacked full-width banner strip */
+.mm-group-status-stack {
+  position: absolute;
+  top: 0.55rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  width: min(92%, 26rem);
+  pointer-events: none;
+}
+
+.mm-group-status-stack > * {
+  pointer-events: auto;
+  width: 100%;
+  border-radius: 0.75rem !important;
+  border-bottom: none !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+}
+
+.mm-group-status-stack .mm-group-status-chip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem 0.65rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: center;
+  line-height: 1.35;
+}
+
+.mm-group-status-stack .mm-group-status-chip--warn {
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  color: #fde68a;
+}
+
+.mm-group-status-stack .mm-group-status-chip--danger {
+  background: rgba(244, 63, 94, 0.16);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+  color: #fecdd3;
+}
+
+.mm-group-status-stack .mm-group-status-chip--safe {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  color: #fde68a;
+}
+
+.mm-group-status-stack .mm-group-status-chip button {
+  min-height: 1.75rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 0.45rem;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mm-group-status-stack .mm-group-status-chip--prompt {
+  background: rgba(118, 185, 0, 0.1);
+  border: 1px solid rgba(118, 185, 0, 0.22);
+  color: rgba(255, 255, 255, 0.78);
+  font-style: italic;
+  text-transform: none;
+  letter-spacing: 0.01em;
+  font-weight: 500;
+  font-size: 0.6875rem;
 }
 
 .mm-group-desk-tile__tag {
@@ -2849,20 +2951,30 @@ h1, h2, h3, .font-display {
 }
 
 .mm-group-mobile-grid {
-  flex: 0 0 auto;
-  height: min(42dvh, 14.5rem);
-  min-height: 9.5rem;
+  flex: 1 1 auto;
+  height: auto;
+  min-height: min(46dvh, 18rem);
+  max-height: 55dvh;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 0.4rem;
-  padding: 0.5rem 0.55rem;
+  padding: 0.45rem 0.5rem;
   position: relative;
   background: rgba(0, 0, 0, 0.35);
 }
 
-.mm-group-mobile-grid .mm-group-desk-tile {
+.mm-group-mobile-grid .mm-group-status-stack {
+  top: 0.35rem;
+  width: min(94%, 20rem);
+}
+
+.mm-group-mobile-grid .mm-group-desk-tile,
+.mm-group-mobile-grid > .video-tile {
   min-height: 0;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .mm-group-mobile-chat {
@@ -3042,7 +3154,9 @@ h1, h2, h3, .font-display {
 
 @media (max-width: 639px) {
   .mm-group-mobile-grid {
-    height: min(40dvh, 13.5rem);
+    min-height: min(42dvh, 16rem);
+    max-height: 50dvh;
+    height: auto;
   }
 }
 

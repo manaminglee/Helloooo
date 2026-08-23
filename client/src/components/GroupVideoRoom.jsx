@@ -34,7 +34,6 @@ import {
   useChatSwipeCollapse,
   VideoMoreSheet,
   VideoReactionBar,
-  VideoSessionBanners,
 } from './VideoSessionUI';
 import { CreatorProfilePopup } from './CreatorProfilePopup';
 
@@ -220,7 +219,7 @@ function VideoTile({ stream, label, country, flag, isMe, isEmpty, isSearching, i
       {showLogoInsteadOfVideo ? (
         <VideoLogoPlaceholder label={isMe ? 'Camera starting…' : 'Reconnecting…'} compact />
       ) : (
-        <video ref={ref} autoPlay playsInline muted={isMe} className="w-full h-full object-cover" />
+        <video ref={ref} autoPlay playsInline muted={isMe} className="w-full h-full object-contain bg-black" />
       )}
 
       <VideoWatermark />
@@ -1504,30 +1503,41 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const connLabel = connLevel >= 4 ? 'Good Connection' : connLevel >= 2 ? 'Fair Connection' : 'Poor Connection';
 
   const statusBanners = (
-    <>
-      {reconnectingPeers.size > 0 && (
-        <div className="shrink-0 px-3 py-2 text-center text-[10px] font-bold uppercase tracking-widest bg-amber-500/10 border-b border-amber-500/20 text-amber-100" role="status">
-          Some peer links are reconnecting — your session stays anonymous.
+    <div className="mm-group-status-stack" aria-live="polite">
+      {(reconnectingPeers.size > 0 || (p2pHealth !== 'good' && !isQueuing)) && (
+        <div
+          className={`mm-group-status-chip ${p2pHealth === 'failed' ? 'mm-group-status-chip--danger' : 'mm-group-status-chip--warn'}`}
+          role="status"
+        >
+          <span>
+            {p2pHealth === 'failed'
+              ? 'Group video link lost'
+              : reconnectingPeers.size > 0
+                ? 'Some peer links are reconnecting'
+                : 'Unstable group network'}
+          </span>
+          {p2pHealth !== 'good' && !isQueuing && (
+            <button type="button" onClick={retryAllIce}>Retry links</button>
+          )}
         </div>
       )}
-      {p2pHealth !== 'good' && !isQueuing && (
-        <div className={`shrink-0 px-3 py-2 flex flex-wrap items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest border-b ${p2pHealth === 'failed' ? 'bg-rose-500/15 border-rose-500/25 text-rose-100' : 'bg-amber-500/10 border-amber-500/25 text-amber-100'}`} role="status">
-          <span>{p2pHealth === 'failed' ? 'Group video link lost' : 'Unstable group network'}</span>
-          <button type="button" onClick={retryAllIce} className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25">Retry links</button>
+      {showSafetyNudge && (
+        <div className="mm-group-status-chip mm-group-status-chip--safe">
+          <span>Stay safe — never share personal info. Report or leave anytime.</span>
+          <button type="button" onClick={dismissSafetyNudge} aria-label="Dismiss">✕</button>
         </div>
       )}
-      <VideoSessionBanners
-        showSafetyNudge={showSafetyNudge}
-        onDismissSafety={dismissSafetyNudge}
-        peerRecording={peerRecording}
-        matchedInterests={[displayInterest].filter(Boolean)}
-      />
+      {peerRecording && (
+        <div className="mm-group-status-chip mm-group-status-chip--danger" role="status">
+          Partner may be recording this session
+        </div>
+      )}
       {PHASE_4_UNIQUE.structuredModes && unique.modePrompt && !isQueuing && (
-        <div className="shrink-0 px-4 py-2 bg-[#76B900]/5 border-b border-[#76B900]/20 text-center">
-          <p className="text-[11px] text-white/70 italic">&ldquo;{unique.modePrompt}&rdquo;</p>
+        <div className="mm-group-status-chip mm-group-status-chip--prompt">
+          “{unique.modePrompt}”
         </div>
       )}
-    </>
+    </div>
   );
 
   return (
@@ -1617,10 +1627,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
             </div>
           </header>
 
-          {statusBanners}
-
           <main className="mm-group-desk-body">
             <div className="mm-group-desk-stage">
+              {statusBanners}
               {isRecording && <RecordingIndicator />}
               <FloatingVideoReactions reactions={localReactions.map((r) => ({ id: r.id, emoji: r.emoji, x: r.x, y: r.y }))} />
               <div className="mm-group-desk-grid">
@@ -1760,20 +1769,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
             </div>
           </header>
 
-          {reconnectingPeers.size > 0 && (
-            <div className="shrink-0 px-3 py-1.5 text-center text-[9px] font-bold uppercase tracking-widest bg-amber-500/10 border-b border-amber-500/20 text-amber-100" role="status">
-              Reconnecting peers…
-            </div>
-          )}
-          {p2pHealth !== 'good' && !isQueuing && (
-            <div className={`shrink-0 px-3 py-1.5 flex items-center justify-center gap-2 text-[9px] font-bold uppercase tracking-widest border-b ${p2pHealth === 'failed' ? 'bg-rose-500/15 border-rose-500/25 text-rose-100' : 'bg-amber-500/10 border-amber-500/25 text-amber-100'}`} role="status">
-              <span>{p2pHealth === 'failed' ? 'Link lost' : 'Unstable network'}</span>
-              <button type="button" onClick={retryAllIce} className="px-2 py-0.5 rounded bg-white/15">Retry</button>
-            </div>
-          )}
-
           <main className="mm-group-mobile-main">
             <div className="mm-group-mobile-grid">
+              {statusBanners}
               {isRecording && <RecordingIndicator />}
               <FloatingVideoReactions reactions={localReactions.map((r) => ({ id: r.id, emoji: r.emoji, x: r.x, y: r.y }))} />
               <VideoTile

@@ -221,24 +221,25 @@ export function VideoSessionBanners({
   onStayConnected,
   onDismissStayConnected,
   matchedInterests = [],
+  hideMatchedInterests = false,
 }) {
   return (
     <>
       {showSafetyNudge && (
-        <div className="shrink-0 px-3 py-2 flex items-start gap-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-100 text-[10px]">
-          <span>🛡️</span>
-          <p className="flex-1 leading-relaxed"><strong className="font-black uppercase tracking-wider">Stay safe:</strong> Never share personal info. You can report or skip anytime.</p>
-          <button type="button" onClick={onDismissSafety} className="shrink-0 text-amber-300/80 hover:text-white">✕</button>
+        <div className="shrink-0 px-3 py-1.5 flex items-center gap-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-100 text-[10px]">
+          <span aria-hidden>🛡️</span>
+          <p className="flex-1 leading-snug"><strong className="font-bold uppercase tracking-wide">Stay safe:</strong> Don’t share personal info — report or skip anytime.</p>
+          <button type="button" onClick={onDismissSafety} className="shrink-0 text-amber-300/80 hover:text-white min-h-[28px] min-w-[28px]" aria-label="Dismiss">✕</button>
         </div>
       )}
       {peerRecording && (
-        <div className="shrink-0 px-3 py-1.5 text-center text-[9px] font-black uppercase tracking-widest bg-rose-500/15 border-b border-rose-500/25 text-rose-200" role="status">
+        <div className="shrink-0 px-3 py-1 text-center text-[9px] font-bold uppercase tracking-widest bg-rose-500/15 border-b border-rose-500/25 text-rose-200" role="status">
           Partner may be recording this session
         </div>
       )}
-      {matchedInterests.length > 0 && (
-        <div className="shrink-0 px-3 py-1.5 flex flex-wrap gap-1.5 justify-center border-b border-violet-500/15 bg-violet-500/5">
-          <span className="text-[9px] font-black uppercase text-white/30 tracking-widest">Also into</span>
+      {!hideMatchedInterests && matchedInterests.length > 0 && (
+        <div className="shrink-0 px-3 py-1 flex flex-wrap gap-1.5 justify-center border-b border-violet-500/15 bg-violet-500/5">
+          <span className="text-[9px] font-bold uppercase text-white/30 tracking-widest">Also into</span>
           {matchedInterests.map((tag) => (
             <span key={tag} className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300">#{tag}</span>
           ))}
@@ -246,7 +247,7 @@ export function VideoSessionBanners({
       )}
       {showStayConnected && (
         <div className="fixed bottom-[calc(6.5rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-[180] w-[min(92vw,20rem)] p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 backdrop-blur-xl shadow-2xl animate-fade-in">
-          <p className="text-sm font-bold text-emerald-100 mb-3 text-center">🤝 Good vibes match! Follow this creator?</p>
+          <p className="text-sm font-bold text-emerald-100 mb-3 text-center">Good vibes match! Follow this creator?</p>
           <div className="flex gap-2">
             <button type="button" onClick={onDismissStayConnected} className="flex-1 py-2 rounded-xl bg-white/10 text-xs font-bold text-white/70">Maybe later</button>
             <button type="button" onClick={onStayConnected} className="flex-1 py-2 rounded-xl bg-emerald-500 text-black text-xs font-black uppercase">Follow</button>
