@@ -32,6 +32,12 @@ import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream } from '.
 import { useYoutubeLive } from '../hooks/useYoutubeLive';
 import { buildVideoChatLiveStream, releaseLiveStream } from '../utils/dualVideoCapture';
 import { CreatorLiveModal } from './CreatorLiveModal';
+import {
+  bootVideoConstraints,
+  QUALITY_LADDER,
+  applySenderBitrate,
+  scheduleQualityRamp,
+} from '../utils/webrtcQuality';
 import { ChatInputWithEmoji } from './ChatInputWithEmoji';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { useUniqueSession } from '../hooks/useUniqueSession';
@@ -400,7 +406,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (coinState?.balance !== undefined) setCoins(coinState.balance);
   }, [coinState?.balance]);
   const { balance, streak, canClaim, nextClaim, claimCoins, history, addHistory } = coinState || {};
-  const { iceServers } = useIceServers();
+  const { iceServers } = useIceServers(country || '');
   const [messages, setMessages] = useState([]);
   const [sparks, setSparks] = useState([]);
   const [input, setInput] = useState('');
@@ -517,6 +523,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const negotiationRetryRef = useRef(null);
   const findPartnerEmittedRef = useRef(false);
   const warmPcRef = useRef(null);
+  /** Outbound trickle ICE buffered until roomId is known */
+  const pendingOutIceRef = useRef(new Map()); // remoteId -> RTCIceCandidateInit[]
+  const qualityRampCleanupRef = useRef(null);
   const peerInfoRef = useRef(new Map());
   const chatEndRef = useRef(null);
   const chatPanelRef = useRef(null);
@@ -543,6 +552,38 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     const rid = roomIdRef.current;
     if (!socket || !rid || !remoteId) return;
     socket.emit('webrtc-signal', { roomId: rid, targetSocketId: remoteId, type, signal });
+  }, [socket]);
+
+  /** Trickle ICE: send immediately when room is ready; otherwise buffer. */
+  const emitIceCandidate = useCallback((remoteId, candidate) => {
+    if (!socket || !remoteId) return;
+    const rid = roomIdRef.current;
+    if (!rid) {
+      const q = pendingOutIceRef.current.get(remoteId) || [];
+      q.push(candidate);
+      pendingOutIceRef.current.set(remoteId, q);
+      return;
+    }
+    socket.emit('webrtc-signal', {
+      roomId: rid,
+      targetSocketId: remoteId,
+      type: 'ice-candidate',
+      signal: candidate,
+    });
+  }, [socket]);
+
+  const flushPendingOutIce = useCallback((remoteId) => {
+    if (!socket || !remoteId || !roomIdRef.current) return;
+    const q = pendingOutIceRef.current.get(remoteId) || [];
+    pendingOutIceRef.current.delete(remoteId);
+    for (const candidate of q) {
+      socket.emit('webrtc-signal', {
+        roomId: roomIdRef.current,
+        targetSocketId: remoteId,
+        type: 'ice-candidate',
+        signal: candidate,
+      });
+    }
   }, [socket]);
 
   const bindLocalVideo = useCallback((el) => {
@@ -934,21 +975,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     let s = null;
     (async () => {
       try {
-        // Honor the user's camera quality preference on initial acquisition
-        const quality = getPrefs().videoQuality;
-        const qualityConstraints =
-          quality === 'low'
-            ? { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 15 } }
-            : quality === 'hd'
-              ? { width: { ideal: 1280 }, height: { ideal: 720 } }
-              : { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } };
-        const baseConstraints = {
-          video: {
-            facingMode: { ideal: facingMode },
-            ...qualityConstraints,
-          },
-          audio: selectedAudioDeviceId ? { deviceId: { exact: selectedAudioDeviceId } } : { echoCancellation: true, noiseSuppression: true },
-        };
+        // Always boot at ~360p for fast first connect; ramp later after ICE is stable
+        const baseConstraints = bootVideoConstraints(facingMode, selectedAudioDeviceId);
         try {
           s = await navigator.mediaDevices.getUserMedia(baseConstraints);
         } catch (e) {
@@ -1095,9 +1123,18 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (!localStream) return;
     const vt = localStream.getVideoTracks()[0];
     if (!vt) return;
-    const targetLow = lowBandwidth || (autoBandwidth && effectiveLatency != null && effectiveLatency > 260);
-    const c = targetLow ? { width: 640, height: 480, frameRate: 15 } : { width: 1280, height: 720 };
-    vt.applyConstraints(c).catch(() => { });
+    // Only force-down when network is bad; upward ramp is handled by scheduleQualityRamp
+    if (lowBandwidth || (autoBandwidth && effectiveLatency != null && effectiveLatency > 260)) {
+      const q = QUALITY_LADDER.low;
+      vt.applyConstraints({
+        width: { ideal: q.width },
+        height: { ideal: q.height },
+        frameRate: { ideal: q.frameRate },
+      }).catch(() => { });
+      peerConnectionsRef.current.forEach((pc) => {
+        applySenderBitrate(pc, q.maxBitrate);
+      });
+    }
   }, [lowBandwidth, autoBandwidth, effectiveLatency, localStream]);
 
   useEffect(() => {
@@ -1171,6 +1208,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     setRoomId(null);
     setMessages([]);
     roomIdRef.current = null;
+    pendingOutIceRef.current.clear();
+    if (qualityRampCleanupRef.current) {
+      qualityRampCleanupRef.current();
+      qualityRampCleanupRef.current = null;
+    }
     setP2pHealth('good');
   }, [hardClosePeer, disposeWarmPc]);
 
@@ -1642,9 +1684,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     }
 
     pc.onicecandidate = (e) => {
-      const rid = roomIdRef.current;
-      if (!socket || !rid) return;
-      emitWebRtcSignal(remoteId, 'ice-candidate', e.candidate || null);
+      // Trickle ICE — emit each candidate immediately (buffer if room not ready yet)
+      emitIceCandidate(remoteId, e.candidate || null);
     };
 
     pc.ontrack = (e) => {
@@ -1681,6 +1722,15 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       if (ice === 'connected' || ice === 'completed') {
         setP2pHealth('good');
         if (healthTimerRef.current) clearTimeout(healthTimerRef.current);
+        // Start low → ramp to 720p once path is viable
+        if (qualityRampCleanupRef.current) qualityRampCleanupRef.current();
+        const forceLow = lowBandwidth || getPrefs().videoQuality === 'low';
+        qualityRampCleanupRef.current = scheduleQualityRamp({
+          stream: localStreamRef.current,
+          getPeerConnection: () => peerConnectionsRef.current.get(remoteId),
+          forceLow,
+        });
+        applySenderBitrate(pc, forceLow ? QUALITY_LADDER.low.maxBitrate : QUALITY_LADDER.boot.maxBitrate);
       } else if (ice === 'failed') {
         setP2pHealth('failed');
       } else if (ice === 'disconnected' || ice === 'checking') {
@@ -1698,10 +1748,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       }
     };
 
+    // Cap bitrate immediately so first frames stay light
+    applySenderBitrate(pc, QUALITY_LADDER.boot.maxBitrate);
+    flushPendingOutIce(remoteId);
+
     peerConnectionsRef.current.set(remoteId, pc);
     pcRef.current = pc;
     return pc;
-  }, [socket, iceServers, disposeWarmPc, emitWebRtcSignal]);
+  }, [socket, iceServers, disposeWarmPc, emitIceCandidate, flushPendingOutIce, lowBandwidth]);
 
   // Hot-swap TURN credentials onto live peer connections once they load.
   useEffect(() => {
@@ -1726,7 +1780,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
       await pc.setLocalDescription(offer);
       emitWebRtcSignal(remoteId, 'offer', pc.localDescription);
-      emitWebRtcSignal(remoteId, 'ice-candidate', null);
+      emitIceCandidate(remoteId, null);
       mmDebug('offer', remoteId, pc.signalingState);
     } catch (err) {
       mmDebug('offer.err', err);
@@ -1734,7 +1788,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     } finally {
       makingOffer.current = false;
     }
-  }, [socket, createPeerConnection, emitWebRtcSignal]);
+  }, [socket, createPeerConnection, emitWebRtcSignal, emitIceCandidate]);
 
   const doAnswer = useCallback(async (remoteId, offer) => {
     if (!socket) return;
@@ -1764,7 +1818,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         emitWebRtcSignal(remoteId, 'answer', pc.localDescription);
-        emitWebRtcSignal(remoteId, 'ice-candidate', null);
+        emitIceCandidate(remoteId, null);
 
         const pend = pendingCandidatesRef.current.get(remoteId) || [];
         for (const c of pend) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => { });
@@ -1774,7 +1828,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       mmDebug('negotiation.err', err);
       pendingAnswerRef.current = { from: remoteId, signal: offer };
     }
-  }, [socket, createPeerConnection, emitWebRtcSignal]);
+  }, [socket, createPeerConnection, emitWebRtcSignal, emitIceCandidate]);
 
   useEffect(() => {
     if (!localStream || !roomIdRef.current) return;
@@ -1881,6 +1935,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         peerInfoRef.current.set(p.socketId, { nickname: p.nickname, country: p.country, isCreator: p.isCreator });
         setPeer({ socketId: p.socketId, nickname: p.nickname, country: p.country, isCreator: p.isCreator, stream: null });
         createPeerConnection(p.socketId);
+        flushPendingOutIce(p.socketId);
         if (socket.id < p.socketId) {
           if (localStreamRef.current) doOffer(p.socketId);
           else pendingOfferRef.current = p.socketId;
@@ -2101,7 +2156,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       socket.off('connect', onSocketConnect);
       socket.off('disconnect', onSocketDisconnect);
     };
-  }, [socket, interest, nickname, conversationMode, topicContract, isCreator, onJoined, doOffer, doAnswer, addIce, handleBack, handleSkip, createPeerConnection, hardClosePeer, autoStrangerBlur, isMobile, showChat, chatCollapsed, disposeWarmPc, emitWebRtcSignal]);
+  }, [socket, interest, nickname, conversationMode, topicContract, isCreator, onJoined, doOffer, doAnswer, addIce, handleBack, handleSkip, createPeerConnection, hardClosePeer, autoStrangerBlur, isMobile, showChat, chatCollapsed, disposeWarmPc, emitWebRtcSignal, flushPendingOutIce]);
 
   useEffect(() => {
     if (!isTranslatorActive) return;

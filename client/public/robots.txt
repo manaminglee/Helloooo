@@ -1,0 +1,8 @@
+# https://helloooo.site
+User-agent: *
+Allow: /
+Allow: /creator/
+
+Disallow: /matrix-admin
+
+Sitemap: https://helloooo.site/sitemap.xml

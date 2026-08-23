@@ -26,6 +26,7 @@
     "express-rate-limit": "^7.0.0",
     "geoip-lite": "^1.4.10",
     "helmet": "^8.1.0",
+    "livekit-server-sdk": "^2.18.0",
     "nodemailer": "^9.0.1",
     "redis": "^4.7.1",
     "socket.io": "^4.8.3",

@@ -12,6 +12,7 @@ import { useCoins } from './hooks/useCoins';
 import { loadReconnectSession, clearReconnectSession, saveReconnectSession } from './utils/reconnectSession';
 import { API_BASE } from './config/apiBase';
 import { lazyRetry, clearChunkReloadFlag } from './utils/lazyRetry';
+import { applyPageSeo, applyPrivateSessionSeo } from './utils/seo';
 // Lazy load off-screen and secondary modules for extreme performance
 const AdminDashboard = lazyRetry(() => import('./components/AdminDashboard'));
 const TextChat = lazyRetry(() => import('./components/TextChat'));
@@ -82,7 +83,29 @@ function AppShell() {
 
   useEffect(() => {
     clearChunkReloadFlag();
+    applyPageSeo();
   }, []);
+
+  useEffect(() => {
+    if (appState === STATES.LANDING) {
+      applyPageSeo();
+      return;
+    }
+    if (appState === STATES.ADMIN) {
+      applyPrivateSessionSeo('Admin');
+      return;
+    }
+    if (appState === STATES.CREATOR_PROFILE) return;
+    if (appState === STATES.CHAT && mode) {
+      const labels = {
+        [MODES.VIDEO]: 'Video Chat',
+        [MODES.TEXT]: 'Text Chat',
+        [MODES.GROUP_VIDEO]: 'Group Video',
+        [MODES.GROUP_TEXT]: 'Voice Room',
+      };
+      applyPrivateSessionSeo(labels[mode] || 'Chat');
+    }
+  }, [appState, mode]);
 
   useEffect(() => {
     const path = window.location.pathname || '/';

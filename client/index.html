@@ -5,8 +5,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
   <meta name="theme-color" content="#7c3aed" />
-  <meta name="description" content="Helloooo 👋 – Random people, real conversations. Free anonymous video chat, text chat, and voice rooms. Connect 1-on-1 or in groups. AI-powered safety, no signup required." />
-  <meta name="keywords" content="Helloooo, anonymous video chat, random video chat, omegle alternative, text chat, voice rooms, meet strangers, helloooo.site" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="application-name" content="Helloooo" />
+  <meta name="author" content="Helloooo" />
+  <meta name="robots" content="index, follow, max-image-preview:large" />
+  <meta name="googlebot" content="index, follow" />
+  <link rel="canonical" href="https://helloooo.site/" />
+
+  <title>Helloooo 👋 – Random Video Chat &amp; Voice Rooms | Omegle Alternative</title>
+  <meta name="description" content="Helloooo 👋 — free anonymous video chat, text chat, and live voice rooms. Meet strangers by interest. No signup. AI safety, WebRTC video, creator program." />
+  <meta name="keywords" content="Helloooo, anonymous video chat, random video chat, omegle alternative, ometv alternative, text chat, voice rooms, meet strangers, group video chat, helloooo.site, free video chat" />
+
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
   <link rel="icon" type="image/png" sizes="180x180" href="/apple-touch-icon.png" />
@@ -15,11 +24,26 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/manifest.json" />
 
+  <!-- Open Graph -->
+  <meta property="og:site_name" content="Helloooo" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:title" content="Helloooo 👋 – Random People, Real Conversations" />
+  <meta property="og:description" content="Free anonymous video, text, and voice chat. Meet strangers who share your interests. No signup required." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://helloooo.site/" />
+  <meta property="og:image" content="https://helloooo.site/helloooo-logo.png" />
+  <meta property="og:image:alt" content="Helloooo logo" />
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Helloooo 👋 – Video &amp; Text Chat" />
+  <meta name="twitter:description" content="Random people, real conversations. Free anonymous chat worldwide." />
+  <meta name="twitter:image" content="https://helloooo.site/helloooo-logo.png" />
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://challenges.cloudflare.com" />
   <link rel="dns-prefetch" href="https://stun.l.google.com" />
-  <!-- Non-blocking fonts (display=swap + media swap trick) -->
   <link
     rel="stylesheet"
     href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap"
@@ -29,19 +53,70 @@
   <noscript>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" />
   </noscript>
-  <title>Helloooo 👋 – Random People, Real Conversations</title>
-  <meta property="og:title" content="Helloooo – Random People, Real Conversations" />
-  <meta property="og:description" content="👋 Free anonymous video, text, and audio chat. Meet strangers who share your interests. No signup." />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://helloooo.site" />
-  <meta property="og:image" content="https://helloooo.site/helloooo-logo.png" />
-  <meta name="twitter:card" content="summary" />
-  <meta name="twitter:image" content="https://helloooo.site/helloooo-logo.png" />
-  <meta name="twitter:title" content="Helloooo 👋 – Video &amp; Text Chat" />
-  <meta name="twitter:description" content="Random people, real conversations. Free anonymous chat worldwide." />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "https://helloooo.site/#website",
+        "url": "https://helloooo.site/",
+        "name": "Helloooo",
+        "description": "Random people, real conversations — free anonymous video, text, and voice chat.",
+        "inLanguage": "en",
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": "https://helloooo.site/?q={search_term_string}",
+          "query-input": "required name=search_term_string"
+        }
+      },
+      {
+        "@type": "Organization",
+        "@id": "https://helloooo.site/#organization",
+        "name": "Helloooo",
+        "url": "https://helloooo.site/",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://helloooo.site/helloooo-logo.png"
+        }
+      },
+      {
+        "@type": "WebApplication",
+        "@id": "https://helloooo.site/#app",
+        "name": "Helloooo",
+        "url": "https://helloooo.site/",
+        "applicationCategory": "SocialNetworkingApplication",
+        "operatingSystem": "Web",
+        "browserRequirements": "Requires JavaScript. WebRTC for video and voice.",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "description": "Interest-based anonymous video chat, text chat, and live voice rooms with AI-assisted safety.",
+        "featureList": [
+          "1-on-1 video chat",
+          "Group video rooms",
+          "Live voice channels",
+          "Interest matching",
+          "Creator program",
+          "No signup required"
+        ]
+      }
+    ]
+  }
+  </script>
 </head>
 
 <body>
+  <noscript>
+    <div style="max-width:720px;margin:0 auto;padding:24px;font-family:system-ui,sans-serif;color:#e2e8f0;background:#07060f;">
+      <h1>Helloooo — Random Video Chat &amp; Voice Rooms</h1>
+      <p>Free anonymous video chat, text chat, and live voice rooms. Meet strangers who share your interests — an Omegle-style alternative with group video, creators, and AI safety.</p>
+      <p><a href="https://helloooo.site/" style="color:#c084fc;">Open Helloooo</a> (JavaScript required for video and chat).</p>
+    </div>
+  </noscript>
   <div id="root">
     <div id="boot-fallback" style="min-height:100dvh;display:flex;align-items:center;justify-content:center;background:#07060f;color:#c084fc;font-family:system-ui,sans-serif;font-size:14px;">
       Loading Helloooo…

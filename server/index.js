@@ -27,6 +27,7 @@ const creatorNotifications = require('./creatorNotifications');
 const adminLiveMonitor = require('./adminLiveMonitor');
 const { registerAudioChannels } = require('./audioChannels');
 const { registerYoutubeLiveHandlers, stopAllForSocket, isFfmpegAvailable } = require('./youtubeLive');
+const livekitRooms = require('./livekitRooms');
 const { registerRaceGame } = require('./raceGame');
 const { registerEconomy } = require('./economy');
 const { registerModeration } = require('./moderation');
@@ -2627,54 +2628,37 @@ app.get('/health', async (req, res) => {
       gateway: 'Express (API + Socket.IO) · rate limits · gift validation',
       redis: qStats.backend === 'redis' ? 'match · rooms · limits' : 'fallback:memory',
       postgres: supabase ? 'wallet · coins · gifts · users · audit' : 'local_json',
-      media: 'WebRTC mesh (LiveKit optional later)',
+      media: livekitRooms.isConfigured()
+        ? 'LiveKit SFU (group video) · WebRTC mesh (1:1)'
+        : 'WebRTC mesh (set LIVEKIT_* for group SFU)',
       youtubeLive: isFfmpegAvailable() ? 'ffmpeg-ready' : 'ffmpeg-missing',
+      livekit: livekitRooms.statusPayload(),
     },
   });
 });
 
-// API TURN/ICE (optional TURN later)
-function normalizeTurnUrl(url) {
-  if (!url || typeof url !== 'string') return 'turn:global.relay.metered.ca:443';
-  const s = url.trim();
-  if (s.startsWith('stun:') || s.startsWith('turn:') || s.startsWith('turns:')) return s;
-  return `turn:${s}`;
-}
+// LiveKit SFU status (no secrets) — group video media plane
+app.get('/api/livekit/status', (req, res) => {
+  res.json(livekitRooms.statusPayload());
+});
+
+// API TURN/ICE — regional UDP-first, then TCP, then TLS
+const { buildIceServers } = require('./iceServers');
 app.get('/api/turn', (req, res) => {
-  const iceServers = [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ];
-  if (process.env.TURN_USERNAME && process.env.TURN_PASSWORD) {
-    iceServers.push({
-      urls: normalizeTurnUrl(process.env.TURN_URL || 'turn:global.relay.metered.ca:443'),
-      username: process.env.TURN_USERNAME,
-      credential: process.env.TURN_PASSWORD,
-    });
-  } else {
-    // Free Public TURN relay fallback for robust cross-network P2P connections
-    iceServers.push({
-      urls: 'turn:a.relay.metered.ca:80',
-      username: 'e8dd65b92f3c0ab9bda3c714',
-      credential: '2xMGSyyWIYfJTh3m'
-    });
-    iceServers.push({
-      urls: 'turn:a.relay.metered.ca:443',
-      username: 'e8dd65b92f3c0ab9bda3c714',
-      credential: '2xMGSyyWIYfJTh3m'
-    });
-    iceServers.push({
-      urls: 'turn:a.relay.metered.ca:443?transport=tcp',
-      username: 'e8dd65b92f3c0ab9bda3c714',
-      credential: '2xMGSyyWIYfJTh3m'
-    });
-    iceServers.push({
-      urls: 'turns:a.relay.metered.ca:443?transport=tcp',
-      username: 'e8dd65b92f3c0ab9bda3c714',
-      credential: '2xMGSyyWIYfJTh3m'
-    });
+  const qCountry = String(req.query.country || '').trim();
+  const qRegion = String(req.query.region || '').trim();
+  let country = qCountry;
+  if (!country) {
+    try {
+      const geoip = require('geoip-lite');
+      const ip = (req.ip === '::1' ? '127.0.0.1' : req.ip) || '';
+      const clean = String(ip).replace(/^::ffff:/, '');
+      country = geoip.lookup(clean)?.country || '';
+    } catch { /* ignore */ }
   }
-  res.json({ iceServers });
+  const { iceServers, region } = buildIceServers({ country, region: qRegion });
+  res.set('Cache-Control', 'private, max-age=60');
+  res.json({ iceServers, region, country: country || null });
 });
 
 // COIN SYSTEM API
@@ -3456,6 +3440,9 @@ io.on('connection', (socket) => {
       interest: room.interest,
       participantCount: room.users.size,
       country: userData.country,
+      sfu: livekitRooms.isConfigured() && mode === 'group_video'
+        ? { enabled: true, provider: 'livekit', url: livekitRooms.publicUrl() }
+        : { enabled: false },
     });
     const groupReconnect = enhancements.issueReconnectToken(socket.id, { roomId: room.id, nickname: userData.nickname, mode });
     socket.emit('reconnect-token', { token: groupReconnect });
@@ -3521,6 +3508,9 @@ io.on('connection', (socket) => {
       interest: room.interest,
       participantCount: room.users.size,
       country: userData.country,
+      sfu: livekitRooms.isConfigured() && room.mode === 'group_video'
+        ? { enabled: true, provider: 'livekit', url: livekitRooms.publicUrl() }
+        : { enabled: false },
     });
     const joinReconnect = enhancements.issueReconnectToken(socket.id, { roomId: room.id, nickname: userData.nickname, mode: room.mode });
     socket.emit('reconnect-token', { token: joinReconnect });
@@ -4004,6 +3994,8 @@ io.on('connection', (socket) => {
     const userData = users.get(socket.id);
     const room = rooms.get(roomId);
     if (!userData || !room || !room.users.has(socket.id) || !room.users.has(targetSocketId)) return;
+    // When LiveKit SFU is active for group video, ignore mesh media signaling
+    if (room.mode === 'group_video' && livekitRooms.isConfigured()) return;
     const valid = ['offer', 'answer', 'ice-candidate'].includes(type);
     if (!valid) return;
     const target = io.sockets.sockets.get(targetSocketId);
@@ -4018,6 +4010,39 @@ io.on('connection', (socket) => {
       type,
       roomId,
     });
+  });
+
+  // LiveKit access token — only for members of the Helloooo group room
+  on('livekit-token', async (data) => {
+    try {
+      if (!livekitRooms.isConfigured()) {
+        return socket.emit('livekit-token-error', { message: 'LiveKit SFU is not configured on this server.' });
+      }
+      const roomId = String(data?.roomId || '');
+      const u = users.get(socket.id);
+      const room = rooms.get(roomId);
+      if (!u || !room || !room.users.has(socket.id)) {
+        return socket.emit('livekit-token-error', { message: 'Join the Helloooo room before requesting an SFU token.' });
+      }
+      if (room.mode !== 'group_video') {
+        return socket.emit('livekit-token-error', { message: 'LiveKit is only used for group video.' });
+      }
+      const nickname = sanitize(data?.nickname || u.nickname || 'Anonymous', 30);
+      const tokenPayload = await livekitRooms.mintParticipantToken({
+        socketId: socket.id,
+        roomId,
+        nickname,
+        country: u.country || '',
+        isCreator: !!u.isCreator,
+        canPublish: true,
+        canSubscribe: true,
+        roomAdmin: !!u.isCreator,
+      });
+      socket.emit('livekit-token', tokenPayload);
+    } catch (err) {
+      console.error('[livekit-token]', err.message);
+      socket.emit('livekit-token-error', { message: err.message || 'Could not mint LiveKit token' });
+    }
   });
 
   registerYoutubeLiveHandlers(socket, on, { users });

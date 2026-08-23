@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { API_BASE } from '../config/apiBase';
+import { applyCreatorProfileSeo, applyPageSeo } from '../utils/seo';
 
 const API = API_BASE;
 
@@ -13,9 +14,15 @@ export function CreatorPublicProfile({ handle }) {
       .then((r) => r.json())
       .then((d) => {
         if (d.error) setError(d.error);
-        else setProfile(d.creator);
+        else {
+          setProfile(d.creator);
+          if (d.creator?.handle_name) {
+            applyCreatorProfileSeo(d.creator.handle_name, d.creator.bio || '');
+          }
+        }
       })
       .catch(() => setError('Could not load profile'));
+    return () => applyPageSeo();
   }, [handle]);
 
   if (error) {
@@ -35,10 +42,10 @@ export function CreatorPublicProfile({ handle }) {
   }
 
   return (
-    <div className="min-h-[50vh] p-6 max-w-lg mx-auto">
-      <div className="rounded-2xl border border-white/10 bg-[#161a22] p-6 text-center">
+    <main className="min-h-[50vh] p-6 max-w-lg mx-auto">
+      <article className="rounded-2xl border border-white/10 bg-[#161a22] p-6 text-center">
         {profile.avatar_url ? (
-          <img src={profile.avatar_url} alt="" className="w-20 h-20 rounded-full mx-auto mb-4 object-cover" />
+          <img src={profile.avatar_url} alt={`@${profile.handle_name} profile`} className="w-20 h-20 rounded-full mx-auto mb-4 object-cover" />
         ) : (
           <div className="w-20 h-20 rounded-full mx-auto mb-4 bg-white/10 flex items-center justify-center text-2xl">⭐</div>
         )}
@@ -50,7 +57,7 @@ export function CreatorPublicProfile({ handle }) {
             View social profile
           </a>
         )}
-      </div>
-    </div>
+      </article>
+    </main>
   );
 }

@@ -36,10 +36,10 @@ export function LandingHero({ connected, isJoining, onlineCount = 0, lowPower = 
             </span>
           </div>
 
-          <h2 className="mm-h1 mm-landing-hero__title mm-rise mm-rise-1">
+          <h1 className="mm-h1 mm-landing-hero__title mm-rise mm-rise-1">
             {HELLOOOO_EMOJI} Meet people who share your{' '}
             <span className="mm-gradient-text">interests</span>
-          </h2>
+          </h1>
 
           <p className="mm-landing-hero__sub mm-rise mm-rise-2">
             No sign-up. Pick your topics, choose how you want to talk, and connect

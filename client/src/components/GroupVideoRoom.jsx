@@ -17,6 +17,7 @@ import { mmDebug } from '../utils/mmDebug';
 import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream, releaseMediaStream } from '../utils/webrtcMedia';
 import { createGroupGridCapture, pickRecorderMimeType } from '../utils/groupGridCapture';
 import { useYoutubeLive } from '../hooks/useYoutubeLive';
+import { useLiveKitGroup } from '../hooks/useLiveKitGroup';
 import { MiniChatGameModal } from './MiniChatGamePanel';
 import { CreatorLiveModal } from './CreatorLiveModal';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
@@ -411,6 +412,52 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const inputRef = useRef(null);
   const connTimerRef = useRef(null);
   const [calmMode, setCalmMode] = useState(calmModeProp);
+  const [sfuEnabled, setSfuEnabled] = useState(false);
+  const [sfuRoomId, setSfuRoomId] = useState(null);
+  const sfuEnabledRef = useRef(false);
+  useEffect(() => { sfuEnabledRef.current = sfuEnabled; }, [sfuEnabled]);
+
+  const livekit = useLiveKitGroup({
+    enabled: sfuEnabled,
+    socket,
+    roomId: sfuRoomId,
+    nickname,
+    active: !isQueuing && sfuEnabled && !!sfuRoomId,
+  });
+
+  // SFU path: bind LiveKit local + remote tracks into existing UI state
+  useEffect(() => {
+    if (!sfuEnabled) return;
+    if (livekit.localStream) {
+      localStreamRef.current = livekit.localStream;
+      setLocalStreamReady(true);
+      if (localVideoRef.current) attachStreamToVideo(localVideoRef.current, livekit.localStream);
+    }
+  }, [sfuEnabled, livekit.localStream]);
+
+  useEffect(() => {
+    if (!sfuEnabled) return;
+    setPeers(livekit.remotes.map((r) => ({
+      socketId: r.socketId,
+      stream: r.stream,
+      nickname: r.nickname,
+      country: r.country,
+      isCreator: r.isCreator,
+    })));
+    setParticipantCount(1 + livekit.remotes.length);
+  }, [sfuEnabled, livekit.remotes]);
+
+  useEffect(() => {
+    if (!sfuEnabled || !livekit.error) return;
+    setToast(`⚠️ SFU: ${livekit.error}`);
+  }, [sfuEnabled, livekit.error]);
+
+  useEffect(() => {
+    if (sfuEnabled && livekit.connected) {
+      setP2pHealth('good');
+      setToast('📡 Connected via LiveKit SFU');
+    }
+  }, [sfuEnabled, livekit.connected]);
 
   const unique = useUniqueSession({
     socket,
@@ -556,8 +603,17 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     if (youtubeLive.isLive) youtubeLive.stopLive();
     stopGridCapture();
     setIsRecording(false);
+    const wasSfu = sfuEnabledRef.current;
+    if (wasSfu) {
+      void livekit.disconnect();
+      setSfuEnabled(false);
+      sfuEnabledRef.current = false;
+      setSfuRoomId(null);
+    }
     if (localStreamRef.current) {
-      releaseMediaStream(localStreamRef.current, localVideoRef.current);
+      if (!wasSfu) {
+        releaseMediaStream(localStreamRef.current, localVideoRef.current);
+      }
       localStreamRef.current = null;
     }
     setLocalStreamReady(false);
@@ -565,7 +621,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       try { pc.close(); } catch { /* ignore */ }
     });
     peerConnectionsRef.current.clear();
-  }, [stopGridCapture, youtubeLive]);
+  }, [stopGridCapture, youtubeLive, livekit]);
 
   const finishLeaveRoom = useCallback(() => {
     releaseLocalMedia();
@@ -798,8 +854,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     else setMoodEmoji(null);
   }, [messages, socket]);
 
-  // Process pending peers/offers once local stream is ready
+  // Process pending peers/offers once local stream is ready (mesh only)
   useEffect(() => {
+    if (sfuEnabledRef.current) return;
     if (!localStreamReady || !socket) return;
     const pend = pendingPeersRef.current.splice(0);
     pend.forEach((sid) => doOffer(sid));
@@ -807,8 +864,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     offs.forEach(({ from, signal }) => doAnswer(from, signal));
   }, [localStreamReady, socket]);
 
-  // Camera + Mic setup – must complete before WebRTC signaling
+  // Camera + Mic setup – mesh only (LiveKit publishes its own tracks)
   const requestMediaAccess = async () => {
+    if (sfuEnabledRef.current) return;
     setMediaError(null);
     try {
       const constraints = {
@@ -885,15 +943,25 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   }, [localStreamReady, localStreamRef.current]);
 
   const toggleMute = () => {
-    if (!localStreamRef.current) return;
     const next = !muted;
+    if (sfuEnabledRef.current) {
+      livekit.setMicEnabled(!next);
+      setMuted(next);
+      return;
+    }
+    if (!localStreamRef.current) return;
     localStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = !next));
     setMuted(next);
   };
 
   const toggleCamera = () => {
-    if (!localStreamRef.current) return;
     const next = !cameraOff;
+    if (sfuEnabledRef.current) {
+      livekit.setCameraEnabled(!next);
+      setCameraOff(next);
+      return;
+    }
+    if (!localStreamRef.current) return;
     localStreamRef.current.getVideoTracks().forEach((t) => (t.enabled = !next));
     setCameraOff(next);
   };
@@ -1160,7 +1228,15 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         }
       }
       setParticipantCount(data.participantCount ?? 1);
-      // Session stabilized
+      if (data.sfu?.enabled) {
+        setSfuEnabled(true);
+        sfuEnabledRef.current = true;
+        if (rid) setSfuRoomId(rid);
+      } else {
+        setSfuEnabled(false);
+        sfuEnabledRef.current = false;
+        setSfuRoomId(null);
+      }
     };
 
     const onExistingPeers = (data) => {
@@ -1172,7 +1248,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         if (p.country) peerCountriesRef.current.set(p.socketId, p.country);
         if (p.isCreator) peerCreatorsRef.current.set(p.socketId, true);
       });
-      // Add peers immediately (stream: null) so tile exists; ontrack will add stream
+      // Add peers immediately (stream: null) so tile exists; ontrack / LiveKit will add stream
       setPeers((prev) => {
         const existingIds = new Set(prev.map((p) => p.socketId));
         const toAdd = peerList.filter((p) => !existingIds.has(p.socketId)).map((p) => ({
@@ -1180,6 +1256,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         }));
         return toAdd.length ? [...prev, ...toAdd] : prev;
       });
+      if (sfuEnabledRef.current) return;
       if (localStreamRef.current) {
         peerList.forEach((p) => doOffer(p.socketId));
       } else {
@@ -1229,7 +1306,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       if (sid) {
         setPeers((p) => {
           const leavingPeer = p.find((x) => x.socketId === sid);
-          if (leavingPeer?.stream) {
+          if (!sfuEnabledRef.current && leavingPeer?.stream) {
             leavingPeer.stream.getTracks().forEach((t) => {
               try { t.stop(); t.enabled = false; } catch { /* ignore */ }
             });
@@ -1277,6 +1354,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     };
 
     const onSignal = (data) => {
+      if (sfuEnabledRef.current) return; // media via LiveKit SFU
       const from = data.fromSocketId;
       if (!from || from === socket.id) return;
       if (data.fromNickname) peerNicksRef.current.set(from, data.fromNickname);
@@ -1683,18 +1761,29 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         </div>
       )}
 
-      {/* Lazy camera start — saves battery until user opts in */}
+      {/* Lazy camera start — mesh; SFU auto-connects via LiveKit */}
       {!localStreamReady && !mediaError && (
         <div className="absolute inset-0 z-[300] bg-[#0c0e1a]/95 flex flex-col items-center justify-center p-6 text-center">
-          <h2 className="text-xl font-bold text-white mb-2">Ready to join on video?</h2>
-          <p className="text-sm text-white/60 mb-6 max-w-sm">Camera starts only when you tap below — saves battery and reduces device heat.</p>
-          <button
-            type="button"
-            onClick={requestMediaAccess}
-            className="min-h-[48px] px-8 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm"
-          >
-            Start camera & microphone
-          </button>
+          {sfuEnabled ? (
+            <>
+              <h2 className="text-xl font-bold text-white mb-2">Connecting to LiveKit SFU…</h2>
+              <p className="text-sm text-white/60 mb-6 max-w-sm">Group video media is relayed through the Selective Forwarding Unit — not peer-to-peer mesh.</p>
+              <div className="w-10 h-10 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
+              {livekit.error && <p className="mt-4 text-xs text-rose-300">{livekit.error}</p>}
+            </>
+          ) : (
+            <>
+              <h2 className="text-xl font-bold text-white mb-2">Ready to join on video?</h2>
+              <p className="text-sm text-white/60 mb-6 max-w-sm">Camera starts only when you tap below — saves battery and reduces device heat.</p>
+              <button
+                type="button"
+                onClick={requestMediaAccess}
+                className="min-h-[48px] px-8 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm"
+              >
+                Start camera & microphone
+              </button>
+            </>
+          )}
           <button type="button" onClick={handleLeaveRoom} className="mt-4 text-xs text-white/50 hover:text-white underline min-h-[44px]">Leave room</button>
         </div>
       )}
@@ -1734,6 +1823,11 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                   <DeskSignalBars level={connLevel} />
                   {connLabel}
                 </span>
+                {sfuEnabled && (
+                  <span className="mm-group-desk-header__meta-item" title="Selective Forwarding Unit">
+                    {livekit.connected ? 'LiveKit SFU' : 'SFU…'}
+                  </span>
+                )}
               </div>
             </div>
             <div className="mm-group-desk-header__actions">
@@ -1907,7 +2001,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
             </div>
             <div className="mm-group-mobile-header__status">
               <span className="mm-desk-dot mm-desk-dot--green" aria-hidden />
-              Connected
+              {sfuEnabled ? (livekit.connected ? 'LiveKit SFU' : 'SFU…') : 'Connected'}
               <span className="mm-group-mobile-header__timer">{formatTimerLong(connectedSecs)}</span>
             </div>
           </header>

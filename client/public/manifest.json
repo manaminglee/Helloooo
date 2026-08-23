@@ -1,12 +1,17 @@
 {
   "name": "Helloooo – Random People, Real Conversations",
   "short_name": "Helloooo",
-  "description": "👋 Free anonymous video, text, and audio chat. Connect with strangers instantly.",
+  "description": "Free anonymous video, text, and voice chat. Meet strangers by interest — Omegle-style alternative with group video and creators.",
+  "lang": "en",
+  "dir": "ltr",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#070811",
   "theme_color": "#7c3aed",
   "orientation": "portrait-primary",
+  "categories": ["social", "entertainment", "communication"],
   "icons": [
     {
       "src": "/favicon-16.png",

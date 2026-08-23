@@ -34,6 +34,7 @@ git push origin main
    - `NODE_ENV` = `production`
    - `ADMIN_KEY` = click "Generate" (or paste a strong random string)
    - `FRONTEND_ORIGIN` = leave empty for now (add after Vercel is set up)
+   - **Group video SFU (recommended):** `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` from [LiveKit Cloud](https://cloud.livekit.io) (or self-hosted). Without these, group video falls back to peer mesh.
 
 6. Click **Create Web Service**. Wait for the first deploy.
 7. Copy your Render URL, e.g. `https://mana-mingle-xxxx.onrender.com` (from the top of the service page).
