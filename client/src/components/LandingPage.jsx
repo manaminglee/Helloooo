@@ -1201,9 +1201,12 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                         type="button"
                         disabled={linkVerifying || !creatorForm.link}
                         onClick={async () => {
-                          const url = creatorForm.link.trim();
+                          let url = creatorForm.link.trim();
                           if (!url) return;
-                          // Validate URL format first
+                          if (!/^https?:\/\//i.test(url)) {
+                            url = `https://${url}`;
+                            setCreatorForm((f) => ({ ...f, link: url }));
+                          }
                           try { new URL(url); } catch { return showAlert('Invalid URL', 'Please enter a valid URL starting with https://'); }
                           setLinkVerifying(true);
                           setLinkValidated(false);
@@ -1215,6 +1218,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                               body: JSON.stringify({ url })
                             });
                             const data = await res.json();
+                            if (data.normalized && data.normalized !== url) {
+                              setCreatorForm((f) => ({ ...f, link: data.normalized }));
+                            }
                             if (data.valid) {
                               setLinkValidated(true);
                               setLinkVerifyFailed(false);
@@ -1223,7 +1229,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                               setLinkValidated(false);
                             }
                           } catch {
-                            // Network error - allow submission anyway
+                            // Network error talking to our API — allow submission; format already checked.
                             setLinkValidated(true);
                           } finally {
                             setLinkVerifying(false);
@@ -1246,9 +1252,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                     </div>
                     <p className={`text-[9px] px-2 ${linkValidated ? 'text-emerald-400/60' : linkVerifyFailed ? 'text-rose-400/60' : 'text-white/20'
                       }`}>
-                      {linkValidated ? '✓ Profile link is reachable and verified.' :
-                        linkVerifyFailed ? '⚠ Link seems unreachable. Double-check the URL.' :
-                          'Auto-filled from your handle. Click Verify to confirm in background.'}
+                      {linkValidated ? '✓ Profile link looks good.' :
+                        linkVerifyFailed ? '⚠ Could not verify that link. Check the URL, or submit anyway if you are sure it is correct.' :
+                          'Paste your Instagram / YouTube / TikTok / X profile URL, then Verify.'}
                     </p>
                   </div>
                   <button

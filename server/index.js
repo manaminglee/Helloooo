@@ -310,6 +310,38 @@ async function emitToCreatorByReferralCode(referralCode, event, payload) {
 const validateUrlBuckets = new Map(); // ip -> { start, count }
 const VALIDATE_URL_MAX_PER_MINUTE = 10;
 
+/** Platforms that block datacenter HEAD/GET — format + host check is enough. */
+const SOCIAL_PROFILE_HOSTS = [
+  'instagram.com',
+  'cdninstagram.com',
+  'youtube.com',
+  'youtu.be',
+  'tiktok.com',
+  'twitter.com',
+  'x.com',
+  'snapchat.com',
+  'facebook.com',
+  'fb.com',
+  'twitch.tv',
+  'linkedin.com',
+  'reddit.com',
+  'threads.net',
+];
+
+function isSocialProfileHost(hostname) {
+  const h = String(hostname || '').toLowerCase().replace(/^www\./, '');
+  return SOCIAL_PROFILE_HOSTS.some((s) => h === s || h.endsWith(`.${s}`));
+}
+
+/** HTTP statuses that mean “host answered” even if the page is gated. */
+function isReachableHttpStatus(status) {
+  const s = Number(status) || 0;
+  if (s <= 0) return false;
+  if (s < 400) return true;
+  // Bot walls / auth walls / method not allowed — still proves the URL exists.
+  return [401, 403, 405, 429, 999].includes(s);
+}
+
 function isPrivateOrReservedIp(ip) {
   if (!ip) return true;
   let v4 = ip.includes('.') ? ip : null;
@@ -1006,7 +1038,7 @@ app.get('/api/debug/status', async (req, res) => {
 // --- CREATOR MATRIX HUB (High Priority) ---
 // Background URL validator (avoids CORS and opening new tabs)
 app.post('/api/validate-url', async (req, res) => {
-  const { url } = req.body || {};
+  let { url } = req.body || {};
   if (!url) return res.status(400).json({ valid: false, error: 'No URL provided' });
 
   // Per-IP rate limit: this endpoint is an SSRF/probing primitive without it.
@@ -1025,7 +1057,8 @@ app.post('/api/validate-url', async (req, res) => {
 
   let parsed;
   try {
-    parsed = new URL(String(url));
+    const raw = String(url).trim();
+    parsed = new URL(raw.startsWith('http') ? raw : `https://${raw}`);
   } catch {
     return res.json({ valid: false, error: 'Invalid URL format' });
   }
@@ -1036,15 +1069,30 @@ app.post('/api/validate-url', async (req, res) => {
     return res.json({ valid: false, error: 'URL host is not allowed' });
   }
 
+  // Instagram / TikTok / YouTube / X block most server IPs — accept well-formed social URLs.
+  if (isSocialProfileHost(parsed.hostname)) {
+    return res.json({
+      valid: true,
+      status: 200,
+      mode: 'social_format',
+      normalized: parsed.href,
+      note: 'Social profile URL accepted (platforms block server probes).',
+    });
+  }
+
   const doFetch = async (method) => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), 6000);
     try {
       return await fetch(parsed.href, {
         method,
         redirect: 'follow',
         signal: controller.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Helloooo/1.0)' }
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+        },
       });
     } finally {
       clearTimeout(timeout);
@@ -1055,23 +1103,44 @@ app.post('/api/validate-url', async (req, res) => {
     let response;
     try {
       response = await doFetch('HEAD');
+      // Some CDNs reject HEAD with 405 — fall through to GET.
+      if (response.status === 405 || response.status === 501) {
+        response = await doFetch('GET');
+      }
     } catch {
-      // Some hosts block HEAD - try GET with minimal read
       try {
         response = await doFetch('GET');
       } catch {
         return res.json({ valid: false, error: 'Unreachable' });
       }
     }
-    // Re-validate the final (post-redirect) URL to catch redirect-to-internal attacks.
     if (response.url) {
       let finalUrl;
-      try { finalUrl = new URL(response.url); } catch { return res.json({ valid: false, error: 'Invalid redirect target' }); }
+      try {
+        finalUrl = new URL(response.url);
+      } catch {
+        return res.json({ valid: false, error: 'Invalid redirect target' });
+      }
       if (!['http:', 'https:'].includes(finalUrl.protocol) || await resolvesToPrivateIp(finalUrl.hostname)) {
         return res.json({ valid: false, error: 'Redirect target is not allowed' });
       }
+      // Redirect landed on a social host (e.g. bit.ly → instagram) — accept.
+      if (isSocialProfileHost(finalUrl.hostname)) {
+        return res.json({
+          valid: true,
+          status: response.status,
+          mode: 'social_redirect',
+          normalized: finalUrl.href,
+        });
+      }
     }
-    res.json({ valid: response.ok || response.status < 400, status: response.status });
+    const reachable = isReachableHttpStatus(response.status);
+    res.json({
+      valid: reachable,
+      status: response.status,
+      mode: 'live',
+      error: reachable ? undefined : `HTTP ${response.status}`,
+    });
   } catch (e) {
     res.json({ valid: false, error: 'Unreachable' });
   }
