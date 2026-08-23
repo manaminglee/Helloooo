@@ -1,8 +1,13 @@
 /* Helloooo brand wordmark — matches helloooo.site logo colors */
 
 .helloooo-logo {
+  display: block;
   object-fit: contain;
+  object-position: center;
   border-radius: 0.65rem;
+  flex-shrink: 0;
+  overflow: visible;
+  background: #000;
 }
 
 .helloooo-brand {

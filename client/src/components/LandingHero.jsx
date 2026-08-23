@@ -74,7 +74,7 @@ export function LandingHero({ onStart, connected, isJoining, onlineCount = 0, lo
           {/* ---- Copy column ---- */}
           <div className="text-center lg:text-left">
             <div className="mb-6 flex justify-center lg:justify-start mm-rise">
-              <HellooooLockup logoSize={80} brandSize="xl" showTagline />
+              <HellooooLockup logoSize={44} brandSize="xl" showTagline />
             </div>
             <div className="mm-rise inline-flex">
               <span className="mm-eyebrow">

@@ -507,7 +507,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
           <div className="mm-landing-header__bar">
             <div className="mm-landing-header__brand">
               <button type="button" onClick={scrollToStart} className="flex items-center gap-3 min-w-0 text-left rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/40 mm-compact-btn">
-                <HellooooLogo size={36} className="shrink-0 rounded-lg" />
+                <HellooooLogo size={28} className="shrink-0 rounded-lg" />
                 <div className="flex flex-col min-w-0">
                   <HellooooBrand size="sm" />
                   <span className="hidden sm:block text-[10px] text-white/45 tracking-widest uppercase">{HELLOOOO_EMOJI} {HELLOOOO_TAGLINE}</span>
@@ -765,7 +765,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
         <div className="max-w-5xl mx-auto flex flex-col md:flex-row justify-between items-start gap-10">
           <div className="max-w-sm space-y-4">
             <div className="flex items-center gap-3">
-              <HellooooLogo size={44} />
+              <HellooooLogo size={28} />
               <HellooooBrand size="md" />
             </div>
             <p className="text-sm text-white/50 leading-relaxed">

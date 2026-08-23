@@ -2045,15 +2045,16 @@ h1, h2, h3, .font-display {
 }
 .mm-video-logo-placeholder--compact { gap: 0.35rem; }
 .mm-video-logo-placeholder__img {
-  width: 3.25rem;
-  height: 3.25rem;
-  border-radius: 0.85rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.65rem;
   opacity: 0.85;
+  object-fit: contain;
   box-shadow: 0 0 24px rgba(167, 139, 250, 0.25);
 }
 .mm-video-logo-placeholder--compact .mm-video-logo-placeholder__img {
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 1.75rem;
+  height: 1.75rem;
 }
 .mm-video-logo-placeholder__text {
   font-size: 0.6875rem;

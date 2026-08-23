@@ -87,7 +87,7 @@ export function AgeVerificationGate({ onVerified }) {
       <div className="hero-glow hero-glow-1" />
       <div className="hero-glow hero-glow-2" />
       <div className="gate-card relative z-10 max-w-md w-full">
-        <HellooooLogo size={64} className="mx-auto mb-5" />
+        <HellooooLogo size={40} className="mx-auto mb-5" />
         <HellooooBrand size="lg" className="justify-center mb-2" />
         <h2 className="text-lg font-bold text-white/80 mb-2 text-center">Age Verification</h2>
         <p className="text-sm mb-6 text-center" style={{ color: 'rgba(232,234,246,0.55)' }}>

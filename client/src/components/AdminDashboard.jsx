@@ -547,7 +547,7 @@ export function AdminDashboard({ onJoinRoom }) {
       <div className="min-h-screen bg-realm-void flex items-center justify-center p-6 text-white font-sans">
         <div className="max-w-md w-full p-10 rounded-[40px] bg-black border border-white/10 backdrop-blur-3xl shadow-[0_0_100px_rgba(99,102,241,0.2)] animate-in-zoom">
           <div className="flex flex-col items-center mb-8">
-            <img src="/helloooo-logo.png" alt="Helloooo" className="w-20 h-20 mb-6 drop-shadow-[0_0_20px_rgba(6,182,212,0.4)] rounded-2xl" />
+            <img src="/helloooo-logo.png" alt="Helloooo" className="w-12 h-12 mb-6 object-contain drop-shadow-[0_0_20px_rgba(6,182,212,0.4)] rounded-2xl" />
             <h1 className="text-2xl font-black uppercase tracking-[0.2em] italic">Admin <span className="text-cyan-400">Dashboard</span></h1>
             <p className="text-[10px] text-white/20 mt-2 font-black uppercase tracking-[0.3em]">Authorized Access Required</p>
           </div>

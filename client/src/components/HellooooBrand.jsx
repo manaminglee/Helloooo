@@ -6,7 +6,7 @@ export const HELLOOOO_LOGO = '/helloooo-logo.png';
 export const HELLOOOO_TAGLINE = 'Random people • Real conversations';
 export const HELLOOOO_EMOJI = '👋';
 
-export function HellooooLogo({ size = 48, className = '', alt = 'Helloooo' }) {
+export function HellooooLogo({ size = 40, className = '', alt = 'Helloooo' }) {
   return (
     <img
       src={HELLOOOO_LOGO}
@@ -14,6 +14,7 @@ export function HellooooLogo({ size = 48, className = '', alt = 'Helloooo' }) {
       width={size}
       height={size}
       className={`helloooo-logo ${className}`.trim()}
+      style={{ width: size, height: size, maxWidth: size, maxHeight: size }}
       decoding="async"
     />
   );
@@ -33,7 +34,7 @@ export function HellooooBrand({ size = 'md', className = '', as: Tag = 'span' })
   );
 }
 
-export function HellooooLockup({ logoSize = 56, brandSize = 'lg', showTagline = false, className = '' }) {
+export function HellooooLockup({ logoSize = 40, brandSize = 'lg', showTagline = false, className = '' }) {
   return (
     <div className={`helloooo-lockup ${className}`.trim()}>
       <HellooooLogo size={logoSize} className="helloooo-lockup__logo" />
