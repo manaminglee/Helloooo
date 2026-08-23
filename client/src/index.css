@@ -4294,6 +4294,59 @@ h1, h2, h3, .font-display {
   background: rgba(251, 191, 36, 0.08) !important;
 }
 
+/* Gift drawer category strip — hide scrollbar so labels aren't clipped */
+.mm-gift-cats {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2rem 0.05rem 0.45rem;
+  margin-bottom: 0.5rem;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.mm-gift-cats::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
+.mm-gift-cat {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.mm-gift-cat--active {
+  border-color: rgba(167, 139, 250, 0.55);
+  background: rgba(124, 58, 237, 0.22);
+  color: #ede9fe;
+}
+
+.mm-gift-cat:focus-visible {
+  outline: 2px solid rgba(167, 139, 250, 0.55);
+  outline-offset: 2px;
+}
+
 .mm-audio-chat-bubble .mm-desk-bubble__ttl {
   display: block;
   margin-top: 0.2rem;
@@ -5540,13 +5593,33 @@ select, option {
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
 
+select {
+  border-radius: 0.75rem !important;
+  padding: 0.55rem 2rem 0.55rem 0.85rem !important;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%239ca3af' d='M1 1l5 5 5-5'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 0.85rem center !important;
+  background-size: 0.7rem !important;
+}
+
 select:focus {
   border-color: rgba(167, 139, 250, 0.45) !important;
   outline: none;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
 }
 
-option:hover, option:focus, option:active, option:checked {
-  background-color: rgba(124, 58, 237, 0.28) !important;
+option {
+  padding: 0.65rem 0.85rem !important;
+  background-color: #12151f !important;
+  color: #f1f5f9 !important;
+}
+
+option:checked,
+option:hover,
+option:focus,
+option:active {
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.35), rgba(124, 58, 237, 0.25)) !important;
   color: #ffffff !important;
 }
 
@@ -5729,18 +5802,24 @@ textarea {
   margin-top: 1rem;
   max-width: 100%;
   width: 100%;
-  white-space: nowrap;
+  padding-inline: 0.25rem;
+  box-sizing: border-box;
+  white-space: normal;
+  text-wrap: balance;
+  overflow-wrap: break-word;
   text-align: center;
-  font-size: clamp(1.05rem, 3.8vw, 3.15rem);
-  line-height: 1.15;
+  font-size: clamp(1.45rem, 6.2vw, 3.15rem);
+  line-height: 1.18;
   letter-spacing: -0.03em;
 }
 
-@media (max-width: 420px) {
+/* One line only when the viewport is wide enough to fit the full sentence */
+@media (min-width: 900px) {
   .mm-landing-hero__title {
-    white-space: normal;
-    text-wrap: balance;
-    font-size: clamp(1.35rem, 7vw, 1.85rem);
+    white-space: nowrap;
+    text-wrap: unset;
+    overflow-wrap: normal;
+    font-size: clamp(1.85rem, 3.2vw, 3.15rem);
   }
 }
 
@@ -5852,6 +5931,134 @@ textarea {
 .mm-landing-names .mm-landing-field {
   width: 100%;
   text-align: center;
+}
+
+.mm-lang-picker {
+  position: relative;
+  width: 100%;
+  z-index: 20;
+}
+
+.mm-lang-picker__trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mm-lang-picker__current {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.mm-lang-picker__flag {
+  font-size: 1.05rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.mm-lang-picker__chev {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.4);
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.mm-lang-picker--open .mm-lang-picker__chev {
+  transform: rotate(180deg);
+  color: rgba(167, 139, 250, 0.9);
+}
+
+.mm-lang-picker--open .mm-lang-picker__trigger {
+  border-color: rgba(167, 139, 250, 0.45);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+}
+
+.mm-lang-picker__menu {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0.4rem;
+  list-style: none;
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 12, 20, 0.98);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  z-index: 30;
+  animation: mm-lang-pop 0.18s ease-out;
+}
+
+@keyframes mm-lang-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.mm-lang-picker__option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 0.75rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.mm-lang-picker__option:hover,
+.mm-lang-picker__option:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  outline: none;
+}
+
+.mm-lang-picker__option--active {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(96, 165, 250, 0.35);
+  color: #fff;
+}
+
+.mm-lang-picker__label {
+  flex: 1;
+  min-width: 0;
+}
+
+.mm-lang-picker__check {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: #93c5fd;
+  font-weight: 800;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mm-lang-picker__menu {
+    animation: none;
+  }
 }
 
 @media (min-width: 640px) {

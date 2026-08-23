@@ -76,7 +76,10 @@ function StageSlot({ index, occupant, speaking, canClaim, onClaim, canModerate, 
       {menuOpen && canModerate && !isSelf && (
         <>
           <button type="button" className="fixed inset-0 z-20" aria-label="Close" onClick={() => setMenuOpen(false)} />
-          <div className="absolute top-full mt-1 z-30 left-1/2 -translate-x-1/2 w-40 rounded-xl border border-white/12 bg-[#171b24] p-1 shadow-2xl">
+          <div
+            className="absolute top-full mt-1 z-30 left-1/2 -translate-x-1/2 w-40 rounded-xl border border-white/12 bg-[#171b24] p-1 shadow-2xl"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
             <button type="button" className="w-full text-left px-2.5 py-2 text-[11px] text-white/80 hover:bg-white/10 rounded-lg" onClick={() => { onModerate(occupant.socketId, occupant.forceMuted ? 'unmute' : 'mute'); setMenuOpen(false); }}>
               {occupant.forceMuted ? '🔊 Unmute' : '🔇 Mute'}
             </button>
@@ -410,6 +413,45 @@ export function GroupAudioRoom({ socket, iceServers, coins = 0, nickname = 'Anon
               ))}
               {listeners.length === 0 && <p className="text-[11px] text-white/30">No viewers waiting.</p>}
             </div>
+
+            {isHost && (
+              <>
+                <p className="text-[10px] text-white/40 mb-2">Assign co-taker (one at a time)</p>
+                <div className="flex flex-col gap-1 mb-3">
+                  {members
+                    .filter((m) => m.socketId !== socket?.id && m.role !== 'host')
+                    .map((m) => (
+                      <div key={m.socketId} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5">
+                        <span className="flex-1 min-w-0 text-xs truncate text-white/80">
+                          {m.nickname}
+                          <span className="text-white/35"> · {ROLE_LABEL[m.role] || m.role}</span>
+                        </span>
+                        {m.role === 'moderator' ? (
+                          <button
+                            type="button"
+                            className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-md bg-white/10 text-white/70"
+                            onClick={() => moderate(m.socketId, 'demote')}
+                          >
+                            Remove
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-md bg-amber-500/20 text-amber-200 border border-amber-400/30"
+                            onClick={() => moderate(m.socketId, 'promote')}
+                          >
+                            Make co-taker
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  {members.filter((m) => m.socketId !== socket?.id && m.role !== 'host').length === 0 && (
+                    <p className="text-[11px] text-white/30">Need another person in the room.</p>
+                  )}
+                </div>
+              </>
+            )}
+
             {!isHost && <p className="text-[10px] text-white/35">Co-takers can mute, remove, approve seats, and invite — not rename, wallpaper, or assign co-takers.</p>}
           </div>
         </div>

@@ -18,7 +18,8 @@ export function GiftDrawer({ socket, channelId, members = [], coins = 0, open, o
   const [target, setTarget] = useState(null);
   const [toAll, setToAll] = useState(false);
   const [tab, setTab] = useState('gifts'); // gifts | packs
-  const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     if (!socket) return undefined;
@@ -28,22 +29,32 @@ export function GiftDrawer({ socket, channelId, members = [], coins = 0, open, o
       setPackages(p || []);
     };
     const onError = ({ message }) => {
-      setError(message);
-      setTimeout(() => setError(null), 3500);
+      setSending(false);
+      setNotice({ type: 'err', text: message || 'Gift failed' });
+      setTimeout(() => setNotice(null), 4000);
+    };
+    const onSent = ({ toAll: blast, count }) => {
+      setSending(false);
+      setNotice({
+        type: 'ok',
+        text: blast ? `Gift sent to ${count || 'everyone'}!` : 'Gift sent!',
+      });
+      setTimeout(() => setNotice(null), 2500);
     };
     const onBought = ({ coins: added }) => {
-      setError(null);
+      setNotice({ type: 'ok', text: `+${added} coins added` });
       setTab('gifts');
-      setTimeout(() => setError(`+${added} coins added`), 50);
-      setTimeout(() => setError(null), 2500);
+      setTimeout(() => setNotice(null), 2500);
     };
     socket.on('gift:catalog', onCatalog);
     socket.on('gift:error', onError);
+    socket.on('gift:sent', onSent);
     socket.on('gift:pack-bought', onBought);
     socket.emit('gift:catalog');
     return () => {
       socket.off('gift:catalog', onCatalog);
       socket.off('gift:error', onError);
+      socket.off('gift:sent', onSent);
       socket.off('gift:pack-bought', onBought);
     };
   }, [socket]);
@@ -53,6 +64,9 @@ export function GiftDrawer({ socket, channelId, members = [], coins = 0, open, o
 
   useEffect(() => {
     if (!target && others.length) setTarget(others[0].socketId);
+    if (target && !others.some((m) => m.socketId === target)) {
+      setTarget(others[0]?.socketId || null);
+    }
   }, [others, target]);
 
   const filtered = useMemo(() => {
@@ -63,14 +77,28 @@ export function GiftDrawer({ socket, channelId, members = [], coins = 0, open, o
   if (!open) return null;
 
   const send = (giftId) => {
-    if (toAll) {
-      const ids = (stagePeople.length ? stagePeople : others).map((m) => m.socketId);
-      if (!ids.length) return setError('No one else here yet.');
-      socket?.emit('gift:send', { giftId, channelId, toAll: true, targetIds: ids });
+    if (!socket || !channelId) {
+      setNotice({ type: 'err', text: 'Not connected to a voice room.' });
       return;
     }
-    if (!target) return setError('Pick someone to gift first.');
-    socket?.emit('gift:send', { toSocketId: target, giftId, channelId });
+    if (sending) return;
+    setSending(true);
+    if (toAll) {
+      const ids = (stagePeople.length ? stagePeople : others).map((m) => m.socketId);
+      if (!ids.length) {
+        setSending(false);
+        setNotice({ type: 'err', text: 'No one else here yet.' });
+        return;
+      }
+      socket.emit('gift:send', { giftId, channelId, toAll: true, targetIds: ids });
+      return;
+    }
+    if (!target) {
+      setSending(false);
+      setNotice({ type: 'err', text: 'Pick someone to gift first.' });
+      return;
+    }
+    socket.emit('gift:send', { toSocketId: target, giftId, channelId });
   };
 
   const buyPack = (packageId) => {
@@ -110,10 +138,16 @@ export function GiftDrawer({ socket, channelId, members = [], coins = 0, open, o
                 <span className="text-xs font-bold text-white/70">${p.priceUsd}</span>
               </button>
             ))}
-            <p className="text-[10px] text-white/35">Test packs work when the server allows virtual purchases.</p>
+            <p className="text-[10px] text-white/35">Need coins to send gifts. Test packs credit instantly when enabled on the server.</p>
           </div>
         ) : (
           <>
+            {coins <= 0 && (
+              <p className="mb-2 text-[11px] text-amber-200/90 bg-amber-500/10 border border-amber-400/25 rounded-lg px-3 py-2">
+                You have 0 coins. Open <button type="button" className="underline font-bold" onClick={() => setTab('packs')}>Buy coins</button> or wait for your activity bonus.
+              </p>
+            )}
+
             <div className="flex gap-2 mb-2">
               <button
                 type="button"
@@ -131,29 +165,33 @@ export function GiftDrawer({ socket, channelId, members = [], coins = 0, open, o
               </button>
             </div>
 
-            {!toAll && others.length > 0 && (
-              <select
-                value={target || ''}
-                onChange={(e) => setTarget(e.target.value)}
-                className="w-full mb-2 bg-white/5 border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none"
-              >
-                {others.map((m) => (
-                  <option key={m.socketId} value={m.socketId} className="bg-[#12151c]">
-                    {m.nickname} · {m.role}
-                  </option>
-                ))}
-              </select>
+            {!toAll && (
+              others.length > 0 ? (
+                <select
+                  value={target || ''}
+                  onChange={(e) => setTarget(e.target.value)}
+                  className="w-full mb-2 bg-white/5 border border-white/12 rounded-lg px-3 py-2 text-xs text-white outline-none"
+                >
+                  {others.map((m) => (
+                    <option key={m.socketId} value={m.socketId} className="bg-[#12151c]">
+                      {m.nickname} · {m.role}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="mb-2 text-[11px] text-white/40">Invite someone to the room to send a gift.</p>
+              )
             )}
 
-            <div className="flex gap-1 overflow-x-auto pb-2 mb-2 scrollbar-none">
+            <div className="mm-gift-cats" role="tablist" aria-label="Gift categories">
               {categories.map((c) => (
                 <button
                   key={c.id}
                   type="button"
+                  role="tab"
+                  aria-selected={category === c.id}
                   onClick={() => setCategory(c.id)}
-                  className={`shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                    category === c.id ? 'border-violet-400/50 bg-violet-500/20 text-violet-100' : 'border-white/10 text-white/45'
-                  }`}
+                  className={`mm-gift-cat ${category === c.id ? 'mm-gift-cat--active' : ''}`}
                 >
                   {c.label}
                 </button>
@@ -162,18 +200,19 @@ export function GiftDrawer({ socket, channelId, members = [], coins = 0, open, o
 
             <div className="grid grid-cols-4 gap-2 overflow-y-auto min-h-0 flex-1 pr-0.5">
               {filtered.map((g) => {
-                const cost = toAll ? g.cost * Math.max(1, (stagePeople.length || others.length)) : g.cost;
+                const cost = toAll ? g.cost * Math.max(1, (stagePeople.length || others.length || 1)) : g.cost;
                 const affordable = coins >= cost;
+                const canSend = !!channelId && (toAll ? others.length > 0 : !!target);
                 return (
                   <button
                     key={g.id}
                     type="button"
-                    disabled={!affordable || (!toAll && !target)}
+                    disabled={sending || !affordable || !canSend}
                     onClick={() => send(g.id)}
                     className={`p-2 rounded-xl border bg-white/[0.03] hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
                       TIER_STYLES[g.tier] || TIER_STYLES.basic
                     }`}
-                    title={`${g.name} · ${cost} coins`}
+                    title={!affordable ? `Need ${cost} coins` : `${g.name} · ${cost} coins`}
                   >
                     <span className="block text-xl leading-none">{g.icon}</span>
                     <span className="block text-[8px] text-white/50 truncate mt-0.5">{g.name}</span>
@@ -185,7 +224,11 @@ export function GiftDrawer({ socket, channelId, members = [], coins = 0, open, o
           </>
         )}
 
-        {error && <p className="mt-2 text-[11px] text-rose-300">{error}</p>}
+        {notice && (
+          <p className={`mt-2 text-[11px] ${notice.type === 'ok' ? 'text-emerald-300' : 'text-rose-300'}`}>
+            {notice.text}
+          </p>
+        )}
         <p className="mt-2 text-[10px] text-white/30">Everyone sees the gift animation + chat line.</p>
       </div>
     </div>

@@ -531,38 +531,62 @@ function registerAudioChannels(app, io, deps) {
       const me = channel?.members.get(socket.id);
       const targetId = String(data.targetSocketId || '');
       const target = channel?.members.get(targetId);
-      if (!channel || !me || !target) return;
+      if (!channel || !me) {
+        return socket.emit('audio:error', { message: 'Not in this voice room.' });
+      }
+      if (!target) {
+        return socket.emit('audio:error', { message: 'That person is no longer in the room.' });
+      }
+
+      const action = String(data.action || '');
+
+      // Host-only: assign / remove co-taker (skip the generic rank gate so host can always promote speakers).
+      if (action === 'promote' || action === 'demote') {
+        if (me.role !== 'host') {
+          return socket.emit('audio:error', { message: 'Only the room admin can assign a co-taker.' });
+        }
+        if (target.role === 'host' || target.socketId === socket.id) {
+          return socket.emit('audio:error', { message: 'Cannot change the admin role.' });
+        }
+        if (action === 'promote') {
+          for (const m of channel.members.values()) {
+            if (m.role === 'moderator') m.role = 'speaker';
+          }
+          target.role = 'moderator';
+          if (target.slot == null) {
+            const used = new Set([...channel.members.values()].map((m) => m.slot).filter((s) => s != null));
+            for (let i = 0; i < channel.maxSpeakers; i++) {
+              if (!used.has(i)) { target.slot = i; break; }
+            }
+          }
+          target.micMuted = target.forceMuted ? true : target.micMuted;
+          io.to(channel.id).emit('audio:chat-message', {
+            channelId: channel.id,
+            id: `mod_${Date.now()}`,
+            socketId: socket.id,
+            nickname: me.nickname || 'Admin',
+            text: `🛡️ ${target.nickname} is now co-taker`,
+            system: true,
+            ts: Date.now(),
+          });
+        } else {
+          target.role = target.slot != null ? 'speaker' : 'listener';
+        }
+        broadcastState(channel);
+        audit?.(`audio_${action}`, { by: me.userId, channelId: channel.id, target: target.userId });
+        return;
+      }
+
       if (ROLE_RANK[me.role] < ROLE_RANK.moderator || ROLE_RANK[me.role] <= ROLE_RANK[target.role]) {
         return socket.emit('audio:error', { message: 'Insufficient permissions.' });
       }
 
-      const action = String(data.action || '');
       if (action === 'mute') {
         target.forceMuted = true;
         target.micMuted = true;
         io.to(channel.id).emit('audio:speaking', { channelId: channel.id, socketId: targetId, micMuted: true });
       } else if (action === 'unmute') {
         target.forceMuted = false;
-      } else if (action === 'promote') {
-        if (me.role !== 'host') {
-          return socket.emit('audio:error', { message: 'Only the room admin can assign a co-taker.' });
-        }
-        // One co-taker at a time
-        for (const m of channel.members.values()) {
-          if (m.role === 'moderator') m.role = 'speaker';
-        }
-        target.role = 'moderator';
-        if (target.slot == null) {
-          const used = new Set([...channel.members.values()].map((m) => m.slot).filter((s) => s != null));
-          for (let i = 0; i < channel.maxSpeakers; i++) {
-            if (!used.has(i)) { target.slot = i; break; }
-          }
-        }
-      } else if (action === 'demote') {
-        if (me.role !== 'host') {
-          return socket.emit('audio:error', { message: 'Only the room admin can remove a co-taker.' });
-        }
-        target.role = 'speaker';
       } else if (action === 'kick' || action === 'block') {
         const targetIp = users.get(targetId)?.ip;
         if (targetIp) channel.bannedIps.add(targetIp);
@@ -574,7 +598,7 @@ function registerAudioChannels(app, io, deps) {
         audit?.(`audio_${action}`, { by: me.userId, channelId: channel.id, target: target.userId });
         return;
       } else {
-        return;
+        return socket.emit('audio:error', { message: 'Unknown moderation action.' });
       }
       broadcastState(channel);
       audit?.(`audio_${action}`, { by: me.userId, channelId: channel.id, target: target.userId });

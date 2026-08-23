@@ -10,6 +10,7 @@ import { verifyStripeReturn } from './utils/paymentCheckout';
 import { LowPowerProvider } from './context/LowPowerContext';
 import { useSocket } from './hooks/useSocket';
 import { useCoins } from './hooks/useCoins';
+import { useIceServers } from './hooks/useIceServers';
 import { loadReconnectSession, clearReconnectSession, saveReconnectSession } from './utils/reconnectSession';
 import { API_BASE } from './config/apiBase';
 import { lazyRetry, clearChunkReloadFlag } from './utils/lazyRetry';
@@ -73,6 +74,7 @@ function AppShell() {
   const [roomJoinNotice, setRoomJoinNotice] = useState('');
   const { socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds, isPro, subscription } = useSocket();
   const coinState = useCoins();
+  const { iceServers } = useIceServers();
   const coinStateWithAds = useMemo(
     () => ({ ...coinState, adsEnabled, adScripts }),
     [coinState, adsEnabled, adScripts]
@@ -445,6 +447,7 @@ function AppShell() {
           <div className="mm-page-enter">
             <GroupAudioRoom
               socket={socket}
+              iceServers={iceServers}
               coins={coinState?.balance ?? 0}
               nickname={isCreator ? nickname : (joinMeta.displayNickname || nickname)}
               onExit={roomId ? handleLeaveRoom : handleCancelQueue}
@@ -533,6 +536,10 @@ function AppShell() {
           {renderContent()}
         </Suspense>
       </div>
+
+      <Suspense fallback={null}>
+        <GiftOverlayLazy socket={socket} />
+      </Suspense>
 
       <PwaInstallPrompt />
     </>

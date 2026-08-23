@@ -414,7 +414,12 @@ export function useAudioChannel(socket, iceServers) {
 
   const moderate = useCallback(
     (targetSocketId, action) => {
-      socket?.emit('audio:moderate', { channelId: channelIdRef.current, targetSocketId, action });
+      const channelId = channelIdRef.current;
+      if (!socket || !channelId) {
+        setError('Not connected to a voice room.');
+        return;
+      }
+      socket.emit('audio:moderate', { channelId, targetSocketId, action });
     },
     [socket]
   );

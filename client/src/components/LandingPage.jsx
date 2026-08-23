@@ -33,6 +33,78 @@ const BlueTick = () => (
 );
 
 
+const LANGUAGE_OPTIONS = [
+  { value: '', label: 'Any language', flag: '🌐' },
+  { value: 'en', label: 'English', flag: '🇬🇧' },
+  { value: 'te', label: 'Telugu', flag: '🇮🇳' },
+  { value: 'hi', label: 'Hindi', flag: '🇮🇳' },
+  { value: 'es', label: 'Spanish', flag: '🇪🇸' },
+];
+
+function LanguagePicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const selected = LANGUAGE_OPTIONS.find((o) => o.value === value) || LANGUAGE_OPTIONS[0];
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className={`mm-lang-picker ${open ? 'mm-lang-picker--open' : ''}`} ref={rootRef}>
+      <button
+        type="button"
+        className="mm-landing-field mm-lang-picker__trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Language preference"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="mm-lang-picker__current">
+          <span className="mm-lang-picker__flag" aria-hidden>{selected.flag}</span>
+          <span>{selected.label}</span>
+        </span>
+        <span className="mm-lang-picker__chev" aria-hidden>▾</span>
+      </button>
+      {open && (
+        <ul className="mm-lang-picker__menu" role="listbox" aria-label="Languages">
+          {LANGUAGE_OPTIONS.map((opt) => {
+            const active = opt.value === value;
+            return (
+              <li key={opt.value || 'any'} role="option" aria-selected={active}>
+                <button
+                  type="button"
+                  className={`mm-lang-picker__option ${active ? 'mm-lang-picker__option--active' : ''}`}
+                  onClick={() => {
+                    onChange(opt.value);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="mm-lang-picker__flag" aria-hidden>{opt.flag}</span>
+                  <span className="mm-lang-picker__label">{opt.label}</span>
+                  {active && <span className="mm-lang-picker__check" aria-hidden>✓</span>}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 const INTERESTS = [
   { id: 'telugu', label: 'Telugu', desc: 'Find Telugu peers' },
   { id: 'music', label: 'Music', desc: 'Connect with music lovers' },
@@ -591,18 +663,10 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 placeholder="Display name (optional)"
                 className="mm-landing-field"
               />
-              <select
+              <LanguagePicker
                 value={languageFilter}
-                onChange={(e) => setLanguageFilter(e.target.value)}
-                className="mm-landing-field"
-                aria-label="Language preference"
-              >
-                <option value="">Any language</option>
-                <option value="en">English</option>
-                <option value="te">Telugu</option>
-                <option value="hi">Hindi</option>
-                <option value="es">Spanish</option>
-              </select>
+                onChange={setLanguageFilter}
+              />
               <button type="button" onClick={() => setShowCreatorModal(true)} className="mm-hide-desktop mm-landing-chip px-4">
                 For Creators
               </button>

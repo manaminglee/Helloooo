@@ -143,7 +143,8 @@ function registerEconomy(app, io, deps) {
 
     const recipient = users.get(toSocketId);
     if (!recipient) return { ok: false, error: 'Recipient not available' };
-    if (recipient.ip === fromIp) return { ok: false, error: 'You cannot gift yourself' };
+    // Same browser/NAT can share an IP — only block true self-gifts.
+    if (toSocketId === fromSocketId) return { ok: false, error: 'You cannot gift yourself' };
 
     const spend = await debit(fromIp, gift.cost, `gift_sent_${gift.id}`, { toSocketId, channelId });
     if (!spend.ok) return spend;
@@ -208,7 +209,7 @@ function registerEconomy(app, io, deps) {
     const results = [];
     for (const toSocketId of ids) {
       const recipient = users.get(toSocketId);
-      if (!recipient || recipient.ip === fromIp) continue;
+      if (!recipient || toSocketId === fromSocketId) continue;
       const recipientTier = tierFor(recipient.ip);
       const share = Math.floor(gift.cost * gift.creatorShare * recipientTier.giftBoost);
       await credit(recipient.ip, share, `gift_received_${gift.id}`, { fromSocketId, channelId });
@@ -277,6 +278,7 @@ function registerEconomy(app, io, deps) {
             targetIds: Array.isArray(data.targetIds) ? data.targetIds : [],
           });
           if (!res.ok) socket.emit('gift:error', { message: res.error });
+          else socket.emit('gift:sent', { ok: true, toAll: true, count: res.count, balance: res.balance });
           return;
         }
         const res = await sendGift({
@@ -287,6 +289,7 @@ function registerEconomy(app, io, deps) {
           channelId: data?.channelId ? String(data.channelId) : null,
         });
         if (!res.ok) socket.emit('gift:error', { message: res.error });
+        else socket.emit('gift:sent', { ok: true, gift: res.gift, balance: res.balance });
       } catch (_) {
         socket.emit('gift:error', { message: 'Gift failed. Please try again.' });
       }
