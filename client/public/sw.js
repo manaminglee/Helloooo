@@ -1,5 +1,5 @@
 /* Helloooo - Service Worker (static assets only) */
-const CACHE = 'mana-mingle-static-v5';
+const CACHE = 'helloooo-static-v6';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
