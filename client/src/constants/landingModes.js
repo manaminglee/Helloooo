@@ -1,0 +1,39 @@
+/** Chat mode cards — shared by landing hero and interest dock */
+export const LANDING_MODE_CARDS = [
+  {
+    id: 'video',
+    icon: '📹',
+    name: 'Video Chat',
+    hint: '1-on-1 live video',
+    tag: 'Live',
+    accent: 'from-violet-500/20 to-fuchsia-500/10',
+    ring: 'group-hover:border-violet-400/50',
+  },
+  {
+    id: 'text',
+    icon: '💬',
+    name: 'Text Chat',
+    hint: 'Anonymous messaging',
+    tag: 'Fast',
+    accent: 'from-cyan-500/20 to-sky-500/10',
+    ring: 'group-hover:border-cyan-400/50',
+  },
+  {
+    id: 'group_video',
+    icon: '🎥',
+    name: 'Group Video',
+    hint: 'Up to 4 on camera',
+    tag: 'Squad',
+    accent: 'from-indigo-500/20 to-violet-500/10',
+    ring: 'group-hover:border-indigo-400/50',
+  },
+  {
+    id: 'group_text',
+    icon: '🎙️',
+    name: 'Voice Rooms',
+    hint: 'Live audio + coin races',
+    tag: 'New',
+    accent: 'from-amber-500/20 to-orange-500/10',
+    ring: 'group-hover:border-amber-400/50',
+  },
+];

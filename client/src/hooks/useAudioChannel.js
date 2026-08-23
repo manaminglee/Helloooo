@@ -18,6 +18,7 @@ export function useAudioChannel(socket, iceServers) {
   const [speakingIds, setSpeakingIds] = useState(() => new Set());
   const [error, setError] = useState(null);
   const [connecting, setConnecting] = useState(false);
+  const [chatMessages, setChatMessages] = useState([]);
 
   const pcsRef = useRef(new Map());        // socketId -> RTCPeerConnection
   const localStreamRef = useRef(null);
@@ -134,10 +135,18 @@ export function useAudioChannel(socket, iceServers) {
     audioElsRef.current.clear();
     analysersRef.current.forEach(({ ctx }) => ctx.close?.().catch?.(() => {}));
     analysersRef.current.clear();
-    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current?.getTracks().forEach((t) => {
+      try {
+        t.enabled = false;
+        t.stop();
+      } catch {
+        /* ignore */
+      }
+    });
     localStreamRef.current = null;
     channelIdRef.current = null;
     cancelAnimationFrame(rafRef.current);
+    setChatMessages([]);
   }, []);
 
   // ---- socket wiring ----
@@ -219,6 +228,11 @@ export function useAudioChannel(socket, iceServers) {
       setConnecting(false);
     };
 
+    const onChatMessage = (msg) => {
+      if (!msg?.text) return;
+      setChatMessages((prev) => [...prev.slice(-99), msg]);
+    };
+
     socket.on('audio:joined', onJoined);
     socket.on('audio:peer-joined', onPeerJoined);
     socket.on('audio:peer-left', onPeerLeft);
@@ -227,6 +241,7 @@ export function useAudioChannel(socket, iceServers) {
     socket.on('audio:speaking', onSpeaking);
     socket.on('audio:kicked', onKicked);
     socket.on('audio:error', onError);
+    socket.on('audio:chat-message', onChatMessage);
 
     return () => {
       socket.off('audio:joined', onJoined);
@@ -237,6 +252,7 @@ export function useAudioChannel(socket, iceServers) {
       socket.off('audio:speaking', onSpeaking);
       socket.off('audio:kicked', onKicked);
       socket.off('audio:error', onError);
+      socket.off('audio:chat-message', onChatMessage);
     };
   }, [socket, createPeer, ensureMic, teardown]);
 
@@ -306,6 +322,15 @@ export function useAudioChannel(socket, iceServers) {
     [socket]
   );
 
+  const sendChat = useCallback(
+    (text) => {
+      const trimmed = String(text || '').trim();
+      if (!trimmed || !channelIdRef.current) return;
+      socket?.emit('audio:chat', { channelId: channelIdRef.current, text: trimmed });
+    },
+    [socket]
+  );
+
   return {
     channel,
     members,
@@ -313,6 +338,7 @@ export function useAudioChannel(socket, iceServers) {
     speakingIds,
     error,
     connecting,
+    chatMessages,
     join,
     create,
     leave,
@@ -320,6 +346,7 @@ export function useAudioChannel(socket, iceServers) {
     requestSpeak,
     moderate,
     grantSpeak,
+    sendChat,
     clearError: () => setError(null),
   };
 }

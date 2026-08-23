@@ -14,8 +14,8 @@ import { ReportSafetyModal } from './ReportSafetyModal';
 import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNotify';
 import { playConnectSound, playMessageSound, playDisconnectSound, playWaveSound } from '../utils/sounds';
 import { mmDebug } from '../utils/mmDebug';
-import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream } from '../utils/webrtcMedia';
-import { MiniChatGamePanel } from './MiniChatGamePanel';
+import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream, releaseMediaStream } from '../utils/webrtcMedia';
+import { MiniChatGameModal } from './MiniChatGamePanel';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { useUniqueSession } from '../hooks/useUniqueSession';
 import { useAdminMonitorFrames } from '../hooks/useAdminMonitorFrames';
@@ -355,6 +355,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const chatEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showGameModal, setShowGameModal] = useState(false);
   const [active3dEmoji, setActive3dEmoji] = useState(null);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -512,11 +513,24 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     } catch { /* ignore */ }
   };
 
+  const releaseLocalMedia = useCallback(() => {
+    if (localStreamRef.current) {
+      releaseMediaStream(localStreamRef.current, localVideoRef.current);
+      localStreamRef.current = null;
+    }
+    setLocalStreamReady(false);
+    peerConnectionsRef.current.forEach((pc) => {
+      try { pc.close(); } catch { /* ignore */ }
+    });
+    peerConnectionsRef.current.clear();
+  }, []);
+
   const finishLeaveRoom = useCallback(() => {
+    releaseLocalMedia();
     clearGroupRejoinStorage();
     roomIdRef.current = null;
     onLeave();
-  }, [onLeave]);
+  }, [onLeave, releaseLocalMedia]);
 
   const handleLeaveRoom = useCallback(() => {
     const hadChat = messages.filter((m) => !m.system).length > 2;
@@ -749,14 +763,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     }
   };
 
-  useEffect(() => {
-    return () => {
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((t) => { t.stop(); t.enabled = false; });
-      }
-      localStreamRef.current = null;
-    };
-  }, []);
+  useEffect(() => () => {
+    releaseLocalMedia();
+  }, [releaseLocalMedia]);
 
   // Sync local stream to video element when ref mounts (handles race)
   useEffect(() => {
@@ -1672,6 +1681,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                     {participantCount}
                   </span>
+                  {PHASE_3_PRO.miniChatGames && (roomIdRef.current || roomId) && (
+                    <button type="button" onClick={() => setShowGameModal(true)} className="opacity-60 hover:opacity-100" title="Mini game">🎲</button>
+                  )}
                   <button type="button" onClick={generateAiSpark} disabled={isAiGenerating} className="opacity-60 hover:opacity-100" title="Icebreaker">📌</button>
                 </div>
               </div>
@@ -1681,11 +1693,6 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                 ))}
                 <div ref={chatEndRef} />
               </div>
-              {PHASE_3_PRO.miniChatGames && (roomIdRef.current || roomId) && (
-                <div className="px-3 pb-2">
-                  <MiniChatGamePanel onSendPrompt={(text) => { setChatInput(text); sendMessage(text); }} />
-                </div>
-              )}
               <div className="mm-group-desk-chat__input-row">
                 <input
                   type="text"
@@ -1839,11 +1846,6 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                     )}
                     <div ref={chatEndRef} />
                   </div>
-                  {PHASE_3_PRO.miniChatGames && (roomIdRef.current || roomId) && (
-                    <div className="px-3 pb-1">
-                      <MiniChatGamePanel onSendPrompt={(text) => { setChatInput(text); sendMessage(text); }} />
-                    </div>
-                  )}
                   <div className="mm-group-mobile-chat__input-row">
                     <input
                       type="text"
@@ -2036,6 +2038,14 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
             <CreatorProfilePopup handle={showProfileHandle} onClose={() => setShowProfileHandle(null)} />
           </div>
         </div>
+      )}
+
+      {PHASE_3_PRO.miniChatGames && (
+        <MiniChatGameModal
+          open={showGameModal}
+          onClose={() => setShowGameModal(false)}
+          onSendPrompt={(text) => sendMessage(text)}
+        />
       )}
 
       {toast && (

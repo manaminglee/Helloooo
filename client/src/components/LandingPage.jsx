@@ -21,6 +21,7 @@ import { loadSessionPrefs, saveSessionPrefs } from '../constants/conversationMod
 import { PHASE_4_UNIQUE } from '../constants/features';
 import { SettingsPanel, SettingsGearButton } from './SettingsPanel';
 import LandingHero from './LandingHero';
+import { LandingModeCards } from './LandingModeCards';
 import { HellooooBrand, HellooooLogo, HELLOOOO_TAGLINE, HELLOOOO_EMOJI } from './HellooooBrand';
 
 const BlueTick = () => (
@@ -580,7 +581,6 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
           {/* Redesigned 3D hero — mobile-first, replaces the old static header */}
           <LandingHero
-            onStart={handleStartInteraction}
             connected={connected}
             isJoining={isJoining}
             onlineCount={onlineCount ?? 0}
@@ -625,8 +625,21 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
           {/* INTEREST DOCK - REFINED COMPACT */}
           <section ref={startRef} className="mm-landing-section mm-landing-section--narrow mm-landing-anchor mm-landing-fade-in mm-landing-fade-in-delay-2">
             <div className="mm-landing-glass p-6 sm:p-8">
-              <div className="flex flex-col items-center relative z-[1]">
+              <div className="flex flex-col items-center relative z-[1] w-full">
                 <span className="mm-landing-section-label">Step 1</span>
+                <span className="mm-landing-section-title mb-2">Pick how you want to talk</span>
+                <p className="text-xs text-white/45 text-center mb-5 max-w-sm">
+                  Choose a mode, then add interests below for better matches.
+                </p>
+
+                <LandingModeCards
+                  onStart={handleStartInteraction}
+                  connected={connected}
+                  isJoining={isJoining}
+                  className="mb-8 w-full"
+                />
+
+                <span className="mm-landing-section-label">Step 2</span>
                 <span className="mm-landing-section-title mb-5">Choose your interests</span>
 
                 <div className="flex flex-wrap justify-center gap-2 mb-8">

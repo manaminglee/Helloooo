@@ -39,3 +39,36 @@ export function attachStreamToVideo(el, stream) {
 export function hasLiveRemoteVideo(stream) {
   return !!stream?.getVideoTracks?.().some((t) => t.readyState === 'live');
 }
+
+/** Stop camera/mic immediately — call when leaving any room. */
+export function releaseMediaStream(stream, videoEl) {
+  if (!stream) return;
+  stream.getTracks().forEach((t) => {
+    try {
+      t.enabled = false;
+      t.stop();
+    } catch {
+      /* ignore */
+    }
+  });
+  if (videoEl) {
+    try {
+      videoEl.srcObject = null;
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function releaseMediaStreams(streams = [], videoEls = []) {
+  streams.forEach((s) => releaseMediaStream(s));
+  videoEls.forEach((el) => {
+    if (el) {
+      try {
+        el.srcObject = null;
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+}

@@ -18,15 +18,18 @@
  *   audio:request-speak {channelId}
  *   audio:grant-speak {channelId, targetSocketId, grant}
  *   audio:moderate {channelId, targetSocketId, action} (mute|kick|promote|demote)
+ *   audio:chat {channelId, text}
  *
  * Server -> client
  *   audio:channels, audio:joined, audio:state, audio:peer-joined,
- *   audio:peer-left, audio:signal, audio:speaking, audio:kicked, audio:error
+ *   audio:peer-left, audio:signal, audio:speaking, audio:kicked, audio:error,
+ *   audio:chat-message
  */
 
 const MAX_MEMBERS = Number(process.env.AUDIO_MAX_MEMBERS) || 24;
 const MAX_SPEAKERS = Number(process.env.AUDIO_MAX_SPEAKERS) || 8;
 const TOPIC_MAX = 48;
+const CHAT_MAX = 280;
 const JOIN_WINDOW_MS = 10000;
 const JOIN_MAX = 8;
 const SIGNAL_WINDOW_MS = 10000;
@@ -325,6 +328,23 @@ function registerAudioChannels(app, io, deps) {
         channelId: channel.id,
         socketId: socket.id,
         micMuted: me.micMuted,
+      });
+    });
+
+    on('audio:chat', (data) => {
+      if (!rateOk(signalRates, `${socket.id}:chat`, SIGNAL_WINDOW_MS, 40)) return;
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      if (!me) return;
+      const text = sanitize(String(data.text || ''), CHAT_MAX).trim();
+      if (!text) return;
+      io.to(channel.id).emit('audio:chat-message', {
+        channelId: channel.id,
+        id: generateId('achm'),
+        socketId: socket.id,
+        nickname: me.nickname,
+        text,
+        ts: Date.now(),
       });
     });
 

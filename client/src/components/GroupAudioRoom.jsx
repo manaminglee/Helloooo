@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useAudioChannel } from '../hooks/useAudioChannel';
 import { CoinRaceGame } from './CoinRaceGame';
 import { GiftDrawer } from './GiftDrawer';
@@ -104,14 +104,16 @@ function MemberTile({ member, speaking, canModerate, onModerate, onGrantSpeak, i
 
 export function GroupAudioRoom({ socket, iceServers, coins = 0, nickname = 'Anonymous', onExit }) {
   const {
-    channel, members, micMuted, speakingIds, error, connecting,
-    join, create, leave, toggleMic, requestSpeak, moderate, grantSpeak, clearError,
+    channel, members, micMuted, speakingIds, error, connecting, chatMessages,
+    join, create, leave, toggleMic, requestSpeak, moderate, grantSpeak, sendChat, clearError,
   } = useAudioChannel(socket, iceServers);
 
   const [channels, setChannels] = useState([]);
   const [topic, setTopic] = useState('');
   const [giftOpen, setGiftOpen] = useState(false);
-  const [mobileTab, setMobileTab] = useState('race'); // race | people
+  const [raceOpen, setRaceOpen] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const chatEndRef = useRef(null);
 
   useEffect(() => {
     if (!socket) return undefined;
@@ -129,6 +131,21 @@ export function GroupAudioRoom({ socket, iceServers, coins = 0, nickname = 'Anon
   const canModerate = me && (me.role === 'host' || me.role === 'moderator');
   const speakers = members.filter((m) => m.role !== 'listener');
   const listeners = members.filter((m) => m.role === 'listener');
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages.length]);
+
+  const handleSendChat = () => {
+    if (!chatInput.trim()) return;
+    sendChat(chatInput);
+    setChatInput('');
+  };
+
+  const handleLeave = () => {
+    leave();
+    onExit?.();
+  };
 
   // ---------------------------- Lobby ----------------------------
   if (!channel) {
@@ -207,103 +224,108 @@ export function GroupAudioRoom({ socket, iceServers, coins = 0, nickname = 'Anon
   }
 
   // -------------------------- In channel --------------------------
-  const stage = (
-    <>
-      <section className="mb-5">
-        <h3 className="text-[11px] uppercase tracking-wider text-white/35 mb-3">
-          On stage · {speakers.length}
-        </h3>
-        <div className="flex flex-wrap gap-2.5 sm:gap-3">
-          {speakers.map((m) => (
-            <MemberTile
-              key={m.socketId}
-              member={m}
-              speaking={speakingIds.has(m.socketId) && !m.micMuted}
-              canModerate={canModerate}
-              isSelf={m.socketId === socket?.id}
-              onModerate={moderate}
-              onGrantSpeak={grantSpeak}
-              size="lg"
-            />
-          ))}
+  return (
+    <div className="min-h-[100dvh] flex flex-col bg-[#08090f] text-white">
+      <header className="mm-audio-room-header">
+        <div className="min-w-0">
+          <h2 className="text-base sm:text-lg font-bold truncate">{channel.topic}</h2>
+          <p className="text-[11px] text-white/40">
+            {members.length} here · {speakers.length} on stage
+          </p>
         </div>
-      </section>
+        <span className="text-xs font-bold text-amber-300 shrink-0 tabular-nums">🪙 {coins}</span>
+      </header>
 
-      {listeners.length > 0 && (
-        <section>
-          <h3 className="text-[11px] uppercase tracking-wider text-white/35 mb-3">
-            Listening · {listeners.length}
-          </h3>
-          <div className="flex flex-wrap gap-2.5">
-            {listeners.map((m) => (
+      {error && (
+        <div className="mx-4 mb-2 flex items-center justify-between gap-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-2.5">
+          <span className="text-xs text-amber-100">{error}</span>
+          <button type="button" onClick={clearError} className="text-amber-100/70 text-lg leading-none px-1">×</button>
+        </div>
+      )}
+
+      <main className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[1fr_20rem] lg:gap-4 px-4 pb-2">
+        {/* Audio stage panel */}
+        <section className="mm-audio-stage-panel flex-shrink-0 lg:flex-shrink min-h-0 overflow-y-auto">
+          <h3 className="mm-audio-panel-label">On stage · {speakers.length}</h3>
+          <div className="flex flex-wrap gap-3 mb-5">
+            {speakers.map((m) => (
               <MemberTile
                 key={m.socketId}
                 member={m}
-                speaking={false}
+                speaking={speakingIds.has(m.socketId) && !m.micMuted}
                 canModerate={canModerate}
                 isSelf={m.socketId === socket?.id}
                 onModerate={moderate}
                 onGrantSpeak={grantSpeak}
+                size="lg"
               />
             ))}
+            {speakers.length === 0 && (
+              <p className="text-xs text-white/35 py-4">No speakers yet — ask to speak or unmute.</p>
+            )}
           </div>
+
+          {listeners.length > 0 && (
+            <>
+              <h3 className="mm-audio-panel-label">Listening · {listeners.length}</h3>
+              <div className="flex flex-wrap gap-2.5">
+                {listeners.map((m) => (
+                  <MemberTile
+                    key={m.socketId}
+                    member={m}
+                    speaking={false}
+                    canModerate={canModerate}
+                    isSelf={m.socketId === socket?.id}
+                    onModerate={moderate}
+                    onGrantSpeak={grantSpeak}
+                  />
+                ))}
+              </div>
+            </>
+          )}
         </section>
-      )}
-    </>
-  );
 
-  return (
-    <div className="min-h-[100dvh] flex flex-col">
-      <div className="mm-shell mm-shell--wide flex-1 pb-4">
-        {/* Room header */}
-        <header className="flex items-center justify-between gap-3 py-4 sticky top-0 z-30 bg-[#08090f]/90 backdrop-blur-md -mx-4 px-4 sm:mx-0 sm:px-0 border-b border-white/8 sm:border-0">
-          <div className="min-w-0">
-            <h2 className="text-base sm:text-lg font-bold text-white truncate">{channel.topic}</h2>
-            <p className="text-[11px] text-white/40">
-              {members.length} here · {speakers.length} on stage
-            </p>
+        {/* Chat panel */}
+        <aside className="mm-audio-chat-panel flex-1 min-h-0 flex flex-col mt-4 lg:mt-0">
+          <div className="mm-audio-chat-panel__head">
+            <span>Room chat</span>
+            <span className="text-white/35">{chatMessages.length}</span>
           </div>
-          <span className="text-xs font-bold text-amber-300 shrink-0 tabular-nums">🪙 {coins}</span>
-        </header>
-
-        {error && (
-          <div className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-2.5">
-            <span className="text-xs text-amber-100">{error}</span>
-            <button type="button" onClick={clearError} className="text-amber-100/70 text-lg leading-none px-1">×</button>
+          <div className="mm-audio-chat-panel__messages custom-scrollbar">
+            {chatMessages.length === 0 && (
+              <p className="text-xs text-white/30 text-center py-6">Say hello to the room…</p>
+            )}
+            {chatMessages.map((m) => {
+              const isMe = m.socketId === socket?.id;
+              return (
+                <div key={m.id} className={`mm-audio-chat-bubble ${isMe ? 'mm-audio-chat-bubble--me' : ''}`}>
+                  <span className="mm-audio-chat-bubble__name">{isMe ? 'You' : m.nickname}</span>
+                  <p className="mm-audio-chat-bubble__text">{m.text}</p>
+                </div>
+              );
+            })}
+            <div ref={chatEndRef} />
           </div>
-        )}
-
-        {/* Mobile tab switch */}
-        <div className="lg:hidden flex gap-1 p-1 rounded-xl bg-white/5 border border-white/8 mb-4">
-          {[
-            { id: 'race', label: '🏁 Race' },
-            { id: 'people', label: `👥 People (${members.length})` },
-          ].map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setMobileTab(t.id)}
-              className={`flex-1 min-h-[40px] rounded-lg text-xs font-bold transition-colors ${
-                mobileTab === t.id ? 'bg-white text-black' : 'text-white/60'
-              }`}
-            >
-              {t.label}
+          <div className="mm-audio-chat-panel__input-row">
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
+              placeholder="Type a message…"
+              className="mm-audio-chat-panel__input"
+              maxLength={280}
+            />
+            <button type="button" onClick={handleSendChat} className="mm-audio-chat-panel__send" aria-label="Send">
+              →
             </button>
-          ))}
-        </div>
-
-        {/* Content */}
-        <div className="lg:grid lg:grid-cols-[1fr_22rem] lg:gap-6">
-          <div className={mobileTab === 'people' ? 'block' : 'hidden lg:block'}>{stage}</div>
-          <aside className={mobileTab === 'race' ? 'block' : 'hidden lg:block'}>
-            <CoinRaceGame socket={socket} channelId={channel.channelId} coins={coins} />
-          </aside>
-        </div>
-      </div>
+          </div>
+        </aside>
+      </main>
 
       {/* Control bar */}
       <div className="mm-actionbar sticky bottom-0">
-        <div className="mm-shell mm-shell--wide flex items-center gap-2 !px-0">
+        <div className="mm-shell mm-shell--wide flex items-center gap-2 !px-4">
           {me?.role === 'listener' ? (
             <button type="button" onClick={requestSpeak} className="mm-btn mm-btn--ghost flex-1">
               ✋ Ask to speak
@@ -313,13 +335,20 @@ export function GroupAudioRoom({ socket, iceServers, coins = 0, nickname = 'Anon
               type="button"
               onClick={toggleMic}
               aria-pressed={!micMuted}
-              className={`mm-btn flex-1 ${
-                micMuted ? 'mm-btn--ghost' : '!bg-emerald-500 !text-black !border-emerald-400'
-              }`}
+              className={`mm-btn flex-1 ${micMuted ? 'mm-btn--ghost' : '!bg-emerald-500 !text-black !border-emerald-400'}`}
             >
               {micMuted ? '🔇 Unmute' : '🎙 Live'}
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => setRaceOpen(true)}
+            className="mm-btn !px-4 !bg-violet-500/15 !text-violet-200 !border-violet-400/25"
+            aria-label="Coin race game"
+          >
+            🏁
+          </button>
 
           <button
             type="button"
@@ -330,18 +359,33 @@ export function GroupAudioRoom({ socket, iceServers, coins = 0, nickname = 'Anon
             🎁
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              leave();
-              onExit?.();
-            }}
-            className="mm-btn mm-btn--danger !px-4"
-          >
+          <button type="button" onClick={handleLeave} className="mm-btn mm-btn--danger !px-4">
             Leave
           </button>
         </div>
       </div>
+
+      {raceOpen && (
+        <div
+          className="fixed inset-0 z-[500] flex items-end sm:items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+          onClick={() => setRaceOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="w-full max-w-md max-h-[85dvh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0f121a] p-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Coin race"
+          >
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <h3 className="text-sm font-bold text-white">Coin race</h3>
+              <button type="button" onClick={() => setRaceOpen(false)} className="w-8 h-8 rounded-lg bg-white/5 text-white/60">✕</button>
+            </div>
+            <CoinRaceGame socket={socket} channelId={channel.channelId} coins={coins} />
+          </div>
+        </div>
+      )}
 
       <GiftDrawer
         socket={socket}

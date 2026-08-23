@@ -10,7 +10,7 @@ export function MiniChatGamePanel({ onSendPrompt }) {
   const game = GAMES[Math.floor(Math.random() * GAMES.length)];
 
   return (
-    <div className="rounded-xl border border-white/10 bg-[#161a22] p-4 mb-3">
+    <div className="rounded-xl border border-white/10 bg-[#161a22] p-4">
       <div className="text-xs text-white/50 mb-2">Mini game</div>
       <p className="text-sm text-white mb-3">{game.q}</p>
       <div className="flex flex-wrap gap-2">
@@ -31,6 +31,45 @@ export function MiniChatGamePanel({ onSendPrompt }) {
         >
           Ask partner
         </button>
+      </div>
+    </div>
+  );
+}
+
+/** Toggleable modal wrapper for mini games */
+export function MiniChatGameModal({ open, onClose, onSendPrompt }) {
+  if (!open) return null;
+
+  const handleSend = (text) => {
+    onSendPrompt?.(text);
+    onClose?.();
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[520] flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#0f121a] p-5 shadow-2xl animate-fade-in"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Mini game"
+      >
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <h3 className="text-sm font-bold text-white">Mini game</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 rounded-lg bg-white/5 text-white/60 hover:text-white"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+        <MiniChatGamePanel onSendPrompt={handleSend} />
       </div>
     </div>
   );
