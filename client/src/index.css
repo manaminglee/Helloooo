@@ -173,12 +173,7 @@ html {
 body {
   font-family: var(--font-sans);
   background: var(--c-bg);
-  background-image:
-    radial-gradient(ellipse 120% 80% at 50% -30%, rgba(124, 58, 237, 0.22), transparent 55%),
-    radial-gradient(ellipse 90% 60% at 100% 0%, rgba(232, 121, 249, 0.12), transparent 50%),
-    radial-gradient(ellipse 70% 50% at 0% 100%, rgba(45, 212, 191, 0.08), transparent 45%),
-    linear-gradient(180deg, #07060f 0%, #0a0d18 50%, #07060f 100%);
-  background-attachment: fixed;
+  background-image: none;
   color: var(--c-text);
   min-height: 100vh;
   min-height: 100dvh;
@@ -4113,9 +4108,7 @@ h1, h2, h3, .font-display {
 }
 
 .mm-landing-neural-mesh {
-  background:
-    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(118, 185, 0, 0.12), transparent 55%),
-    radial-gradient(ellipse 60% 40% at 90% 20%, rgba(167, 139, 250, 0.15), transparent 50%);
+  background: transparent;
 }
 
 .participants-panel {
@@ -5463,22 +5456,11 @@ textarea {
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
-  background:
-    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(124, 58, 237, 0.18), transparent 55%),
-    radial-gradient(ellipse 60% 40% at 100% 20%, rgba(232, 121, 249, 0.1), transparent 50%),
-    radial-gradient(ellipse 50% 35% at 0% 80%, rgba(45, 212, 191, 0.08), transparent 45%),
-    linear-gradient(180deg, #0c0e18 0%, #07060f 45%, #050508 100%);
+  background: var(--c-bg);
 }
 
 .mm-landing-bg::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, black 20%, transparent 75%);
+  display: none;
 }
 
 .mm-landing-header {
@@ -5488,10 +5470,8 @@ textarea {
   right: 0;
   z-index: 150;
   padding-top: env(safe-area-inset-top, 0);
-  background: rgba(10, 12, 22, 0.72);
+  background: var(--c-bg);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(16px) saturate(140%);
-  box-shadow: 0 1px 0 rgba(167, 139, 250, 0.06);
 }
 
 .mm-landing-header__bar {
@@ -5525,13 +5505,13 @@ textarea {
   z-index: 10;
   flex: 1 1 auto;
   width: 100%;
-  max-width: 80rem;
-  margin-left: auto;
-  margin-right: auto;
+  max-width: 100%;
+  margin-left: 0;
+  margin-right: 0;
   padding: calc(4.25rem + env(safe-area-inset-top, 0)) max(1rem, env(safe-area-inset-left)) 2.5rem max(1rem, env(safe-area-inset-right));
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
 }
 
 @media (min-width: 640px) {
@@ -5557,15 +5537,15 @@ textarea {
 }
 
 .mm-landing-section--narrow {
-  max-width: 42rem;
+  max-width: 56rem;
 }
 
 .mm-landing-section--medium {
-  max-width: 48rem;
+  max-width: 72rem;
 }
 
 .mm-landing-section--wide {
-  max-width: 56rem;
+  max-width: 100%;
 }
 
 .mm-landing-tag-btn {
@@ -5696,24 +5676,13 @@ textarea {
 .mm-landing-glass {
   position: relative;
   border-radius: 1.35rem;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
+  background: var(--c-surface);
   border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(14px);
+  box-shadow: none;
 }
 
 .mm-landing-glass::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(167, 139, 250, 0.35), transparent 40%, rgba(45, 212, 191, 0.15));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
+  display: none;
 }
 
 .mm-landing-field {
@@ -5910,8 +5879,8 @@ textarea {
   gap: 1rem;
   padding: 1.25rem 1.35rem;
   border-radius: 1rem;
-  background: linear-gradient(90deg, rgba(124, 58, 237, 0.1), rgba(255, 255, 255, 0.02));
-  border: 1px solid rgba(167, 139, 250, 0.15);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .mm-landing-insight-icon {
@@ -5932,7 +5901,7 @@ textarea {
   flex-shrink: 0;
   width: 100%;
   padding: 3.5rem max(1.5rem, env(safe-area-inset-left)) max(2rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-right));
-  background: linear-gradient(180deg, transparent, rgba(5, 5, 8, 0.95));
+  background: var(--c-bg);
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 

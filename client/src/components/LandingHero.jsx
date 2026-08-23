@@ -12,19 +12,18 @@ const TRUST = [
 
 export function LandingHero({ connected, isJoining, onlineCount = 0, lowPower = false }) {
   return (
-    <section className="relative overflow-hidden">
-      <div className="absolute inset-0 pointer-events-none">
-        {!lowPower && (
+    <section className="relative overflow-hidden w-full">
+      {!lowPower && (
+        <div className="absolute inset-0 pointer-events-none opacity-25">
           <Suspense fallback={null}>
-            <HeroScene3D className="opacity-50 sm:opacity-70" intensity={0.65} />
+            <HeroScene3D className="opacity-40" intensity={0.35} />
           </Suspense>
-        )}
-        <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#08090f] to-transparent" />
-      </div>
+        </div>
+      )}
 
-      <div className="mm-shell mm-shell--wide relative z-10">
-        <div className="max-w-2xl mx-auto text-center py-10 sm:py-14 lg:py-16">
-          <div className="mb-6 flex justify-center mm-rise">
+      <div className="mm-shell mm-shell--wide relative z-10 w-full">
+        <div className="w-full text-left py-10 sm:py-14 lg:py-16">
+          <div className="mb-6 flex justify-start mm-rise">
             <HellooooLockup logoSize={44} brandSize="xl" showTagline />
           </div>
           <div className="mm-rise inline-flex">
@@ -36,18 +35,17 @@ export function LandingHero({ connected, isJoining, onlineCount = 0, lowPower = 
             </span>
           </div>
 
-          <h2 className="mm-h1 mt-4 mm-rise mm-rise-1">
-            {HELLOOOO_EMOJI} Meet people who
-            <br className="hidden sm:block" />{' '}
-            <span className="mm-gradient-text">share your interests</span>
+          <h2 className="mm-h1 mt-5 mm-rise mm-rise-1 max-w-none w-full">
+            {HELLOOOO_EMOJI} Meet people who share your{' '}
+            <span className="mm-gradient-text">interests</span>
           </h2>
 
-          <p className="mm-body mt-4 max-w-lg mx-auto mm-rise mm-rise-2">
+          <p className="mm-body mt-5 max-w-4xl w-full mm-rise mm-rise-2 text-[0.95rem] sm:text-base text-white/70">
             No sign-up. Pick your topics, choose how you want to talk, and connect
             instantly with people worldwide.
           </p>
 
-          <ul className="mt-5 flex flex-wrap justify-center gap-2 mm-rise mm-rise-3">
+          <ul className="mt-6 flex flex-wrap justify-start gap-2 mm-rise mm-rise-3">
             {TRUST.map((t) => (
               <li
                 key={t.label}

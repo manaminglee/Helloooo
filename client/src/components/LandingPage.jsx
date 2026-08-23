@@ -454,15 +454,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   return (
     <div className="mm-landing text-white relative">
 
-      {/* Mesh background */}
-      <div className="mm-landing-bg" aria-hidden="true">
-        {!lowPower && (
-          <>
-            <div className="hero-glow hero-glow-1" />
-            <div className="hero-glow hero-glow-2" />
-          </>
-        )}
-      </div>
+      {/* Flat site background — same color everywhere */}
+      <div className="mm-landing-bg" aria-hidden="true" />
 
       {/* COMMUNITY POLICY (first-time video / group video) */}
       {showCommunityPolicy && (
@@ -587,11 +580,11 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             lowPower={lowPower}
           />
 
-          <section className="mm-landing-section mm-landing-section--medium text-center mm-landing-fade-in">
-            <div className="mt-4 flex justify-center mm-landing-fade-in mm-landing-fade-in-delay-1">
+          <section className="mm-landing-section mm-landing-section--wide text-left mm-landing-fade-in">
+            <div className="mt-4 flex justify-start mm-landing-fade-in mm-landing-fade-in-delay-1">
               <AiStatusPill online={aiOnline} />
             </div>
-            <div className="mt-8 flex flex-col sm:flex-row gap-2 max-w-lg mx-auto mm-landing-fade-in mm-landing-fade-in-delay-1">
+            <div className="mt-8 flex flex-col sm:flex-row gap-2 w-full max-w-3xl mm-landing-fade-in mm-landing-fade-in-delay-1">
               <input
                 type="text"
                 value={joinMeta.displayNickname || ''}
@@ -612,7 +605,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 <option value="es">Spanish</option>
               </select>
             </div>
-            <div className="mt-4 flex flex-wrap justify-center gap-2 mm-landing-fade-in mm-landing-fade-in-delay-2">
+            <div className="mt-4 flex flex-wrap justify-start gap-2 mm-landing-fade-in mm-landing-fade-in-delay-2">
               <button type="button" onClick={() => setShowCreatorModal(true)} className="mm-hide-desktop mm-landing-chip px-4">
                 For Creators
               </button>
@@ -623,12 +616,12 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
           </section>
 
           {/* INTEREST DOCK - REFINED COMPACT */}
-          <section ref={startRef} className="mm-landing-section mm-landing-section--narrow mm-landing-anchor mm-landing-fade-in mm-landing-fade-in-delay-2">
+          <section ref={startRef} className="mm-landing-section mm-landing-section--wide mm-landing-anchor mm-landing-fade-in mm-landing-fade-in-delay-2">
             <div className="mm-landing-glass p-6 sm:p-8">
-              <div className="flex flex-col items-center relative z-[1] w-full">
+              <div className="flex flex-col items-start relative z-[1] w-full">
                 <span className="mm-landing-section-label">Step 1</span>
                 <span className="mm-landing-section-title mb-2">Pick how you want to talk</span>
-                <p className="text-xs text-white/45 text-center mb-5 max-w-sm">
+                <p className="text-xs text-white/45 text-left mb-5 max-w-xl">
                   Choose a mode, then add interests below for better matches.
                 </p>
 
@@ -642,7 +635,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 <span className="mm-landing-section-label">Step 2</span>
                 <span className="mm-landing-section-title mb-5">Choose your interests</span>
 
-                <div className="flex flex-wrap justify-center gap-2 mb-8">
+                <div className="flex flex-wrap justify-start gap-2 mb-8">
                   {INTERESTS.filter(r => !interests.find(i => i.id === r.id)).slice(0, 8).map((r) => (
                     <button
                       key={r.id}
@@ -654,14 +647,14 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   ))}
                 </div>
 
-                <div className="relative w-full max-w-sm">
+                <div className="relative w-full max-w-xl">
                   <input
                     type="text"
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleInputKeyDown}
                     placeholder={`Try "${rotatingPlaceholder}"...`}
-                    className="mm-landing-field w-full text-center pr-12"
+                    className="mm-landing-field w-full text-left pr-12"
                   />
                   <button onClick={getAiSuggestions} title="Suggest topics" className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2.5 rounded-lg bg-violet-500/15 border border-violet-500/25 text-violet-300 hover:bg-violet-500/25 transition-colors">
                     <svg className={`w-3.5 h-3.5 ${isSuggesting ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
@@ -669,7 +662,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 </div>
 
                 {interests.length > 0 && (
-                  <div className="flex flex-wrap justify-center gap-2 mt-5">
+                  <div className="flex flex-wrap justify-start gap-2 mt-5">
                     {interests.map(i => (
                       <div key={i.id} className="mm-landing-tag">
                         {i.label}
@@ -679,7 +672,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   </div>
                 )}
 
-                <div className="mt-6 flex flex-col sm:flex-row flex-wrap items-center justify-center gap-2 w-full px-1">
+                <div className="mt-6 flex flex-col sm:flex-row flex-wrap items-start sm:items-center justify-start gap-2 w-full px-1">
                   <button
                     type="button"
                     onClick={saveAnonymousInterestBundle}
@@ -708,7 +701,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                     </label>
                   )}
                 </div>
-                <p className="text-xs text-white/40 mt-2 text-center max-w-md">
+                <p className="text-xs text-white/40 mt-2 text-left max-w-md">
                   Saved topics stay in your browser only. No account required.
                 </p>
               </div>
