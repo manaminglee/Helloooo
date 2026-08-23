@@ -3056,6 +3056,19 @@ io.on('connection', (socket) => {
     userData.region = region;
     userData.language = language;
 
+    // Drop any lingering room membership so rematch isn't blocked by stale state
+    // (e.g. left a group UI without leave-room, or a crashed pair room).
+    if (userData.rooms && userData.rooms.size > 0) {
+      for (const rid of [...userData.rooms]) {
+        const room = rooms.get(rid);
+        userData.rooms.delete(rid);
+        try { socket.leave(rid); } catch { /* ignore */ }
+        if (room && room.users.has(socket.id)) {
+          removeUserFromRoom(socket.id, rid, io);
+        }
+      }
+    }
+
     const myBlocks = userBlocks.get(ip);
     const canMatch = (e) => {
       if (e.socketId === socket.id) return false;
@@ -3070,6 +3083,16 @@ io.on('connection', (socket) => {
     // from ALL mode queues before matching or (re-)queueing.
     pairQueues.text = pairQueues.text.filter((e) => e.socketId !== socket.id);
     pairQueues.video = pairQueues.video.filter((e) => e.socketId !== socket.id);
+
+    // Also prune queue entries whose sockets are gone or stuck in rooms
+    const pruneQueue = (q) => q.filter((e) => {
+      const ud = users.get(e.socketId);
+      if (!ud || !io.sockets.sockets.get(e.socketId)) return false;
+      if (ud.rooms && ud.rooms.size > 0) return false;
+      return true;
+    });
+    pairQueues.text = pruneQueue(pairQueues.text);
+    pairQueues.video = pruneQueue(pairQueues.video);
 
     const queue = pairQueues[mode];
     const repFn = (otherIp) => persistence.getReputationBoost(otherIp);

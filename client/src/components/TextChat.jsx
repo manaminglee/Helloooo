@@ -297,6 +297,19 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     emitFind();
   }, [socket, connected, emitFind]);
 
+  // Re-queue after socket reconnect while still searching (new socket.id = new queue identity)
+  useEffect(() => {
+    if (!socket) return undefined;
+    const onReconnect = () => {
+      if (roomIdRef.current) return;
+      if (statusRef.current !== 'searching' && statusRef.current !== 'idle') return;
+      initialFindEmittedRef.current = true;
+      emitFind();
+    };
+    socket.on('connect', onReconnect);
+    return () => socket.off('connect', onReconnect);
+  }, [socket, emitFind]);
+
   // ---- socket events ----
   useEffect(() => {
     if (!socket) return;

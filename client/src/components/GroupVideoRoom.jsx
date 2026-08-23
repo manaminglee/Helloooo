@@ -1087,9 +1087,14 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   }, [roomId, socket]);
 
   const sendMessage = (overrideText) => {
-    const t = (overrideText ?? chatInput).trim();
+    // onClick passes a SyntheticEvent — only treat real strings as override text
+    const raw = typeof overrideText === 'string' ? overrideText : chatInput;
+    const t = String(raw || '').trim();
     const rid = roomIdRef.current || roomId;
-    if (!t || !socket || !rid) return;
+    if (!t || !socket || !rid) {
+      if (t && socket && !rid) setToast('Still joining room… try again in a moment');
+      return;
+    }
     const payload = { roomId: rid, text: t };
     if (replyingTo) payload.replyTo = { id: replyingTo.id, text: replyingTo.text, nickname: replyingTo.nickname || 'Stranger' };
     socket.emit('send-message', payload);

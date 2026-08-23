@@ -51,17 +51,35 @@ export function useAudioChannel(socket, iceServers) {
     return stream;
   }, []);
 
+  /** Resume remote playback after a user gesture (mobile autoplay policies). */
+  const resumeRemoteAudio = useCallback(() => {
+    audioElsRef.current.forEach((el) => {
+      try {
+        el.muted = false;
+        el.volume = 1;
+        void el.play();
+      } catch {
+        /* ignore */
+      }
+    });
+    analysersRef.current.forEach(({ ctx }) => {
+      if (ctx?.state === 'suspended') ctx.resume?.().catch?.(() => {});
+    });
+  }, []);
+
   const attachRemote = useCallback((socketId, stream) => {
     let el = audioElsRef.current.get(socketId);
     if (!el) {
       el = new Audio();
       el.autoplay = true;
       el.playsInline = true;
+      el.setAttribute('playsinline', 'true');
       audioElsRef.current.set(socketId, el);
     }
     el.srcObject = stream;
+    el.muted = false;
     el.play().catch(() => {
-      /* autoplay may need a gesture; the UI has an unmute affordance */
+      /* autoplay may need a gesture; resumeRemoteAudio on unmute/tap */
     });
 
     // Voice-activity detection for the speaking ring.
@@ -74,6 +92,7 @@ export function useAudioChannel(socket, iceServers) {
         analyser.fftSize = 256;
         src.connect(analyser);
         analysersRef.current.set(socketId, { ctx, analyser, data: new Uint8Array(analyser.frequencyBinCount) });
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       }
     } catch (_) {
       /* VAD is cosmetic */
@@ -190,6 +209,13 @@ export function useAudioChannel(socket, iceServers) {
       if (!pc) pc = createPeer(fromSocketId, false);
       try {
         if (signal.type === 'offer') {
+          if (pc.signalingState === 'have-local-offer') {
+            try {
+              await pc.setLocalDescription({ type: 'rollback' });
+            } catch {
+              /* some browsers lack rollback — ignore glare */
+            }
+          }
           await pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp });
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
@@ -266,13 +292,71 @@ export function useAudioChannel(socket, iceServers) {
     };
   }, [socket, createPeer, ensureMic, teardown]);
 
-  // Acquire mic when promoted onto stage
+  /**
+   * Publish mic to every peer and renegotiate. Required when we started as
+   * recvonly (listener) then got a stage seat — addTrack alone does not update SDP.
+   */
+  const publishAudioToAllPeers = useCallback(async () => {
+    if (!socket) return;
+    let stream;
+    try {
+      stream = await ensureMic();
+    } catch {
+      return;
+    }
+    const track = stream.getAudioTracks()[0];
+    if (!track) return;
+
+    for (const [peerId, pc] of [...pcsRef.current.entries()]) {
+      if (!pc || pc.signalingState === 'closed') continue;
+      try {
+        let needOffer = false;
+        const existing = pc.getSenders().find((s) => s.track?.kind === 'audio');
+        if (existing) {
+          if (existing.track?.id !== track.id) await existing.replaceTrack(track);
+        } else {
+          const recvOnly = pc.getTransceivers().find(
+            (t) => t.direction === 'recvonly' || t.direction === 'inactive'
+          );
+          if (recvOnly) {
+            recvOnly.direction = 'sendrecv';
+            await recvOnly.sender.replaceTrack(track);
+          } else {
+            pc.addTrack(track, stream);
+          }
+          needOffer = true;
+        }
+        if (!needOffer) continue;
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('audio:signal', {
+          channelId: channelIdRef.current,
+          targetSocketId: peerId,
+          signal: { type: 'offer', sdp: offer.sdp },
+        });
+      } catch {
+        /* next unmute / peer-join will retry */
+      }
+    }
+  }, [ensureMic, socket]);
+
+  const roleRef = useRef(null);
+
+  // Acquire mic + republish when promoted onto stage
   useEffect(() => {
     const me = members.find((m) => m.socketId === socket?.id);
+    const role = me?.role || null;
+    const wasListener = !roleRef.current || roleRef.current === 'listener';
+    roleRef.current = role;
     if (me && me.role !== 'listener') {
-      ensureMic().catch(() => {});
+      ensureMic()
+        .then(() => {
+          if (wasListener && role !== 'listener') return publishAudioToAllPeers();
+          return undefined;
+        })
+        .catch(() => {});
     }
-  }, [members, socket?.id, ensureMic]);
+  }, [members, socket?.id, ensureMic, publishAudioToAllPeers]);
 
   useEffect(() => () => teardown(), [teardown]);
 
@@ -299,20 +383,22 @@ export function useAudioChannel(socket, iceServers) {
     setChannel(null);
     setMembers([]);
     setMicMuted(true);
+    roleRef.current = null;
   }, [socket, teardown]);
 
   const toggleMic = useCallback(async () => {
     const next = !micMuted;
     try {
+      resumeRemoteAudio();
       const stream = await ensureMic();
       stream.getAudioTracks().forEach((t) => {
         t.enabled = !next;
       });
-      // If we acquired the mic after connecting, publish it now.
+      // Unmute: ensure every peer has our send track (renegotiate if needed).
       if (!next) {
-        pcsRef.current.forEach((pc) => {
-          const hasAudio = pc.getSenders().some((s) => s.track?.kind === 'audio');
-          if (!hasAudio) stream.getAudioTracks().forEach((t) => pc.addTrack(t, stream));
+        await publishAudioToAllPeers();
+        stream.getAudioTracks().forEach((t) => {
+          t.enabled = true;
         });
       }
       setMicMuted(next);
@@ -320,7 +406,7 @@ export function useAudioChannel(socket, iceServers) {
     } catch (_) {
       setError('Microphone permission denied.');
     }
-  }, [micMuted, ensureMic, socket]);
+  }, [micMuted, ensureMic, socket, publishAudioToAllPeers, resumeRemoteAudio]);
 
   const requestSpeak = useCallback(() => {
     socket?.emit('audio:request-speak', { channelId: channelIdRef.current });
@@ -413,6 +499,7 @@ export function useAudioChannel(socket, iceServers) {
     setWallpaper,
     setGamesEnabled,
     sendChat,
+    resumeRemoteAudio,
     clearError: () => setError(null),
   };
 }

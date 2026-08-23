@@ -916,14 +916,27 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         try {
           s = await navigator.mediaDevices.getUserMedia(baseConstraints);
         } catch (e) {
-          s = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: facingMode } },
-            audio: true
-          });
+          try {
+            s = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: { ideal: facingMode } },
+              audio: true
+            });
+          } catch (e2) {
+            // Auto-continue mic-only so matching is not blocked on camera denial
+            s = await navigator.mediaDevices.getUserMedia({ audio: true });
+            setAudioOnly(true);
+            setCameraOff(true);
+            setToast('🎙️ Camera unavailable — matching in audio-only mode');
+          }
         }
         localStreamRef.current = s;
         setLocalStream(s);
-        setAudioOnly(false);
+        if (!s.getVideoTracks().length) {
+          setAudioOnly(true);
+          setCameraOff(true);
+        } else {
+          setAudioOnly(false);
+        }
         setMicBlocked(false);
         setCameraError(null);
         if (localVideoRef.current) attachStreamToVideo(localVideoRef.current, s);
@@ -1864,6 +1877,22 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         return;
       }
       setMessages((m) => [...m, { id: nextMsgId('sys'), system: true, text: '✅ Reconnected to chat server.', ts: Date.now() }]);
+      // Re-enter matchmaking after reconnect (socket.id changed; old queue entry is gone)
+      if (!roomIdRef.current && statusRef.current === 'searching' && localStreamRef.current && !iceLoading) {
+        findPartnerEmittedRef.current = true;
+        let creatorToken = '';
+        try {
+          creatorToken = window.localStorage.getItem('mm_creatorId') || '';
+        } catch { /* ignore */ }
+        socket.emit('find-partner', {
+          mode: 'video',
+          interest: interest || 'general',
+          nickname: nickname || 'Anonymous',
+          conversationMode,
+          topicContract,
+          creatorToken: isCreator || creatorToken ? creatorToken : undefined,
+        });
+      }
     };
     const onSocketDisconnect = (reason) => {
       mmDebug('socket.disconnected', reason);
@@ -1897,7 +1926,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       socket.off('connect', onSocketConnect);
       socket.off('disconnect', onSocketDisconnect);
     };
-  }, [socket, interest, onJoined, doOffer, doAnswer, addIce, handleBack, handleSkip, autoStrangerBlur, isMobile, showChat, chatCollapsed]);
+  }, [socket, interest, nickname, conversationMode, topicContract, isCreator, iceLoading, onJoined, doOffer, doAnswer, addIce, handleBack, handleSkip, autoStrangerBlur, isMobile, showChat, chatCollapsed]);
 
   useEffect(() => {
     if (!isTranslatorActive) return;

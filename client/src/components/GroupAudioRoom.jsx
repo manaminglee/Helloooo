@@ -24,7 +24,7 @@ function AudioChatBubble({ m, isMe }) {
 }
 
 function StageAvatar({ member, speaking, size = 'lg' }) {
-  const dim = size === 'lg' ? 'w-[4.5rem] h-[4.5rem] text-xl' : 'w-12 h-12 text-base';
+  const dim = size === 'lg' ? 'mm-audio-avatar mm-audio-avatar--lg' : 'mm-audio-avatar mm-audio-avatar--sm';
   const royal = member?.role === 'host' ? 'mm-audio-royal mm-audio-royal--host' : member?.role === 'moderator' ? 'mm-audio-royal mm-audio-royal--mod' : '';
   return (
     <div
@@ -107,7 +107,7 @@ export function GroupAudioRoom({ socket, iceServers, coins = 0, nickname = 'Anon
   const {
     channel, members, micMuted, speakingIds, error, connecting, chatMessages,
     join, create, leave, toggleMic, moderate, grantSpeak, claimSlot,
-    approveJoin, denyJoin, renameRoom, setWallpaper, setGamesEnabled, sendChat, clearError,
+    approveJoin, denyJoin, renameRoom, setWallpaper, setGamesEnabled, sendChat, resumeRemoteAudio, clearError,
   } = useAudioChannel(socket, iceServers);
 
   const [channels, setChannels] = useState([]);
@@ -242,7 +242,10 @@ export function GroupAudioRoom({ socket, iceServers, coins = 0, nickname = 'Anon
     : undefined;
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-[#08090f] text-white">
+    <div
+      className="min-h-[100dvh] max-w-[100vw] flex flex-col bg-[#08090f] text-white overflow-x-hidden"
+      onPointerDownCapture={() => resumeRemoteAudio?.()}
+    >
       <header className="mm-audio-room-header">
         <div className="min-w-0">
           <h2 className="text-base sm:text-lg font-bold truncate">{channel.topic}</h2>
@@ -280,8 +283,8 @@ export function GroupAudioRoom({ socket, iceServers, coins = 0, nickname = 'Anon
         </div>
       )}
 
-      <main className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[1fr_20rem] lg:gap-4 px-4 pb-2">
-        <section className="mm-audio-stage-panel flex-shrink-0 lg:flex-shrink min-h-0 overflow-y-auto" style={stageStyle}>
+      <main className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[1fr_20rem] lg:gap-4 px-3 sm:px-4 pb-2 overflow-x-hidden">
+        <section className="mm-audio-stage-panel flex-shrink-0 lg:flex-shrink min-h-0 overflow-y-auto overflow-x-hidden" style={stageStyle}>
           <h3 className="mm-audio-panel-label">Stage · {maxSlots} seats</h3>
           <div className="mm-audio-slot-grid">
             {slots.map((occupant, i) => (
