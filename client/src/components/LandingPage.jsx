@@ -580,23 +580,21 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             lowPower={lowPower}
           />
 
-          {/* Names section stays full-width / left — not forced into centered hero layout */}
-          <section className="mm-landing-section mm-landing-section--wide mm-landing-names mm-landing-fade-in">
-            <div className="mt-2 flex justify-start mm-landing-fade-in mm-landing-fade-in-delay-1">
+          {/* Names block — centered vertical stack */}
+          <section className="mm-landing-section mm-landing-names mm-landing-fade-in">
+            <div className="mm-landing-names__stack mm-landing-fade-in mm-landing-fade-in-delay-1">
               <AiStatusPill online={aiOnline} />
-            </div>
-            <div className="mt-6 flex flex-col sm:flex-row gap-2 w-full mm-landing-fade-in mm-landing-fade-in-delay-1">
               <input
                 type="text"
                 value={joinMeta.displayNickname || ''}
                 onChange={(e) => setJoinMeta?.((p) => ({ ...p, displayNickname: e.target.value.slice(0, 30) }))}
                 placeholder="Display name (optional)"
-                className="mm-landing-field flex-1 w-full"
+                className="mm-landing-field"
               />
               <select
                 value={languageFilter}
                 onChange={(e) => setLanguageFilter(e.target.value)}
-                className="mm-landing-field sm:max-w-[12rem] w-full"
+                className="mm-landing-field"
                 aria-label="Language preference"
               >
                 <option value="">Any language</option>
@@ -605,8 +603,6 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 <option value="hi">Hindi</option>
                 <option value="es">Spanish</option>
               </select>
-            </div>
-            <div className="mt-3 flex flex-wrap justify-start gap-2 mm-landing-fade-in mm-landing-fade-in-delay-2">
               <button type="button" onClick={() => setShowCreatorModal(true)} className="mm-hide-desktop mm-landing-chip px-4">
                 For Creators
               </button>

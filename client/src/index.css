@@ -5611,8 +5611,21 @@ textarea {
 
 .mm-landing-hero__title {
   margin-top: 1rem;
-  max-width: 40rem;
-  text-wrap: balance;
+  max-width: 100%;
+  width: 100%;
+  white-space: nowrap;
+  text-align: center;
+  font-size: clamp(1.05rem, 3.8vw, 3.15rem);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+
+@media (max-width: 420px) {
+  .mm-landing-hero__title {
+    white-space: normal;
+    text-wrap: balance;
+    font-size: clamp(1.35rem, 7vw, 1.85rem);
+  }
 }
 
 .mm-landing-hero__sub {
@@ -5700,14 +5713,29 @@ textarea {
   }
 }
 
-/* Names row — full width, left-aligned exception */
+/* Names block — centered stack (not side-by-side) */
 .mm-landing-names {
   width: 100%;
-  max-width: 48rem;
-  text-align: left;
-  align-self: stretch;
+  max-width: 22rem;
   margin-left: auto;
   margin-right: auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.mm-landing-names__stack {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.mm-landing-names .mm-landing-field {
+  width: 100%;
+  text-align: center;
 }
 
 @media (min-width: 640px) {
