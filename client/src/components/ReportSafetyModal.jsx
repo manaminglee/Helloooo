@@ -132,7 +132,7 @@ export function ReportSafetyModal({
             <div className="text-3xl mb-3" aria-hidden>✓</div>
             <h3 className="text-lg font-black uppercase tracking-wide text-white mb-2">Report received</h3>
             <p className="text-[11px] text-white/50 leading-relaxed mb-6">
-              Thanks for helping keep Mana Mingle safe. Moderators review anonymous reports; we never sell personal data. You can leave this call whenever you want (Next / Leave).
+              Thanks for helping keep Helloooo safe. Moderators review anonymous reports; we never sell personal data. You can leave this call whenever you want (Next / Leave).
             </p>
             <button type="button" onClick={handleClose} className="w-full rounded-2xl bg-white/10 border border-white/10 py-3 text-[11px] font-black uppercase text-white hover:bg-white/15">
               Close

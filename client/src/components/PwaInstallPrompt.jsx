@@ -25,7 +25,7 @@ export function PwaInstallPrompt() {
 
   return (
     <div className="fixed bottom-4 left-4 right-4 z-[3000] max-w-md mx-auto rounded-xl border border-white/10 bg-[#161a22] p-4 shadow-xl mm-mobile-safe">
-      <p className="text-sm text-white mb-3">Install Mana Mingle on your home screen for quick access.</p>
+      <p className="text-sm text-white mb-3">Install Helloooo 👋 on your home screen for quick access.</p>
       <div className="flex gap-2">
         <button
           type="button"

@@ -53,7 +53,7 @@ function cleanLine(s) {
 
 async function spark(interest) {
   const r = await nvidiaChat([
-    { role: 'system', content: 'You are Mana Mingle AI. One short icebreaker question (max 15 words). No hashtags or quotes.' },
+    { role: 'system', content: 'You are Helloooo AI. One short icebreaker question (max 15 words). No hashtags or quotes.' },
     { role: 'user', content: `Interest: ${interest || 'general'}` },
   ], { max_tokens: 50 });
   return cleanLine(r.content) || 'What made you smile today?';
@@ -148,7 +148,7 @@ async function adminSummary(context) {
   const r = await nvidiaChat([
     {
       role: 'system',
-      content: 'You are the ManaMingle Admin AI. Analyze the system state and recent errors. Provide a concise (under 100 words), high-impact summary for the administrator. Highlight critical failures or patterns. Use professional yet assertive tone.',
+      content: 'You are the Helloooo Admin AI. Analyze the system state and recent errors. Provide a concise (under 100 words), high-impact summary for the administrator. Highlight critical failures or patterns. Use professional yet assertive tone.',
     },
     { role: 'user', content: context },
   ], { model: FAST_MODEL, temperature: 0.2, max_tokens: 250 });

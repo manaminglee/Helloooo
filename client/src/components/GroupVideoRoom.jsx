@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CountryFlag } from './CountryFlag';
 import { VideoLogoPlaceholder, VideoWatermark } from './VideoPanelChrome';
+import { HellooooBrand } from './HellooooBrand';
 import { useIceServers } from '../hooks/useIceServers';
 import { API_BASE } from '../config/apiBase';
 import { nextMsgId } from '../utils/uniqueId';
@@ -1032,7 +1033,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         hasJoinedRef.current = true;
         onJoinedRef.current?.(rid);
         void ensureNotifyPermission();
-        notifyIfBackground('Group video', 'You are connected to a Mana Mingle group room.');
+        notifyIfBackground('Group video', 'You are connected to a Helloooo group room 👋.');
 
         // Automated Group Presence Synthesis for Creators
         if (isCreatorRef.current && rid) {
@@ -1740,9 +1741,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
             </button>
             <div className="mm-group-mobile-header__brand">
-              <img src="/apple-touch-icon.png" alt="" className="mm-group-mobile-header__logo" />
+              <img src="/helloooo-logo.png" alt="" className="mm-group-mobile-header__logo" />
               <div className="mm-group-mobile-header__titles">
-                <span className="mm-group-mobile-header__name">ManaMingle</span>
+                <HellooooBrand size="sm" className="mm-group-mobile-header__name" />
                 <span className="mm-group-mobile-header__sub">2×2 Group Video Chat</span>
               </div>
             </div>
@@ -2126,7 +2127,7 @@ function RemoteVideoTile({ stream, socketId }) {
         <div className="glass-watermark">AI MONITOR ACTIVE</div>
       </div>
       <div className="absolute bottom-4 right-4 z-50">
-        <div className="glass-watermark">ManaMingle</div>
+        <div className="glass-watermark"><HellooooBrand size="sm" /></div>
       </div>
 
       {(!isPlaying || !hasVideo) && (

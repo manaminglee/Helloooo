@@ -5,13 +5,13 @@ const crypto = require('crypto');
 
 const PRODUCTS = {
   pro: {
-    name: 'ManaMingle Pro (30 days)',
+    name: 'Helloooo Pro (30 days)',
     amountUsd: Number(process.env.PAYMENT_PRO_USD_CENTS) || 499,
     amountInr: Number(process.env.PAYMENT_PRO_INR_PAISE) || 39900,
     days: 30,
   },
   unblock: {
-    name: 'ManaMingle IP Unblock',
+    name: 'Helloooo IP Unblock',
     amountUsd: Number(process.env.PAYMENT_UNBLOCK_USD_CENTS) || 500,
     amountInr: Number(process.env.PAYMENT_UNBLOCK_INR_PAISE) || 41500,
   },
@@ -196,7 +196,7 @@ function registerPayments(app, deps) {
           testMode,
           product,
           ...order,
-          name: 'ManaMingle',
+          name: 'Helloooo',
           description: PRODUCTS[product].name,
           prefill: {},
         });
@@ -268,7 +268,7 @@ function registerPayments(app, deps) {
       }
       if (provider === 'razorpay') {
         const order = await razorpayCreateOrder({ product: 'unblock', ip });
-        return res.json({ provider: 'razorpay', testMode, product: 'unblock', ...order, name: 'ManaMingle', description: PRODUCTS.unblock.name });
+        return res.json({ provider: 'razorpay', testMode, product: 'unblock', ...order, name: 'Helloooo', description: PRODUCTS.unblock.name });
       }
       const stripeUrl = (process.env.STRIPE_UNBLOCK_URL || '').trim();
       if (stripeUrl) return res.json({ checkoutUrl: stripeUrl, message: 'Redirecting to secure checkout...' });

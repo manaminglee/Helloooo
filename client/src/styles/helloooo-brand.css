@@ -1,0 +1,106 @@
+/* Helloooo brand wordmark — matches helloooo.site logo colors */
+
+.helloooo-logo {
+  object-fit: contain;
+  border-radius: 0.65rem;
+}
+
+.helloooo-brand {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--font-display, 'Segoe UI', system-ui, sans-serif);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.helloooo-brand--sm { font-size: 1rem; }
+.helloooo-brand { font-size: 1.35rem; }
+.helloooo-brand--lg { font-size: clamp(1.75rem, 4vw, 2.75rem); }
+.helloooo-brand--xl { font-size: clamp(2.25rem, 6vw, 3.5rem); }
+
+.helloooo-brand__hell {
+  color: #ffffff;
+}
+
+.helloooo-brand__o {
+  display: inline-block;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  font-weight: 900;
+}
+
+.helloooo-brand__o1 {
+  background-image: linear-gradient(145deg, #c084fc 0%, #7c3aed 55%, #5b21b6 100%);
+}
+
+.helloooo-brand__o2 {
+  background-image: linear-gradient(145deg, #60a5fa 0%, #2563eb 55%, #1d4ed8 100%);
+}
+
+.helloooo-brand__o3 {
+  background-image: linear-gradient(145deg, #f472b6 0%, #ec4899 45%, #a855f7 100%);
+}
+
+.helloooo-brand__o4 {
+  background-image: linear-gradient(145deg, #22d3ee 0%, #06b6d4 40%, #2563eb 100%);
+  position: relative;
+}
+
+.helloooo-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.85rem;
+  text-align: center;
+}
+
+.helloooo-lockup__text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.helloooo-lockup__tagline {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+@media (min-width: 640px) {
+  .helloooo-lockup {
+    flex-direction: row;
+    text-align: left;
+    align-items: center;
+  }
+
+  .helloooo-lockup__text {
+    align-items: flex-start;
+  }
+}
+
+.helloooo-lockup--header {
+  flex-direction: row;
+  gap: 0.65rem;
+  text-align: left;
+}
+
+.helloooo-lockup--header .helloooo-lockup__logo {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+
+.helloooo-lockup--header .helloooo-brand {
+  font-size: 1.05rem;
+}
+
+.helloooo-lockup--header .helloooo-lockup__tagline {
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+}

@@ -7,7 +7,7 @@ let smtpTransport = null;
 
 function getFrontendUrl() {
   const raw = (process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || '').split(',')[0].trim();
-  return raw || 'https://manamingle.site';
+  return raw || 'https://helloooo.site';
 }
 
 function getAdminEmail() {
@@ -15,7 +15,7 @@ function getAdminEmail() {
 }
 
 function getFromAddress() {
-  return (process.env.EMAIL_FROM || 'ManaMingle Creators <noreply@manamingle.site>').trim();
+  return (process.env.EMAIL_FROM || 'Helloooo Creators <noreply@helloooo.site>').trim();
 }
 
 function getSmtpTransport() {
@@ -81,7 +81,7 @@ async function notifyAdminNewApplication(creator) {
   const admin = getAdminEmail();
   const subject = `New creator application: @${creator.handle_name}`;
   const text = [
-    `New creator application on ManaMingle`,
+    `New creator application on Helloooo`,
     ``,
     `Handle: @${creator.handle_name}`,
     `Platform: ${creator.platform}`,
@@ -97,7 +97,7 @@ async function notifyAdminNewApplication(creator) {
 async function notifyCreatorApproved(creator, plainPassword) {
   if (!creator.email) return { ok: false, skipped: true, reason: 'no_email' };
   const site = getFrontendUrl();
-  const subject = 'Your ManaMingle creator application was approved';
+  const subject = 'Your Helloooo creator application was approved';
   const text = [
     `Hi @${creator.handle_name},`,
     ``,
@@ -111,14 +111,14 @@ async function notifyCreatorApproved(creator, plainPassword) {
     `Log in at ${site} → Creator Program → Creator Login.`,
     `Change your password after first login if you use the reset link in the login modal.`,
     ``,
-    `— ManaMingle Team`,
+    `— Helloooo Team`,
   ].join('\n');
   return sendCreatorEmail({ to: creator.email, subject, html: `<pre style="font-family:sans-serif;line-height:1.5">${text}</pre>`, text });
 }
 
 async function notifyCreatorRejected(creator, reason) {
   if (!creator.email) return { ok: false, skipped: true, reason: 'no_email' };
-  const subject = 'Update on your ManaMingle creator application';
+  const subject = 'Update on your Helloooo creator application';
   const text = [
     `Hi @${creator.handle_name},`,
     ``,
@@ -127,7 +127,7 @@ async function notifyCreatorRejected(creator, reason) {
     ``,
     `You may re-apply after updating your profile link and platform presence.`,
     ``,
-    `— ManaMingle Team`,
+    `— Helloooo Team`,
   ].filter(Boolean).join('\n');
   return sendCreatorEmail({ to: creator.email, subject, html: `<pre style="font-family:sans-serif;line-height:1.5">${text}</pre>`, text });
 }
@@ -135,8 +135,8 @@ async function notifyCreatorRejected(creator, reason) {
 async function notifyWithdrawalUpdate(creator, withdrawal, status, note) {
   if (!creator.email) return { ok: false, skipped: true, reason: 'no_email' };
   const subject = status === 'paid'
-    ? 'Your ManaMingle creator payout was processed'
-    : 'Update on your ManaMingle withdrawal request';
+    ? 'Your Helloooo creator payout was processed'
+    : 'Update on your Helloooo withdrawal request';
   const text = [
     `Hi @${creator.handle_name},`,
     ``,
@@ -145,14 +145,14 @@ async function notifyWithdrawalUpdate(creator, withdrawal, status, note) {
       : `Your withdrawal request was not approved. Your creator coins have been restored to your balance.`,
     note ? `Note: ${note}` : '',
     ``,
-    `— ManaMingle Team`,
+    `— Helloooo Team`,
   ].filter(Boolean).join('\n');
   return sendCreatorEmail({ to: creator.email, subject, html: `<pre style="font-family:sans-serif;line-height:1.5">${text}</pre>`, text });
 }
 
 async function notifyPasswordReset(creator, resetUrl) {
   if (!creator.email) return { ok: false, skipped: true, reason: 'no_email' };
-  const subject = 'Reset your ManaMingle creator password';
+  const subject = 'Reset your Helloooo creator password';
   const text = [
     `Hi @${creator.handle_name},`,
     ``,
@@ -163,14 +163,14 @@ async function notifyPasswordReset(creator, resetUrl) {
     ``,
     `If you did not request this, ignore this email.`,
     ``,
-    `— ManaMingle Team`,
+    `— Helloooo Team`,
   ].join('\n');
   return sendCreatorEmail({ to: creator.email, subject, html: `<p>Hi @${creator.handle_name},</p><p><a href="${resetUrl}">Reset your password</a> (expires in 1 hour)</p>`, text });
 }
 
 async function notifyPasswordResetByAdmin(creator, plainPassword) {
   if (!creator.email) return { ok: false, skipped: true, reason: 'no_email' };
-  const subject = 'Your ManaMingle creator password was reset';
+  const subject = 'Your Helloooo creator password was reset';
   const text = [
     `Hi @${creator.handle_name},`,
     ``,
@@ -179,7 +179,7 @@ async function notifyPasswordResetByAdmin(creator, plainPassword) {
     ``,
     `Log in and change it via Creator Login → Forgot password if needed.`,
     ``,
-    `— ManaMingle Team`,
+    `— Helloooo Team`,
   ].filter(Boolean).join('\n');
   return sendCreatorEmail({ to: creator.email, subject, html: `<pre style="font-family:sans-serif">${text}</pre>`, text });
 }

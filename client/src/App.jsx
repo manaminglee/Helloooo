@@ -17,6 +17,11 @@ const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const TextChat = lazy(() => import('./components/TextChat'));
 const GroupVideoRoom = lazy(() => import('./components/GroupVideoRoom'));
 const GroupTextRoom = lazy(() => import('./components/GroupTextRoom'));
+// Group text is superseded by live voice channels (with the shared coin race).
+const GroupAudioRoom = lazy(() => import('./components/GroupAudioRoom'));
+const GiftOverlayLazy = lazy(() =>
+  import('./components/GiftDrawer').then((m) => ({ default: m.GiftOverlay }))
+);
 const VideoChat = lazy(() => import('./components/VideoChat'));
 
 const LoadingFallback = () => (
@@ -429,6 +434,20 @@ function AppShell() {
       );
     }
     if (mode === MODES.GROUP_TEXT) {
+      // Group text rooms are now live voice channels. Set
+      // VITE_LEGACY_GROUP_TEXT=1 to fall back to the old text room.
+      if (!import.meta.env?.VITE_LEGACY_GROUP_TEXT) {
+        return (
+          <div className="mm-page-enter">
+            <GroupAudioRoom
+              socket={socket}
+              coins={coinState?.balance ?? 0}
+              nickname={isCreator ? nickname : (joinMeta.displayNickname || nickname)}
+              onExit={roomId ? handleLeaveRoom : handleCancelQueue}
+            />
+          </div>
+        );
+      }
       return (
         <div className="mm-page-enter">
           <GroupTextRoom

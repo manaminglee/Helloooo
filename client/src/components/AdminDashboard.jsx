@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { API_BASE } from '../config/apiBase';
 
 /**
- * Mana Mingle Admin Dashboard v2.5
+ * Helloooo Admin Dashboard v2.5
  * Features: Live stats, Visualizations, Economy control, Security, Moderation, Monitoring, Ads
  */
 export function AdminDashboard({ onJoinRoom }) {
@@ -547,7 +547,7 @@ export function AdminDashboard({ onJoinRoom }) {
       <div className="min-h-screen bg-realm-void flex items-center justify-center p-6 text-white font-sans">
         <div className="max-w-md w-full p-10 rounded-[40px] bg-black border border-white/10 backdrop-blur-3xl shadow-[0_0_100px_rgba(99,102,241,0.2)] animate-in-zoom">
           <div className="flex flex-col items-center mb-8">
-            <img src="/apple-touch-icon.png" alt="MM" className="w-20 h-20 mb-6 drop-shadow-[0_0_20px_rgba(6,182,212,0.4)]" />
+            <img src="/helloooo-logo.png" alt="Helloooo" className="w-20 h-20 mb-6 drop-shadow-[0_0_20px_rgba(6,182,212,0.4)] rounded-2xl" />
             <h1 className="text-2xl font-black uppercase tracking-[0.2em] italic">Admin <span className="text-cyan-400">Dashboard</span></h1>
             <p className="text-[10px] text-white/20 mt-2 font-black uppercase tracking-[0.3em]">Authorized Access Required</p>
           </div>
@@ -662,9 +662,9 @@ export function AdminDashboard({ onJoinRoom }) {
         {/* Sidebar Nav */}
         <aside className="w-72 border-r border-white/5 bg-black/40 backdrop-blur-3xl p-8 hidden lg:flex flex-col gap-10 shrink-0">
           <div className="flex items-center gap-4 px-2">
-            <img src="/apple-touch-icon.png" alt="M" className="w-10 h-10 object-contain drop-shadow-[0_0_10px_#06b6d4]" />
+            <img src="/helloooo-logo.png" alt="Helloooo" className="w-10 h-10 object-contain drop-shadow-[0_0_10px_#06b6d4] rounded-lg" />
             <div className="flex flex-col">
-              <span className="font-black text-sm tracking-[0.2em] italic uppercase leading-none">Mana <span className="text-cyan-400">Admin</span></span>
+              <span className="font-black text-sm tracking-[0.2em] italic uppercase leading-none"><span className="helloooo-brand helloooo-brand--sm"><span className="helloooo-brand__hell">Hell</span><span className="helloooo-brand__o helloooo-brand__o1">o</span><span className="helloooo-brand__o helloooo-brand__o2">o</span><span className="helloooo-brand__o helloooo-brand__o3">o</span><span className="helloooo-brand__o helloooo-brand__o4">o</span></span> <span className="text-cyan-400">Admin</span></span>
               <span className="text-[8px] font-black text-white/20 uppercase tracking-widest mt-1">System Online</span>
             </div>
           </div>

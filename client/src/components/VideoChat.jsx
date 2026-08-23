@@ -8,6 +8,7 @@ import { countryToFlag } from '../utils/countryFlag';
 import { CountryFlag } from './CountryFlag';
 import { VideoLogoPlaceholder, VideoWatermark } from './VideoPanelChrome';
 import { CreatorProfilePopup } from './CreatorProfilePopup';
+import { HellooooBrand } from './HellooooBrand';
 import { AdSlot } from './AdSlot';
 import { API_BASE } from '../config/apiBase';
 import { nextMsgId } from '../utils/uniqueId';
@@ -751,6 +752,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     } catch { /* ignore */ }
   };
 
+  // Re-bind local camera after layout swap so the panel never goes black
+  useEffect(() => {
+    if (!desktopLayout) return;
+    const el = localVideoRef.current;
+    const stream = localStreamRef.current;
+    if (el && stream) attachStreamToVideo(el, stream);
+  }, [deskLayoutMode, desktopLayout]);
+
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -866,7 +875,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const submitRating = (stars) => {
     setRatingDone(true);
     setShowRating(false);
-    setToast(`Thanks for rating! ${'⭐'.repeat(stars)} — Your feedback helps improve Mana Mingle.`);
+    setToast(`Thanks for rating! ${'⭐'.repeat(stars)} — Your feedback helps improve Helloooo 👋.`);
   };
 
   const generateAiSummary = async (msgs) => {
@@ -1715,7 +1724,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       }
       onJoined?.(data.roomId);
       playMatch();
-      if (getPrefs().notifyBrowser) notifyIfBackground('Match found', 'Someone joined your Mana Mingle video chat.');
+      if (getPrefs().notifyBrowser) notifyIfBackground('Match found', 'Someone joined your Helloooo video chat 👋.');
     };
 
     const onHistory = (data) => {
@@ -1962,7 +1971,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `ManaMingle_CreatorCapture_${Date.now()}.webm`;
+      a.download = `Helloooo_CreatorCapture_${Date.now()}.webm`;
       a.click();
       isRecordingRef.current = false;
       setIsRecording(false);
@@ -2221,9 +2230,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
         </button>
         <div className="mm-mobile-header__brand">
-          <img src="/apple-touch-icon.png" alt="" className="mm-mobile-header__logo" />
+          <img src="/helloooo-logo.png" alt="" className="mm-mobile-header__logo" />
           <div className="mm-mobile-header__titles">
-            <span className="mm-mobile-header__name">ManaMingle</span>
+            <HellooooBrand size="sm" className="mm-mobile-header__name" />
             {status === 'connected' ? (
               <span className="mm-mobile-header__status">
                 <span className="mm-desk-dot mm-desk-dot--green" aria-hidden />
@@ -2812,7 +2821,6 @@ function RemoteVideoComponent({ stream, muted, strangerFilter, strangerBlur }) {
         style={{
           backgroundColor: '#000',
           filter: strangerBlur && strangerFilter === 'none' ? 'blur(20px)' : (strangerFilter !== 'none' ? strangerFilter : 'none'),
-          willChange: 'transform, opacity',
         }}
       />
       <VideoWatermark />

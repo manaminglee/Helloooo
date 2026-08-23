@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { usePrefs, setPref } from '../utils/userPrefs';
+import { HellooooBrand, HellooooLogo } from './HellooooBrand';
 
 /**
  * SettingsPanel.jsx — Right-side slide-over settings for Mana Mingle.
@@ -211,7 +212,10 @@ export function SettingsPanel({ onClose }) {
             <SectionLabel>About</SectionLabel>
             <div className="rounded-2xl border border-white/5 bg-white/[0.02] px-4 py-4">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-black uppercase tracking-[0.18em] text-white/85">Mana Mingle</span>
+              <div className="flex items-center gap-2">
+                <HellooooLogo size={32} />
+                <HellooooBrand size="sm" />
+              </div>
                 <span className="rounded-full border border-violet-500/25 bg-violet-500/10 px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-violet-300">
                   v{APP_VERSION}
                 </span>

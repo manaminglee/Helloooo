@@ -20,6 +20,8 @@ import { fetchPublicEvents, fetchAiStatus } from '../services/nvidiaAiClient';
 import { loadSessionPrefs, saveSessionPrefs } from '../constants/conversationModes';
 import { PHASE_4_UNIQUE } from '../constants/features';
 import { SettingsPanel, SettingsGearButton } from './SettingsPanel';
+import LandingHero from './LandingHero';
+import { HellooooBrand, HellooooLogo, HELLOOOO_TAGLINE, HELLOOOO_EMOJI } from './HellooooBrand';
 
 const BlueTick = () => (
   <span className="inline-flex items-center justify-center w-3 h-3 bg-violet-500 rounded-full ml-1.5 shadow-[0_0_14px_rgba(167,139,250,0.45)]">
@@ -74,12 +76,8 @@ const INSIGHTS = [
   'Report unsafe behavior from any chat screen.',
 ];
 
-const CHAT_MODES = [
-  { id: 'video', icon: '📹', name: 'Video Chat', hint: 'One-to-one video', tag: 'Live' },
-  { id: 'text', icon: '💬', name: 'Text Chat', hint: 'Anonymous messaging', tag: 'Fast' },
-  { id: 'group_video', icon: '🎥', name: 'Group Video', hint: 'Up to 4 people on video', tag: 'Squad' },
-  { id: 'group_text', icon: '👥', name: 'Group Text', hint: 'Group text rooms', tag: 'Social' },
-];
+// Mode cards are defined in LandingHero.jsx (single source of truth).
+// `group_text` now routes to live Voice Rooms.
 
 export function LandingPage({ onJoin, coinState, isJoining = false, registered = false, currentActiveSeconds = 0, joinMeta = {}, setJoinMeta, country: userCountry = null }) {
   const { balance, streak, canClaim, nextClaim, claimCoins, adsEnabled, adScripts } = coinState || {};
@@ -471,7 +469,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
           <div className="w-full max-w-lg rounded-[2rem] border border-white/10 bg-[#0c0e14] p-8 shadow-2xl">
             <h2 id="community-policy-title" className="text-lg font-black uppercase tracking-wide text-white mb-2">Community safety</h2>
             <p className="text-[11px] text-white/50 leading-relaxed mb-6">
-              Video on Mana Mingle is anonymous and live. You must be 18+ where required. No nudity, no harassment, no illegal content.
+              Video on Helloooo 👋 is anonymous and live. You must be 18+ where required. No nudity, no harassment, no illegal content.
               Reports are reviewed; violations can lead to blocks and bans. By continuing you agree to follow these rules and our guidelines.
             </p>
             <div className="flex gap-3">
@@ -509,12 +507,10 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
           <div className="mm-landing-header__bar">
             <div className="mm-landing-header__brand">
               <button type="button" onClick={scrollToStart} className="flex items-center gap-3 min-w-0 text-left rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/40 mm-compact-btn">
-                <div className="mm-landing-logo-ring shrink-0">
-                  <img src="/apple-touch-icon.png" alt="Mana Mingle" />
-                </div>
+                <HellooooLogo size={36} className="shrink-0 rounded-lg" />
                 <div className="flex flex-col min-w-0">
-                  <h1 className="text-sm sm:text-base font-bold text-white truncate" style={{ fontFamily: 'var(--font-display)' }}>Mana Mingle</h1>
-                  <span className="hidden sm:block text-[11px] text-white/45 tracking-wide">Interest-based chat & video</span>
+                  <HellooooBrand size="sm" />
+                  <span className="hidden sm:block text-[10px] text-white/45 tracking-widest uppercase">{HELLOOOO_EMOJI} {HELLOOOO_TAGLINE}</span>
                 </div>
               </button>
             </div>
@@ -582,22 +578,16 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
           <AdSlot slotKey="hero" script={adScripts?.hero} adsEnabled={adsEnabled} className="w-full max-w-4xl" />
 
+          {/* Redesigned 3D hero — mobile-first, replaces the old static header */}
+          <LandingHero
+            onStart={handleStartInteraction}
+            connected={connected}
+            isJoining={isJoining}
+            onlineCount={onlineCount ?? 0}
+            lowPower={lowPower}
+          />
+
           <section className="mm-landing-section mm-landing-section--medium text-center mm-landing-fade-in">
-            <div className="mm-landing-eyebrow">
-              {!lowPower && <span className="mm-landing-eyebrow-dot" aria-hidden="true" />}
-              Live anonymous connections
-            </div>
-            <h2 className="mm-landing-title">
-              Meet people who share your interests
-            </h2>
-            <p className="mm-landing-subtitle">
-              No sign-up required. Pick topics, choose a chat mode, and connect instantly with strangers worldwide.
-            </p>
-            <div className="mm-landing-stat-row">
-              <span className="mm-landing-stat-pill">🔒 No account needed</span>
-              <span className="mm-landing-stat-pill">⚡ Instant matching</span>
-              <span className="mm-landing-stat-pill">🛡️ AI safety monitoring</span>
-            </div>
             <div className="mt-4 flex justify-center mm-landing-fade-in mm-landing-fade-in-delay-1">
               <AiStatusPill online={aiOnline} />
             </div>
@@ -732,33 +722,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
           <AdSlot slotKey="sidebar" script={adScripts?.sidebar} adsEnabled={adsEnabled} className="w-full max-w-2xl" />
 
-          <section className="mm-landing-section mm-landing-section--wide mm-landing-fade-in mm-landing-fade-in-delay-3" aria-label="Chat modes">
-            <div className="text-center mb-6">
-              <span className="mm-landing-section-label">Step 2</span>
-              <h3 className="mm-landing-section-title">Pick how you want to connect</h3>
-            </div>
-            <div className="mm-landing-mode-grid">
-              {CHAT_MODES.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  data-mode={m.id}
-                  onClick={() => handleStartInteraction(m.id)}
-                  disabled={!connected || isJoining}
-                  aria-label={`${m.name}: ${m.hint}`}
-                  className="mm-landing-mode-card disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50"
-                >
-                  <div className="mm-landing-mode-icon">{m.icon}</div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="mm-landing-mode-title">{m.name}</h3>
-                    <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/10 text-white/50">{m.tag}</span>
-                  </div>
-                  <p className="mm-landing-mode-hint">{m.hint}</p>
-                  <span className="mm-landing-mode-arrow" aria-hidden="true">→</span>
-                </button>
-              ))}
-            </div>
-          </section>
+          {/* Mode selection now lives in <LandingHero> above (step 1),
+              so this section is intentionally removed to avoid duplication. */}
 
           <section className="mm-landing-section mm-landing-section--medium">
             <div className="text-center mb-5">
@@ -799,11 +764,12 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
       <footer className="mm-landing-footer">
         <div className="max-w-5xl mx-auto flex flex-col md:flex-row justify-between items-start gap-10">
           <div className="max-w-sm space-y-4">
-            <div className="mm-landing-logo-ring w-11 h-11">
-              <img src="/apple-touch-icon.png" alt="Mana Mingle" className="w-7 h-7" />
+            <div className="flex items-center gap-3">
+              <HellooooLogo size={44} />
+              <HellooooBrand size="md" />
             </div>
             <p className="text-sm text-white/50 leading-relaxed">
-              Anonymous interest-based chat and video. Built for privacy, safety, and real connections.
+              👋 {HELLOOOO_TAGLINE}. Anonymous interest-based chat, video & audio — built for privacy and real connections.
             </p>
           </div>
 
@@ -832,8 +798,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
           </div>
         </div>
         <div className="max-w-5xl mx-auto pt-8 mt-8 border-t border-white/[0.06] text-xs text-white/35 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <span>© 2026 Mana Mingle</span>
-          <span className="text-white/25">manamingle.site</span>
+          <span>© 2026 Helloooo 👋</span>
+          <span className="text-white/25">helloooo.site</span>
         </div>
       </footer>
 
@@ -940,8 +906,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   <button
                     onClick={() => {
                       const content = approvalData.password
-                        ? `MANAMINGLE CREATOR CREDENTIALS\n\nHandle: @${approvalData.handle_name}\nAccess Code: ${approvalData.referral_code}\nPassword: ${approvalData.password}\n\nNote: Reach admin team at manaminglee@gmail.com for issues.`
-                        : `MANAMINGLE CREATOR CREDENTIALS\n\nHandle: @${approvalData.handle_name}\nAccess Code: ${approvalData.referral_code}\nPassword: (the one you set during registration)\n\nNote: Reach admin team at manaminglee@gmail.com for issues.`;
+                        ? `HELLOOOO CREATOR CREDENTIALS\n\nHandle: @${approvalData.handle_name}\nAccess Code: ${approvalData.referral_code}\nPassword: ${approvalData.password}\n\nNote: Reach admin team at manaminglee@gmail.com for issues.`
+                        : `HELLOOOO CREATOR CREDENTIALS\n\nHandle: @${approvalData.handle_name}\nAccess Code: ${approvalData.referral_code}\nPassword: (the one you set during registration)\n\nNote: Reach admin team at manaminglee@gmail.com for issues.`;
                       const blob = new Blob([content], { type: 'text/plain' });
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement('a');
@@ -1307,7 +1273,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                         </div>
                         <button
                           onClick={() => {
-                            const content = `MANAMINGLE CREATOR CREDENTIALS\n\nHandle: @${creatorStatus.handle_name}\nCreator ID: ${creatorStatus.referral_code}\nPassword: ${creatorStatus.password}\nReferral Link: ${window.location.origin}/?ref=${creatorStatus.referral_code}\n\nNote: If you have forgotten these, reach the admin team at manaminglee@gmail.com`;
+                            const content = `HELLOOOO CREATOR CREDENTIALS\n\nHandle: @${creatorStatus.handle_name}\nCreator ID: ${creatorStatus.referral_code}\nPassword: ${creatorStatus.password}\nReferral Link: ${window.location.origin}/?ref=${creatorStatus.referral_code}\n\nNote: If you have forgotten these, reach the admin team at manaminglee@gmail.com`;
                             const blob = new Blob([content], { type: 'text/plain' });
                             const url = URL.createObjectURL(blob);
                             const a = document.createElement('a');

@@ -1,7 +1,7 @@
 {
-  "name": "mana-mingle",
+  "name": "helloooo",
   "version": "2.0.0",
-  "description": "Mana Mingle - React + Tailwind group video chat with interest matching, WebRTC, WebSockets",
+  "description": "Helloooo - React + Tailwind group video chat with interest matching, WebRTC, WebSockets",
   "main": "server/index.js",
   "type": "commonjs",
   "engines": {

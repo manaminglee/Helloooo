@@ -25,6 +25,10 @@ const creatorSecurity = require('./creatorSecurity');
 const creatorEmail = require('./creatorEmail');
 const creatorNotifications = require('./creatorNotifications');
 const adminLiveMonitor = require('./adminLiveMonitor');
+const { registerAudioChannels } = require('./audioChannels');
+const { registerRaceGame } = require('./raceGame');
+const { registerEconomy } = require('./economy');
+const { registerModeration } = require('./moderation');
 const { promises: dnsPromises } = require('dns');
 
 const APP_VERSION = (() => {
@@ -806,6 +810,8 @@ app.use(helmet({
 app.use(cors({
   origin: NODE_ENV === 'production'
     ? [
+      'https://helloooo.site',
+      'https://www.helloooo.site',
       'https://manamingle.site',
       'https://www.manamingle.site',
       process.env.FRONTEND_ORIGIN,
@@ -1013,7 +1019,7 @@ app.post('/api/validate-url', async (req, res) => {
         method,
         redirect: 'follow',
         signal: controller.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ManaMingle/1.0)' }
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Helloooo/1.0)' }
       });
     } finally {
       clearTimeout(timeout);
@@ -2672,7 +2678,7 @@ app.get(/^(?!\/api|\/socket\.io|\/health)/, (req, res, next) => {
       if (err) next();
     });
   }
-  const frontendUrl = process.env.FRONTEND_ORIGIN || 'https://manamingle.site';
+  const frontendUrl = process.env.FRONTEND_ORIGIN || 'https://helloooo.site';
   const url = frontendUrl.split(',')[0].trim();
   res.redirect(302, url);
 });
@@ -2744,6 +2750,62 @@ app.post('/api/vibe/session-summary', async (req, res) => {
 
 registerPayments(app, { persistence, blockedIps, io, users });
 
+// ---------------------------------------------------------------------------
+// Voice channels, coin race game, economy (gifts/tiers) and moderation.
+// Registered in dependency order: moderation -> economy -> audio -> game.
+// `isAdminRequest` reuses the same timing-safe key comparison as requireAdmin.
+// ---------------------------------------------------------------------------
+function isAdminRequest(req) {
+  const adminKey = getAdminKey();
+  if (!adminKey) return false;
+  return safeEqualKeys((req.header('x-admin-key') || '').toString().trim(), adminKey);
+}
+
+const moderation = registerModeration(app, io, {
+  users,
+  blockedIps,
+  supabase,
+  isAdminRequest,
+  sanitize,
+  terminateUserSession,
+  nvidiaAi,
+  ADMIN_ROOM,
+});
+
+const economy = registerEconomy(app, io, {
+  users,
+  getCoinUser,
+  updateCoinUser,
+  supabase,
+  saveLocalDb,
+  isAdminRequest,
+  sanitize,
+  audit: moderation.audit,
+});
+
+// Forward declaration: the game needs the channel registry, and channels need
+// to tear down games when they empty. `raceGame` is assigned just below.
+let raceGame = null;
+
+const audioChannels = registerAudioChannels(app, io, {
+  users,
+  sanitize,
+  generateId,
+  blockedIps,
+  userBlocks,
+  isAdminRequest,
+  audit: moderation.audit,
+  onChannelEmpty: (channelId) => raceGame?.destroyForChannel(channelId),
+});
+
+raceGame = registerRaceGame(app, io, {
+  users,
+  audioChannels,
+  economy,
+  isAdminRequest,
+  audit: moderation.audit,
+});
+
 // API 404 fallback — must be after registerEnhancements (rooms/public, creators, etc.)
 app.all('/api/*', (req, res) => {
   res.status(404).json({ error: 'API endpoint not found' });
@@ -2794,7 +2856,7 @@ io.on('connection', (socket) => {
   stats.uniqueIps.add(ip);
 
   if (settings.maintenanceMode) {
-    socket.emit('system-maintenance', { message: 'ManaMingle is currently undergoing scheduled maintenance. Please check back later!' });
+    socket.emit('system-maintenance', { message: 'Helloooo is currently undergoing scheduled maintenance. Please check back later!' });
     return socket.disconnect(true);
   }
 
@@ -2818,6 +2880,10 @@ io.on('connection', (socket) => {
 
   enhancements.attachSocketHandlers(socket, ip);
   uniqueFeatures.attachSocketHandlers(socket, ip);
+  moderation.attachSocketHandlers(socket, ip);
+  economy.attachSocketHandlers(socket, ip);
+  audioChannels.attachSocketHandlers(socket, ip);
+  raceGame.attachSocketHandlers(socket, ip);
 
   // Uniform handler registration: wraps every handler in try/catch so a failing
   // async handler logs and emits `error` instead of an unhandled rejection.
@@ -3733,7 +3799,7 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, HOST || '0.0.0.0', () => {
-  console.log(`Mana Mingle server listening on port ${PORT} (${NODE_ENV})`);
+  console.log(`Helloooo server listening on port ${PORT} (${NODE_ENV})`);
 });
 
 // --- Graceful shutdown: drain, flush, close, exit (with hard 5s deadline) ---

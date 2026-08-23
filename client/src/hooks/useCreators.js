@@ -16,10 +16,6 @@ export function useCreators() {
   const [creatorStatus, setCreatorStatus] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchStatus();
-  }, [fetchStatus]);
-
   const fetchStatus = useCallback(async () => {
     try {
       const storedId = window.localStorage.getItem('mm_creatorId');
@@ -44,6 +40,10 @@ export function useCreators() {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    fetchStatus();
+  }, [fetchStatus]);
 
   const registerCreator = async (handle, platform, link, email, password, confirmPassword) => {
     const handleCheck = validateCreatorHandle(handle);

@@ -9,7 +9,7 @@ export function getApiBase() {
   if (env) return env.replace(/\/$/, '');
   if (import.meta.env.PROD && typeof window !== 'undefined') {
     const host = window.location.hostname;
-    if (host === 'manamingle.site' || host === 'www.manamingle.site' || host.endsWith('.github.io')) {
+    if (host === 'helloooo.site' || host === 'www.helloooo.site' || host === 'manamingle.site' || host === 'www.manamingle.site' || host.endsWith('.github.io')) {
       return PRODUCTION_API;
     }
   }

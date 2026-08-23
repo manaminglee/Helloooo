@@ -13,6 +13,7 @@ import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNoti
 import { playDing, playPop } from '../utils/sounds';
 import { usePrefs } from '../utils/userPrefs';
 import { SettingsPanel, SettingsGearButton } from './SettingsPanel';
+import { HellooooBrand, HellooooLogo } from './HellooooBrand';
 import { ProFeaturesMenu } from './ProFeaturesMenu';
 import { useUniqueSession } from '../hooks/useUniqueSession';
 import {
@@ -160,13 +161,11 @@ function VanishingMessage({ m, isMe, onReply }) {
                 <span className="font-black">{m.replyTo.isCreator ? `@${m.replyTo.nickname}` : (m.replyTo.nickname || 'Someone')}</span>: {m.replyTo.text?.slice(0, 40)}{m.replyTo.text?.length > 40 ? '...' : ''}
               </div>
             )}
-            <div className="flex flex-col gap-0.5 mb-1">
-              <div className="flex items-center gap-1">
-                <span className={`text-[8px] font-black uppercase tracking-widest ${isMe ? 'text-violet-400' : 'text-white/40'}`}>
-                  {m.isCreator ? `@${m.nickname}` : (isMe ? 'You' : m.nickname || 'Stranger')}
-                </span>
-                {m.isCreator && <BlueTick />}
-              </div>
+            <div className="flex items-center gap-1 mb-0.5">
+              <span className={`text-[10px] font-semibold ${isMe ? 'text-violet-300/90' : 'text-white/45'}`}>
+                {m.isCreator ? `@${m.nickname}` : (isMe ? 'You' : m.nickname || 'Stranger')}
+              </span>
+              {m.isCreator && <BlueTick />}
             </div>
             <div className="flex gap-2 items-end">
                 {m.media ? (
@@ -180,7 +179,9 @@ function VanishingMessage({ m, isMe, onReply }) {
                 ) : m.type === 'voice' ? (
                     <audio controls src={m.audio || m.text} className="max-w-[220px] w-full" />
                 ) : (
-                    <p className="break-words leading-relaxed whitespace-pre-wrap">{m.text}</p>
+                    <p className="text-[15px] sm:text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                      {m.text}
+                    </p>
                 )}
                 {vanishMessages && (
                   <span className={`text-[9px] font-mono shrink-0 mb-[-2px] ${timeLeft <= 10 ? 'text-amber-400 animate-pulse font-bold' : 'opacity-40'}`}>
@@ -308,7 +309,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       setPeer(data.peer);
       setStatus('connected');
       onJoinedRef.current?.(data.roomId);
-      notifyIfBackground('Text match', 'You have a new Mana Mingle text chat.');
+      notifyIfBackground('Text match', 'You have a new Helloooo text chat 💬.');
       setTimeout(() => inputRef.current?.focus(), 100);
     };
 
@@ -697,12 +698,15 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <img src="/apple-touch-icon.png" alt="Logo" className="w-8 h-8 object-contain drop-shadow-[0_0_10px_#a78bfa]" />
-          <div className="hidden sm:block">
-            <h1 className="text-[10px] font-black uppercase tracking-[0.5em] text-white">Mana Mingle</h1>
-            <p className="text-[8px] font-bold text-white/20 uppercase tracking-widest mt-1">
-              # {interest || 'General'} Topics
-            </p>
+          <img src="/helloooo-logo.png" alt="Helloooo" className="w-8 h-8 object-contain rounded-lg sm:hidden" />
+          <div className="hidden sm:flex sm:items-center sm:gap-2">
+            <HellooooLogo size={28} />
+            <div>
+              <HellooooBrand size="sm" />
+              <p className="text-[8px] font-bold text-white/20 uppercase tracking-widest mt-0.5">
+                # {interest || 'General'} Topics
+              </p>
+            </div>
           </div>
         </div>
 
@@ -866,10 +870,15 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
           {/* CHAT MESSAGES DISPLAY */}
           {status === 'connected' && (
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-8 space-y-4 min-h-0" id="text-chat-messages">
+            <div
+              className="flex-1 overflow-y-auto custom-scrollbar px-3 py-4 sm:px-6 sm:py-6 space-y-1 min-h-0 overscroll-contain"
+              id="text-chat-messages"
+            >
               {messages.length === 0 && (
-                <div className="text-[10px] font-black uppercase tracking-[0.4em] text-white/10 text-center py-10 italic">
-                   Connected. Say hello!
+                <div className="text-center py-12 px-4">
+                  <div className="text-3xl mb-2" aria-hidden>👋</div>
+                  <p className="text-sm font-semibold text-white/70">You&apos;re connected</p>
+                  <p className="text-xs text-white/35 mt-1">Say hello to break the ice.</p>
                 </div>
               )}
               {messages.map((m, i) => {
@@ -879,13 +888,13 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
                 return <VanishingMessage key={m.id ?? `${m.socketId}-${m.ts}`} m={m} isMe={isMe} onReply={(msg) => setReplyingTo(msg)} />;
               })}
               {strangerTyping && (
-                <div className="flex items-center gap-3 animate-message-pop opacity-50">
-                  <div className="flex gap-1 bg-white/5 py-2 px-3 rounded-2xl">
-                    <div className="w-1 h-1 bg-white rounded-full animate-bounce" />
-                    <div className="w-1 h-1 bg-white rounded-full animate-bounce [animation-delay:0.2s]" />
-                    <div className="w-1 h-1 bg-white rounded-full animate-bounce [animation-delay:0.4s]" />
+                <div className="flex items-center gap-2 self-start mt-1" aria-live="polite">
+                  <div className="flex gap-1 items-center bg-white/[0.07] border border-white/10 py-2.5 px-3.5 rounded-2xl rounded-bl-md text-white/70">
+                    <span className="mm-typing-dot" />
+                    <span className="mm-typing-dot" />
+                    <span className="mm-typing-dot" />
                   </div>
-                  <span className="text-[9px] font-black uppercase tracking-widest text-white/30">Stranger is typing...</span>
+                  <span className="text-[11px] text-white/35">typing…</span>
                 </div>
               )}
               <div ref={chatEndRef} />
@@ -918,20 +927,20 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
               </div>
            )}
 
-           <div className="flex items-center gap-3">
+           <div className="flex items-end gap-2 sm:gap-3">
               {(status === 'idle') ? (
                 <button
                   onClick={handleStart}
-                  className="flex-1 h-16 rounded-3xl bg-violet-500 text-black font-black uppercase tracking-[0.3em] italic text-xs hover:bg-white transition-all shadow-[0_0_30px_rgba(167,139,250,0.3)] hover:scale-[1.02] active:scale-[0.98]"
+                  className="flex-1 min-h-[52px] sm:min-h-[56px] rounded-2xl bg-violet-500 text-black font-bold text-sm hover:bg-violet-400 transition-all shadow-[0_0_28px_rgba(167,139,250,0.35)] active:scale-[0.98]"
                 >
-                  Start Chat
+                  Start chat
                 </button>
               ) : (
                 <button
                   onClick={handleSkip}
-                  className="w-32 h-16 rounded-3xl bg-white/[0.03] border border-white/5 hover:border-violet-500/40 text-white/40 hover:text-violet-400 font-black uppercase tracking-widest text-[10px] transition-all italic hover:bg-violet-500/5 shadow-inner"
+                  className="shrink-0 px-4 sm:w-28 min-h-[52px] sm:min-h-[56px] rounded-2xl bg-white/[0.04] border border-white/10 hover:border-violet-500/40 text-white/60 hover:text-violet-300 font-semibold text-xs transition-all hover:bg-violet-500/5"
                 >
-                  {status === 'searching' ? 'Abort' : 'Skip User'}
+                  {status === 'searching' ? 'Abort' : 'Skip'}
                 </button>
               )}
 
@@ -940,13 +949,14 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
                   value={input}
                   onChange={handleInputChange}
                   onSend={sendMsg}
-                  placeholder={isAiGenerating ? 'AI Assistant is thinking...' : 'Type a message...'}
+                  placeholder={isAiGenerating ? 'AI is thinking…' : 'Type a message…'}
                   disabled={isAiGenerating}
                   showVoice={PHASE_2.voiceMessages}
                   onVoiceMessage={handleVoiceMessage}
                   enterToSend={prefs.enterToSend}
-                  className="flex-1"
-                  inputClassName="min-h-[64px] rounded-3xl bg-white/[0.03] border-white/10 focus:border-violet-500/40 text-sm uppercase font-black tracking-widest italic backdrop-blur-3xl placeholder:text-white/10"
+                  className="flex-1 min-w-0"
+                  /* 16px font stops iOS Safari zooming on focus */
+                  inputClassName="min-h-[52px] sm:min-h-[56px] rounded-2xl bg-white/[0.05] border-white/10 focus:border-violet-500/50 text-[16px] sm:text-sm font-normal normal-case tracking-normal not-italic backdrop-blur-xl placeholder:text-white/30"
                 />
               )}
            </div>

@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 
-test.describe('Mana Mingle smoke (anonymous)', () => {
+test.describe('Helloooo smoke (anonymous)', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       sessionStorage.setItem('wc_age', '1');
@@ -11,7 +11,7 @@ test.describe('Mana Mingle smoke (anonymous)', () => {
 
   test('landing loads and shows core modes', async ({ page }) => {
     await page.goto('/');
-    await expect(page).toHaveTitle(/Mana Mingle/i);
+    await expect(page).toHaveTitle(/Helloooo/i);
 
     const videoBtn = page.getByRole('button', { name: /Video Chat/i });
     const groupBtn = page.getByRole('button', { name: /Group Video/i });

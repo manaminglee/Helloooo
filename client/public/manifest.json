@@ -1,17 +1,17 @@
 {
-  "name": "Mana Mingle – Anonymous Video Chat",
-  "short_name": "Mana Mingle",
-  "description": "Free anonymous video and text chat. Connect with strangers instantly.",
+  "name": "Helloooo – Random People, Real Conversations",
+  "short_name": "Helloooo",
+  "description": "👋 Free anonymous video, text, and audio chat. Connect with strangers instantly.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#070811",
-  "theme_color": "#000000",
+  "theme_color": "#7c3aed",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/favicon.ico",
-      "sizes": "48x48",
-      "type": "image/x-icon"
+      "src": "/helloooo-logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
     },
     {
       "src": "/apple-touch-icon.png",

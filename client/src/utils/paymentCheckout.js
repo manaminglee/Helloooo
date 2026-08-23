@@ -36,7 +36,7 @@ export async function startPayment(product, { onSuccess, onError } = {}) {
 
   if (data.provider === 'test' && data.testMode) {
     const ok = window.confirm(
-      `Test payment (no real charge)\n\nProduct: ${product === 'pro' ? 'ManaMingle Pro' : 'IP Unblock'}\n${data.amountLabel || ''}\n\nSimulate successful payment?`
+      `Test payment (no real charge)\n\nProduct: ${product === 'pro' ? 'Helloooo Pro' : 'IP Unblock'}\n${data.amountLabel || ''}\n\nSimulate successful payment?`
     );
     if (!ok) return data;
     const complete = await fetch(`${API_BASE}/api/payment/test-complete`, {
@@ -58,7 +58,7 @@ export async function startPayment(product, { onSuccess, onError } = {}) {
         key: data.keyId,
         amount: data.amount,
         currency: data.currency,
-        name: data.name || 'ManaMingle',
+        name: data.name || 'Helloooo',
         description: data.description,
         order_id: data.orderId,
         theme: { color: '#6366f1' },
