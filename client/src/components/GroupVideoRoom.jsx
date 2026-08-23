@@ -38,6 +38,7 @@ import {
   VideoReactionBar,
 } from './VideoSessionUI';
 import { CreatorProfilePopup } from './CreatorProfilePopup';
+import { useMessageTtl, formatTtl } from '../hooks/useMessageTtl';
 
 const BlueTick = () => (
   <span className="inline-flex items-center justify-center w-3 h-3 bg-violet-500 rounded-full ml-1.5 shadow-[0_0_10px_#a78bfa]">
@@ -105,11 +106,13 @@ function avatarColor(name = '') {
 }
 
 function GroupDeskChatRow({ m, isMe }) {
+  const timeLeft = useMessageTtl(m);
   if (m.system) {
     return (
       <div className="mm-group-desk-chat__system">{m.text}</div>
     );
   }
+  if (timeLeft <= 0) return null;
   const name = isMe ? 'You' : (m.nickname || 'Stranger');
   const initial = (m.nickname || 'S').charAt(0).toUpperCase();
   return (
@@ -127,6 +130,7 @@ function GroupDeskChatRow({ m, isMe }) {
         <div className="mm-group-desk-chat__meta">
           <span className="mm-group-desk-chat__name">{name}</span>
           {m.ts && <span className="mm-group-desk-chat__time">{formatChatTime(m.ts)}</span>}
+          <span className={`mm-desk-bubble__ttl ${timeLeft <= 10 ? 'mm-desk-bubble__ttl--warn' : ''}`}>{formatTtl(timeLeft)}</span>
         </div>
         <div className={`mm-group-desk-chat__bubble ${isMe ? 'mm-group-desk-chat__bubble--me' : ''}`}>
           {m.text}

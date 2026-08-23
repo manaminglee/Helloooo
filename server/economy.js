@@ -11,16 +11,7 @@
  * earnings accrue in a separate `earned` bucket ready for a future payout flow.
  */
 
-const GIFTS = [
-  { id: 'rose', name: 'Rose', cost: 5, icon: '🌹', tier: 'basic', creatorShare: 0.6 },
-  { id: 'heart', name: 'Heart', cost: 10, icon: '💖', tier: 'basic', creatorShare: 0.6 },
-  { id: 'star', name: 'Star', cost: 25, icon: '⭐', tier: 'basic', creatorShare: 0.65 },
-  { id: 'fire', name: 'Fire', cost: 50, icon: '🔥', tier: 'rare', creatorShare: 0.7 },
-  { id: 'crown', name: 'Crown', cost: 100, icon: '👑', tier: 'rare', creatorShare: 0.7 },
-  { id: 'diamond', name: 'Diamond', cost: 250, icon: '💎', tier: 'epic', creatorShare: 0.75 },
-  { id: 'rocket', name: 'Rocket', cost: 500, icon: '🚀', tier: 'epic', creatorShare: 0.75 },
-  { id: 'galaxy', name: 'Galaxy', cost: 1000, icon: '🌌', tier: 'legendary', creatorShare: 0.8 },
-];
+const { GIFTS, CATEGORIES, COIN_PACKAGES } = require('./giftCatalog');
 
 /** Verification tiers unlock perks; `paid` marks the premium tier. */
 const TIERS = {
@@ -183,8 +174,19 @@ function registerEconomy(app, io, deps) {
     };
 
     // Broadcast to the room (or just the pair) so everyone sees the animation.
-    if (channelId) io.to(channelId).emit('gift:received', payload);
-    else {
+    if (channelId) {
+      io.to(channelId).emit('gift:received', payload);
+      io.to(channelId).emit('audio:chat-message', {
+        channelId,
+        id: `gift_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        socketId: fromSocketId,
+        nickname: payload.fromNickname,
+        text: `🎁 sent ${gift.icon} ${gift.name} to ${payload.toNickname}`,
+        kind: 'gift',
+        gift: payload,
+        ts: Date.now(),
+      });
+    } else {
       io.to(toSocketId).emit('gift:received', payload);
       io.to(fromSocketId).emit('gift:received', payload);
     }
@@ -193,13 +195,90 @@ function registerEconomy(app, io, deps) {
     return { ok: true, balance: spend.balance, gift: payload, creatorEarned: share };
   }
 
+  async function sendGiftToAll({ fromIp, fromSocketId, giftId, channelId, targetIds }) {
+    const gift = GIFTS.find((g) => g.id === giftId);
+    if (!gift) return { ok: false, error: 'Unknown gift' };
+    const ids = [...new Set((targetIds || []).map(String))].filter((id) => id && id !== fromSocketId);
+    if (!ids.length) return { ok: false, error: 'No recipients' };
+
+    const total = gift.cost * ids.length;
+    const spend = await debit(fromIp, total, `gift_all_${gift.id}`, { count: ids.length, channelId });
+    if (!spend.ok) return spend;
+
+    const results = [];
+    for (const toSocketId of ids) {
+      const recipient = users.get(toSocketId);
+      if (!recipient || recipient.ip === fromIp) continue;
+      const recipientTier = tierFor(recipient.ip);
+      const share = Math.floor(gift.cost * gift.creatorShare * recipientTier.giftBoost);
+      await credit(recipient.ip, share, `gift_received_${gift.id}`, { fromSocketId, channelId });
+      const rStats = statsFor(recipient.ip);
+      rStats.earned += share;
+      rStats.giftsReceived += 1;
+      statsFor(fromIp).giftsSent += 1;
+      stats.giftsSent += 1;
+      const sender = users.get(fromSocketId);
+      const payload = {
+        giftId: gift.id,
+        name: gift.name,
+        icon: gift.icon,
+        tier: gift.tier,
+        cost: gift.cost,
+        fromSocketId,
+        fromNickname: sender?.nickname || 'Someone',
+        toSocketId,
+        toNickname: recipient.nickname || 'Someone',
+        channelId: channelId || null,
+        at: Date.now(),
+        blast: true,
+      };
+      results.push(payload);
+      if (channelId) io.to(channelId).emit('gift:received', payload);
+      else {
+        io.to(toSocketId).emit('gift:received', payload);
+        io.to(fromSocketId).emit('gift:received', payload);
+      }
+    }
+
+    if (channelId && results.length) {
+      const sender = users.get(fromSocketId);
+      io.to(channelId).emit('audio:chat-message', {
+        channelId,
+        id: `giftall_${Date.now()}`,
+        socketId: fromSocketId,
+        nickname: sender?.nickname || 'Someone',
+        text: `🎁 sent ${gift.icon} ${gift.name} to everyone (${results.length})`,
+        kind: 'gift',
+        ts: Date.now(),
+      });
+    }
+
+    return { ok: true, balance: spend.balance, count: results.length };
+  }
+
   function attachSocketHandlers(socket, ip) {
     socket.on('gift:catalog', () => {
-      socket.emit('gift:catalog', { gifts: GIFTS, tier: tierFor(ip) });
+      socket.emit('gift:catalog', {
+        gifts: GIFTS,
+        categories: CATEGORIES,
+        packages: COIN_PACKAGES,
+        tier: tierFor(ip),
+      });
     });
 
     socket.on('gift:send', async (data) => {
       try {
+        if (data?.toAll && data?.channelId) {
+          const res = await sendGiftToAll({
+            fromIp: ip,
+            fromSocketId: socket.id,
+            giftId: String(data?.giftId || ''),
+            channelId: String(data.channelId),
+            targetIds: Array.isArray(data.targetIds) ? data.targetIds : [],
+          });
+          if (!res.ok) socket.emit('gift:error', { message: res.error });
+          return;
+        }
         const res = await sendGift({
           fromIp: ip,
           fromSocketId: socket.id,
@@ -213,11 +292,35 @@ function registerEconomy(app, io, deps) {
       }
     });
 
+    socket.on('coins:buy-package', async (data) => {
+      try {
+        const pack = COIN_PACKAGES.find((p) => p.id === String(data?.packageId || ''));
+        if (!pack) return socket.emit('gift:error', { message: 'Unknown coin package.' });
+        const allow =
+          process.env.PAYMENTS_TEST_MODE === '1' ||
+          process.env.NODE_ENV !== 'production' ||
+          String(process.env.ALLOW_VIRTUAL_COIN_BUY || '') === '1';
+        if (!allow) {
+          return socket.emit('gift:error', {
+            message: 'Coin checkout opens soon — earn coins in rooms for now.',
+          });
+        }
+        const res = await credit(ip, pack.coins, `coin_pack_${pack.id}`, { packageId: pack.id });
+        if (res.ok) {
+          socket.emit('coins-updated', { coins: res.balance, reason: `Bought ${pack.name}` });
+          socket.emit('gift:pack-bought', { packageId: pack.id, coins: pack.coins, balance: res.balance });
+        }
+      } catch (_) {
+        socket.emit('gift:error', { message: 'Could not buy package.' });
+      }
+    });
+
     socket.on('economy:me', async () => {
       socket.emit('economy:me', {
         coins: await getBalance(ip),
         tier: tierFor(ip),
         stats: statsFor(ip),
+        packages: COIN_PACKAGES,
       });
     });
   }
@@ -225,7 +328,7 @@ function registerEconomy(app, io, deps) {
   // ---------------- HTTP ----------------
 
   app.get('/api/economy/catalog', (_req, res) => {
-    res.json({ gifts: GIFTS, tiers: Object.values(TIERS) });
+    res.json({ gifts: GIFTS, categories: CATEGORIES, packages: COIN_PACKAGES, tiers: Object.values(TIERS) });
   });
 
   app.get('/api/admin/economy', (req, res) => {
@@ -284,4 +387,4 @@ function registerEconomy(app, io, deps) {
   };
 }
 
-module.exports = { registerEconomy, GIFTS, TIERS };
+module.exports = { registerEconomy, GIFTS, CATEGORIES, COIN_PACKAGES, TIERS };

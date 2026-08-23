@@ -155,7 +155,7 @@ export function useAudioChannel(socket, iceServers) {
 
     const onJoined = async ({ channelId, topic, you, peers }) => {
       channelIdRef.current = channelId;
-      setChannel({ channelId, topic, you });
+      setChannel({ channelId, topic, you, wallpaper: null, gamesEnabled: true, pendingJoins: [] });
       setConnecting(false);
       setError(null);
 
@@ -208,7 +208,17 @@ export function useAudioChannel(socket, iceServers) {
       }
     };
 
-    const onState = ({ members: m }) => setMembers(m || []);
+    const onState = (state) => {
+      setMembers(state.members || []);
+      setChannel((prev) => prev ? {
+        ...prev,
+        topic: state.topic ?? prev.topic,
+        wallpaper: state.wallpaper ?? null,
+        gamesEnabled: state.gamesEnabled !== false,
+        pendingJoins: state.pendingJoins || [],
+        maxSpeakers: state.maxSpeakers || 6,
+      } : prev);
+    };
     const onSpeaking = ({ socketId, micMuted: muted }) => {
       setSpeakingIds((prev) => {
         const next = new Set(prev);
@@ -255,6 +265,14 @@ export function useAudioChannel(socket, iceServers) {
       socket.off('audio:chat-message', onChatMessage);
     };
   }, [socket, createPeer, ensureMic, teardown]);
+
+  // Acquire mic when promoted onto stage
+  useEffect(() => {
+    const me = members.find((m) => m.socketId === socket?.id);
+    if (me && me.role !== 'listener') {
+      ensureMic().catch(() => {});
+    }
+  }, [members, socket?.id, ensureMic]);
 
   useEffect(() => () => teardown(), [teardown]);
 
@@ -322,6 +340,48 @@ export function useAudioChannel(socket, iceServers) {
     [socket]
   );
 
+  const claimSlot = useCallback(
+    (slot) => {
+      socket?.emit('audio:claim-slot', { channelId: channelIdRef.current, slot });
+    },
+    [socket]
+  );
+
+  const approveJoin = useCallback(
+    (targetSocketId, slot) => {
+      socket?.emit('audio:approve-join', { channelId: channelIdRef.current, targetSocketId, slot });
+    },
+    [socket]
+  );
+
+  const denyJoin = useCallback(
+    (targetSocketId) => {
+      socket?.emit('audio:deny-join', { channelId: channelIdRef.current, targetSocketId });
+    },
+    [socket]
+  );
+
+  const renameRoom = useCallback(
+    (topic) => {
+      socket?.emit('audio:rename', { channelId: channelIdRef.current, topic });
+    },
+    [socket]
+  );
+
+  const setWallpaper = useCallback(
+    (wallpaper) => {
+      socket?.emit('audio:wallpaper', { channelId: channelIdRef.current, wallpaper });
+    },
+    [socket]
+  );
+
+  const setGamesEnabled = useCallback(
+    (enabled) => {
+      socket?.emit('audio:set-games', { channelId: channelIdRef.current, enabled });
+    },
+    [socket]
+  );
+
   const sendChat = useCallback(
     (text) => {
       const trimmed = String(text || '').trim();
@@ -346,6 +406,12 @@ export function useAudioChannel(socket, iceServers) {
     requestSpeak,
     moderate,
     grantSpeak,
+    claimSlot,
+    approveJoin,
+    denyJoin,
+    renameRoom,
+    setWallpaper,
+    setGamesEnabled,
     sendChat,
     clearError: () => setError(null),
   };

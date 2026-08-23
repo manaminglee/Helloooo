@@ -4097,14 +4097,91 @@ h1, h2, h3, .font-display {
   border-color: rgba(167, 139, 250, 0.45);
 }
 
-.mm-audio-chat-panel__send {
-  flex-shrink: 0;
-  width: 2.5rem;
-  height: 2.5rem;
-  border-radius: 0.65rem;
-  background: linear-gradient(135deg, #7c3aed, #2563eb);
-  color: #fff;
+.mm-audio-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .mm-audio-slot-grid {
+    gap: 1rem;
+  }
+}
+
+.mm-audio-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 7.5rem;
+  padding: 0.65rem 0.35rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mm-audio-slot--empty {
+  border-style: dashed;
+  border-color: rgba(167, 139, 250, 0.35);
+  color: rgba(255, 255, 255, 0.55);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.mm-audio-slot--empty:hover:not(:disabled) {
+  background: rgba(124, 58, 237, 0.12);
+  border-color: rgba(167, 139, 250, 0.55);
+}
+
+.mm-audio-slot--empty:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mm-audio-slot__placeholder {
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 1.35rem;
   font-weight: 700;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+}
+
+.mm-audio-slot__label {
+  margin-top: 0.45rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.mm-audio-slot__hint {
+  font-size: 0.6rem;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.mm-audio-royal {
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.55), 0 0 18px rgba(251, 191, 36, 0.25);
+}
+
+.mm-audio-royal--host {
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.7), 0 0 22px rgba(251, 191, 36, 0.35);
+}
+
+.mm-audio-royal--mod {
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.65), 0 0 18px rgba(56, 189, 248, 0.28);
+}
+
+.mm-audio-chat-bubble--gift {
+  border-color: rgba(251, 191, 36, 0.35) !important;
+  background: rgba(251, 191, 36, 0.08) !important;
+}
+
+.mm-audio-chat-bubble .mm-desk-bubble__ttl {
+  display: block;
+  margin-top: 0.2rem;
+  margin-left: 0;
 }
 
 .mm-landing-neural-mesh {

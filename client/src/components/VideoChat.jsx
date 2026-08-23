@@ -141,7 +141,7 @@ const EMOJIS_3D = [
   { char: '👑', label: 'Crown', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/1f451/512.webp' },
 ];
 
-const MESSAGE_TTL_SEC = 90;
+const MESSAGE_TTL_SEC = 60;
 
 const VIDEO_FILTERS = [
   { id: 'none', label: 'Normal' },

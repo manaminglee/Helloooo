@@ -27,9 +27,10 @@
  */
 
 const MAX_MEMBERS = Number(process.env.AUDIO_MAX_MEMBERS) || 24;
-const MAX_SPEAKERS = Number(process.env.AUDIO_MAX_SPEAKERS) || 8;
+const MAX_SPEAKERS = Number(process.env.AUDIO_MAX_SPEAKERS) || 6;
 const TOPIC_MAX = 48;
 const CHAT_MAX = 280;
+const WALLPAPER_MAX = 400 * 1024; // data-URL cap ~400KB
 const JOIN_WINDOW_MS = 10000;
 const JOIN_MAX = 8;
 const SIGNAL_WINDOW_MS = 10000;
@@ -75,6 +76,9 @@ function registerAudioChannels(app, io, deps) {
     memberCount: c.members.size,
     speakerCount: [...c.members.values()].filter((m) => ROLE_RANK[m.role] >= ROLE_RANK.speaker).length,
     maxMembers: c.maxMembers,
+    maxSpeakers: c.maxSpeakers,
+    gamesEnabled: !!c.gamesEnabled,
+    wallpaper: c.wallpaper || null,
     createdAt: c.createdAt,
     hasActiveGame: !!c.gameId,
   });
@@ -91,6 +95,7 @@ function registerAudioChannels(app, io, deps) {
     verified: m.verified,
     handRaised: m.handRaised,
     joinedAt: m.joinedAt,
+    slot: m.slot ?? null,
   });
 
   const channelState = (c) => ({
@@ -99,7 +104,10 @@ function registerAudioChannels(app, io, deps) {
     locked: c.locked,
     isPrivate: c.isPrivate,
     maxMembers: c.maxMembers,
-    maxSpeakers: c.maxSpeakers,
+    maxSpeakers: c.maxSpeakers || MAX_SPEAKERS,
+    gamesEnabled: c.gamesEnabled !== false,
+    wallpaper: c.wallpaper || null,
+    pendingJoins: [...(c.pendingJoins || [])],
     members: [...c.members.values()].map(memberView),
   });
 
@@ -192,8 +200,9 @@ function registerAudioChannels(app, io, deps) {
       }
     }
 
-    // First N members may speak; the rest listen until promoted.
-    const role = channel.members.size === 0 ? 'host' : speakerCount(channel) < channel.maxSpeakers ? 'speaker' : 'listener';
+    // Creator is host on stage; everyone else starts as listener until approved onto a slot.
+    const isFirst = channel.members.size === 0;
+    const role = isFirst ? 'host' : 'listener';
 
     const member = {
       socketId: socket.id,
@@ -206,6 +215,7 @@ function registerAudioChannels(app, io, deps) {
       micMuted: true, // always join muted — never surprise-broadcast a mic
       forceMuted: false,
       handRaised: false,
+      slot: isFirst ? 0 : null,
       joinedAt: Date.now(),
     };
     channel.members.set(socket.id, member);
@@ -266,6 +276,9 @@ function registerAudioChannels(app, io, deps) {
         maxSpeakers: MAX_SPEAKERS,
         members: new Map(),
         bannedIps: new Set(),
+        pendingJoins: [],
+        gamesEnabled: true,
+        wallpaper: null,
         createdAt: Date.now(),
         gameId: null,
       };
@@ -353,6 +366,132 @@ function registerAudioChannels(app, io, deps) {
       const me = channel?.members.get(socket.id);
       if (!me) return;
       me.handRaised = true;
+      const slot = Number.isInteger(data.slot) ? Math.max(0, Math.min(MAX_SPEAKERS - 1, data.slot)) : null;
+      if (slot != null) {
+        const taken = [...channel.members.values()].some((m) => m.slot === slot);
+        if (taken) return socket.emit('audio:error', { message: 'That stage slot is taken.' });
+        channel.pendingJoins = channel.pendingJoins || [];
+        channel.pendingJoins = channel.pendingJoins.filter((p) => p.socketId !== socket.id);
+        channel.pendingJoins.push({
+          socketId: socket.id,
+          nickname: me.nickname,
+          slot,
+          at: Date.now(),
+        });
+      }
+      broadcastState(channel);
+    });
+
+    on('audio:claim-slot', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      if (!me) return;
+      const slot = Math.max(0, Math.min((channel.maxSpeakers || MAX_SPEAKERS) - 1, Number(data.slot) || 0));
+      const taken = [...channel.members.values()].some((m) => m.slot === slot && m.socketId !== socket.id);
+      if (taken) return socket.emit('audio:error', { message: 'That stage slot is taken.' });
+
+      // Host can self-seat; others need approval unless they are already speaker/mod.
+      if (me.role === 'host' || (ROLE_RANK[me.role] >= ROLE_RANK.speaker && me.slot == null)) {
+        me.slot = slot;
+        if (ROLE_RANK[me.role] < ROLE_RANK.speaker) me.role = 'speaker';
+        me.handRaised = false;
+        channel.pendingJoins = (channel.pendingJoins || []).filter((p) => p.socketId !== socket.id);
+        broadcastState(channel);
+        return;
+      }
+
+      me.handRaised = true;
+      channel.pendingJoins = channel.pendingJoins || [];
+      channel.pendingJoins = channel.pendingJoins.filter((p) => p.socketId !== socket.id);
+      channel.pendingJoins.push({ socketId: socket.id, nickname: me.nickname, slot, at: Date.now() });
+      broadcastState(channel);
+      for (const m of channel.members.values()) {
+        if (ROLE_RANK[m.role] >= ROLE_RANK.moderator) {
+          io.to(m.socketId).emit('audio:join-request', { channelId: channel.id, socketId: socket.id, nickname: me.nickname, slot });
+        }
+      }
+    });
+
+    on('audio:approve-join', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      const targetId = String(data.targetSocketId || '');
+      const target = channel?.members.get(targetId);
+      if (!me || !target) return;
+      if (ROLE_RANK[me.role] < ROLE_RANK.moderator) {
+        return socket.emit('audio:error', { message: 'Only the host or co-taker can approve joins.' });
+      }
+      const pending = (channel.pendingJoins || []).find((p) => p.socketId === targetId);
+      const slot = Number.isInteger(data.slot) ? data.slot : pending?.slot;
+      if (slot == null) return socket.emit('audio:error', { message: 'No slot requested.' });
+      if (speakerCount(channel) >= channel.maxSpeakers && ROLE_RANK[target.role] < ROLE_RANK.speaker) {
+        return socket.emit('audio:error', { message: 'Stage is full.' });
+      }
+      const taken = [...channel.members.values()].some((m) => m.slot === slot && m.socketId !== targetId);
+      if (taken) return socket.emit('audio:error', { message: 'Slot already filled.' });
+      target.role = target.role === 'host' ? 'host' : 'speaker';
+      target.slot = slot;
+      target.handRaised = false;
+      target.forceMuted = false;
+      channel.pendingJoins = (channel.pendingJoins || []).filter((p) => p.socketId !== targetId);
+      broadcastState(channel);
+    });
+
+    on('audio:deny-join', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      if (!me || ROLE_RANK[me.role] < ROLE_RANK.moderator) return;
+      const targetId = String(data.targetSocketId || '');
+      channel.pendingJoins = (channel.pendingJoins || []).filter((p) => p.socketId !== targetId);
+      const target = channel.members.get(targetId);
+      if (target) target.handRaised = false;
+      broadcastState(channel);
+      io.to(targetId).emit('audio:error', { message: 'Stage join was declined.' });
+    });
+
+    on('audio:rename', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      if (!me || me.role !== 'host') {
+        return socket.emit('audio:error', { message: 'Only the room admin can rename the room.' });
+      }
+      const topic = sanitize(String(data.topic || ''), TOPIC_MAX);
+      if (!topic) return socket.emit('audio:error', { message: 'Name too short.' });
+      channel.topic = topic;
+      broadcastState(channel);
+      broadcastList();
+      io.to(channel.id).emit('audio:chat-message', {
+        channelId: channel.id,
+        id: generateId('achm'),
+        socketId: socket.id,
+        nickname: me.nickname,
+        text: `✏️ renamed the room to “${topic}”`,
+        system: true,
+        ts: Date.now(),
+      });
+    });
+
+    on('audio:wallpaper', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      if (!me || me.role !== 'host') {
+        return socket.emit('audio:error', { message: 'Only the room admin can set wallpaper.' });
+      }
+      const wallpaper = data.wallpaper == null ? null : String(data.wallpaper);
+      if (wallpaper && (!wallpaper.startsWith('data:image/') || wallpaper.length > WALLPAPER_MAX)) {
+        return socket.emit('audio:error', { message: 'Wallpaper must be a small image (max ~300KB).' });
+      }
+      channel.wallpaper = wallpaper;
+      broadcastState(channel);
+    });
+
+    on('audio:set-games', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      if (!me || me.role !== 'host') {
+        return socket.emit('audio:error', { message: 'Only the room admin can toggle games.' });
+      }
+      channel.gamesEnabled = !!data.enabled;
       broadcastState(channel);
     });
 
@@ -362,19 +501,28 @@ function registerAudioChannels(app, io, deps) {
       const target = channel?.members.get(String(data.targetSocketId || ''));
       if (!me || !target) return;
       if (ROLE_RANK[me.role] < ROLE_RANK.moderator) {
-        return socket.emit('audio:error', { message: 'Only hosts and moderators can manage speakers.' });
+        return socket.emit('audio:error', { message: 'Only hosts and co-takers can manage speakers.' });
       }
       if (data.grant) {
-        if (speakerCount(channel) >= channel.maxSpeakers) {
+        if (speakerCount(channel) >= channel.maxSpeakers && ROLE_RANK[target.role] < ROLE_RANK.speaker) {
           return socket.emit('audio:error', { message: 'Speaker slots are full.' });
         }
-        target.role = 'speaker';
+        target.role = target.role === 'host' ? 'host' : 'speaker';
         target.handRaised = false;
         target.forceMuted = false;
+        if (target.slot == null) {
+          const used = new Set([...channel.members.values()].map((m) => m.slot).filter((s) => s != null));
+          for (let i = 0; i < channel.maxSpeakers; i++) {
+            if (!used.has(i)) { target.slot = i; break; }
+          }
+        }
       } else {
+        if (target.role === 'host') return socket.emit('audio:error', { message: 'Cannot move the admin off stage this way.' });
         target.role = 'listener';
         target.micMuted = true;
+        target.slot = null;
       }
+      channel.pendingJoins = (channel.pendingJoins || []).filter((p) => p.socketId !== target.socketId);
       broadcastState(channel);
     });
 
@@ -396,16 +544,34 @@ function registerAudioChannels(app, io, deps) {
       } else if (action === 'unmute') {
         target.forceMuted = false;
       } else if (action === 'promote') {
+        if (me.role !== 'host') {
+          return socket.emit('audio:error', { message: 'Only the room admin can assign a co-taker.' });
+        }
+        // One co-taker at a time
+        for (const m of channel.members.values()) {
+          if (m.role === 'moderator') m.role = 'speaker';
+        }
         target.role = 'moderator';
+        if (target.slot == null) {
+          const used = new Set([...channel.members.values()].map((m) => m.slot).filter((s) => s != null));
+          for (let i = 0; i < channel.maxSpeakers; i++) {
+            if (!used.has(i)) { target.slot = i; break; }
+          }
+        }
       } else if (action === 'demote') {
-        target.role = 'listener';
-        target.micMuted = true;
-      } else if (action === 'kick') {
+        if (me.role !== 'host') {
+          return socket.emit('audio:error', { message: 'Only the room admin can remove a co-taker.' });
+        }
+        target.role = 'speaker';
+      } else if (action === 'kick' || action === 'block') {
         const targetIp = users.get(targetId)?.ip;
         if (targetIp) channel.bannedIps.add(targetIp);
-        io.to(targetId).emit('audio:kicked', { channelId: channel.id, reason: 'Removed by a moderator.' });
-        removeMember(channel.id, targetId, 'kicked');
-        audit?.('audio_kick', { by: me.userId, channelId: channel.id, target: target.userId });
+        io.to(targetId).emit('audio:kicked', {
+          channelId: channel.id,
+          reason: action === 'block' ? 'Blocked from this room.' : 'Removed by a moderator.',
+        });
+        removeMember(channel.id, targetId, action);
+        audit?.(`audio_${action}`, { by: me.userId, channelId: channel.id, target: target.userId });
         return;
       } else {
         return;

@@ -14,6 +14,7 @@ import { PHASE_2, PHASE_3_PRO } from '../constants/features';
 import { API_BASE } from '../config/apiBase';
 import { nextMsgId } from '../utils/uniqueId';
 import { playDing } from '../utils/sounds';
+import { useMessageTtl, formatTtl } from '../hooks/useMessageTtl';
 
 const MAX_MEDIA_SIZE_MB = 5;
 
@@ -43,6 +44,63 @@ const BlueTick = () => (
     </svg>
   </span>
 );
+
+function GroupTextVanishingRow({ m, i, messages, peers, socketId, onReply }) {
+  const timeLeft = useMessageTtl(m);
+  if (timeLeft <= 0) return null;
+
+  const isMe = m.socketId === socketId || m.fromSelf;
+  const senderIdx = [...peers, { socketId: 'me' }].findIndex((p) => p.socketId === m.socketId);
+  const accentColor = COLORS[senderIdx % COLORS.length] || '#818cf8';
+  const showAvatar = i === 0 || messages[i - 1].socketId !== m.socketId || messages[i - 1].system;
+
+  return (
+    <div className={`flex w-full items-end gap-2.5 sm:gap-3 ${isMe ? 'flex-row-reverse' : 'flex-row'} animate-bubble-pop`}>
+      <div
+        className={`w-7 h-7 sm:w-9 sm:h-9 rounded-xl flex-shrink-0 flex items-center justify-center text-xs sm:text-sm border transition-opacity duration-300 ${showAvatar ? 'opacity-100' : 'opacity-0'}`}
+        style={{ backgroundColor: `${accentColor}15`, borderColor: `${accentColor}30`, color: accentColor }}
+      >
+        {m.isCreator ? '⭐' : (isMe ? '🙋' : '👤')}
+      </div>
+      <div className={`flex flex-col gap-1 max-w-[85%] sm:max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
+        {showAvatar && (
+          <div className="flex items-center gap-1.5 px-0.5">
+            <span className="text-[10px] font-black uppercase tracking-widest opacity-40 shrink-0">
+              {isMe ? 'You' : m.nickname || 'Stranger'}
+            </span>
+            {m.isCreator && <BlueTick />}
+            <span className={`mm-desk-bubble__ttl ${timeLeft <= 10 ? 'mm-desk-bubble__ttl--warn' : ''}`}>{formatTtl(timeLeft)}</span>
+          </div>
+        )}
+        <div
+          className={`group relative px-4 py-2.5 sm:px-5 sm:py-3 rounded-2xl sm:rounded-[1.25rem] border text-sm sm:text-base transition-all ${
+            isMe
+              ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 rounded-tr-none'
+              : 'bg-[#12142a] border-white/5 text-white/90 rounded-tl-none hover:border-white/10'
+          }`}
+          style={isMe ? { background: `linear-gradient(135deg, ${accentColor}, ${accentColor}dd)` } : {}}
+        >
+          <button
+            type="button"
+            onClick={() => onReply?.(m)}
+            className={`absolute -top-3 ${isMe ? '-left-3' : '-right-3'} w-8 h-8 rounded-full bg-black/60 border border-white/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:scale-110 active:scale-90 z-20`}
+          >
+            ↩️
+          </button>
+          {m.media ? (
+            <div className="rounded-lg overflow-hidden border border-white/10 mt-1 max-w-sm">
+              {m.type === 'video' ? <video src={m.content} controls className="w-full h-auto" /> : <img src={m.content} className="w-full h-auto" alt="media" />}
+            </div>
+          ) : m.type === 'voice' ? (
+            <audio controls src={m.audio} className="max-w-full w-full mt-1" />
+          ) : (
+            m.text
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function SecurityShield() {
   return (
@@ -428,53 +486,16 @@ export default function GroupTextRoom({ roomId: roomIdProp, interest: interestPr
                 </div>
               );
 
-              const isMe = m.socketId === socket.id || m.fromSelf;
-              const senderIdx = [...peers, { socketId: 'me' }].findIndex(p => p.socketId === m.socketId);
-              const accentColor = COLORS[senderIdx % COLORS.length] || '#818cf8';
-              const showAvatar = i === 0 || messages[i-1].socketId !== m.socketId || messages[i-1].system;
-
               return (
-                <div key={m.id || i} className={`flex w-full items-end gap-2.5 sm:gap-3 ${isMe ? 'flex-row-reverse' : 'flex-row'} animate-bubble-pop`}>
-                  {/* AVATAR */}
-                  <div className={`w-7 h-7 sm:w-9 sm:h-9 rounded-xl flex-shrink-0 flex items-center justify-center text-xs sm:text-sm border transition-opacity duration-300 ${showAvatar ? 'opacity-100' : 'opacity-0'}`}
-                       style={{ backgroundColor: `${accentColor}15`, borderColor: `${accentColor}30`, color: accentColor }}>
-                    {m.isCreator ? '⭐' : (isMe ? '🙋' : '👤')}
-                  </div>
-
-                  {/* BUBBLE CONTENT */}
-                  <div className={`flex flex-col gap-1 max-w-[85%] sm:max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
-                    {showAvatar && (
-                      <div className="flex items-center gap-1.5 px-0.5">
-                        <span className="text-[10px] font-black uppercase tracking-widest opacity-40 shrink-0">
-                          {isMe ? 'You' : m.nickname || 'Stranger'}
-                        </span>
-                        {m.isCreator && <BlueTick />}
-                      </div>
-                    )}
-
-                    <div className={`group relative px-4 py-2.5 sm:px-5 sm:py-3 rounded-2xl sm:rounded-[1.25rem] border text-sm sm:text-base transition-all ${
-                      isMe 
-                      ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 rounded-tr-none' 
-                      : 'bg-[#12142a] border-white/5 text-white/90 rounded-tl-none hover:border-white/10'
-                    }`} style={isMe ? { background: `linear-gradient(135deg, ${accentColor}, ${accentColor}dd)` } : {}}>
-                      
-                      {/* Interaction Tools */}
-                      <button 
-                        onClick={() => setReplyingTo(m)}
-                        className={`absolute -top-3 ${isMe ? '-left-3' : '-right-3'} w-8 h-8 rounded-full bg-black/60 border border-white/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:scale-110 active:scale-90 z-20`}
-                      >↩️</button>
-
-                      {/* Msg Body */}
-                      {m.media ? (
-                         <div className="rounded-lg overflow-hidden border border-white/10 mt-1 max-w-sm">
-                            {m.type === 'video' ? <video src={m.content} controls className="w-full h-auto" /> : <img src={m.content} className="w-full h-auto" alt="media" />}
-                         </div>
-                      ) : m.type === 'voice' ? (
-                         <audio controls src={m.audio} className="max-w-full w-full mt-1" />
-                      ) : m.text}
-                    </div>
-                  </div>
-                </div>
+                <GroupTextVanishingRow
+                  key={m.id || i}
+                  m={m}
+                  i={i}
+                  messages={messages}
+                  peers={peers}
+                  socketId={socket.id}
+                  onReply={setReplyingTo}
+                />
               );
             })}
             <div ref={chatEndRef} />

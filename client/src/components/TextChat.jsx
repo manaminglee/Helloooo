@@ -112,12 +112,12 @@ function MessageSpark({ x, y }) {
 
 function VanishingMessage({ m, isMe, onReply }) {
   const { vanishMessages } = usePrefs();
-  const [timeLeft, setTimeLeft] = useState(90);
+  const [timeLeft, setTimeLeft] = useState(60);
 
   useEffect(() => {
     if (m.system || !vanishMessages) return;
     const age = Math.floor((Date.now() - (m.ts || Date.now())) / 1000);
-    const rem = Math.max(0, 90 - age);
+    const rem = Math.max(0, 60 - age);
     setTimeLeft(rem);
 
     if (rem <= 0) return;
