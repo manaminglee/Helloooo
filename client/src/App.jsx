@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, Suspense } from 'react';
 import { LandingPage } from './components/LandingPage';
 import { AgeVerificationGate } from './components/AgeVerificationGate';
 import { CreatorPublicProfile } from './components/CreatorPublicProfile';
@@ -12,17 +12,18 @@ import { useSocket } from './hooks/useSocket';
 import { useCoins } from './hooks/useCoins';
 import { loadReconnectSession, clearReconnectSession, saveReconnectSession } from './utils/reconnectSession';
 import { API_BASE } from './config/apiBase';
+import { lazyRetry, clearChunkReloadFlag } from './utils/lazyRetry';
 // Lazy load off-screen and secondary modules for extreme performance
-const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
-const TextChat = lazy(() => import('./components/TextChat'));
-const GroupVideoRoom = lazy(() => import('./components/GroupVideoRoom'));
-const GroupTextRoom = lazy(() => import('./components/GroupTextRoom'));
+const AdminDashboard = lazyRetry(() => import('./components/AdminDashboard'));
+const TextChat = lazyRetry(() => import('./components/TextChat'));
+const GroupVideoRoom = lazyRetry(() => import('./components/GroupVideoRoom'));
+const GroupTextRoom = lazyRetry(() => import('./components/GroupTextRoom'));
 // Group text is superseded by live voice channels (with the shared coin race).
-const GroupAudioRoom = lazy(() => import('./components/GroupAudioRoom'));
-const GiftOverlayLazy = lazy(() =>
+const GroupAudioRoom = lazyRetry(() => import('./components/GroupAudioRoom'));
+const GiftOverlayLazy = lazyRetry(() =>
   import('./components/GiftDrawer').then((m) => ({ default: m.GiftOverlay }))
 );
-const VideoChat = lazy(() => import('./components/VideoChat'));
+const VideoChat = lazyRetry(() => import('./components/VideoChat'));
 
 const LoadingFallback = () => (
   <div className="flex items-center justify-center min-h-[50vh] w-full">
@@ -77,6 +78,9 @@ function AppShell() {
     [coinState, adsEnabled, adScripts]
   );
 
+  useEffect(() => {
+    clearChunkReloadFlag();
+  }, []);
 
   useEffect(() => {
     const path = window.location.pathname || '/';

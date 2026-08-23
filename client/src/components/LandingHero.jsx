@@ -1,7 +1,8 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense } from 'react';
 import { HellooooLockup, HELLOOOO_EMOJI } from './HellooooBrand';
+import { lazyRetry } from '../utils/lazyRetry';
 
-const HeroScene3D = lazy(() => import('./three/HeroScene3D'));
+const HeroScene3D = lazyRetry(() => import('./three/HeroScene3D'));
 
 /**
  * Redesigned landing hero — mobile-first.

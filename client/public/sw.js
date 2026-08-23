@@ -1,5 +1,5 @@
 /* Helloooo - Service Worker (static assets only) */
-const CACHE = 'helloooo-static-v9';
+const CACHE = 'helloooo-static-v10';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
@@ -11,6 +11,18 @@ self.addEventListener('activate', (e) => {
   );
   self.clients.claim();
 });
+
+function canCacheAsset(pathname, contentType) {
+  if (!contentType) return false;
+  const ct = contentType.toLowerCase();
+  // Never cache HTML as JS/CSS (SPA fallback mistake)
+  if (ct.includes('text/html')) return false;
+  if (pathname.match(/\.js$/i)) return ct.includes('javascript') || ct.includes('ecmascript');
+  if (pathname.match(/\.css$/i)) return ct.includes('text/css');
+  if (pathname.match(/\.(png|jpg|jpeg|svg|ico|webp)$/i)) return ct.includes('image');
+  if (pathname.match(/\.woff2?$/i)) return ct.includes('font') || ct.includes('woff');
+  return false;
+}
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;
@@ -34,12 +46,13 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  if (!url.pathname.match(/\.(js|css|woff2?|png|jpg|svg|ico|webp)$/i)) return;
+  if (!url.pathname.match(/\.(js|css|woff2?|png|jpg|jpeg|svg|ico|webp)$/i)) return;
 
   e.respondWith(
     fetch(req)
       .then((res) => {
-        if (res.ok && res.type === 'basic') {
+        const type = res.headers.get('content-type') || '';
+        if (res.ok && res.type === 'basic' && canCacheAsset(url.pathname, type)) {
           const copy = res.clone();
           caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});
         }
