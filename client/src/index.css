@@ -2598,6 +2598,11 @@ h1, h2, h3, .font-display {
   min-height: 0;
   display: flex;
   overflow: hidden;
+  transition: gap 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mm-group-desk-body--chat-collapsed .mm-group-desk-stage {
+  flex: 1 1 auto;
 }
 
 .mm-group-desk-stage {
@@ -2608,6 +2613,7 @@ h1, h2, h3, .font-display {
   display: flex;
   flex-direction: column;
   position: relative;
+  transition: flex 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .mm-group-desk-grid {
@@ -2634,6 +2640,16 @@ h1, h2, h3, .font-display {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: #000;
   overflow: hidden;
+}
+
+.mm-group-desk-tile video,
+.mm-group-desk-grid .video-tile video,
+.mm-group-mobile-grid .video-tile video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .mm-group-desk-tile--speaking {
@@ -2786,6 +2802,18 @@ h1, h2, h3, .font-display {
   min-height: 0;
   background: rgba(6, 8, 14, 0.95);
   border-left: 1px solid rgba(255, 255, 255, 0.06);
+  animation: mmGroupChatIn 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes mmGroupChatIn {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .mm-group-desk-chat__head {
@@ -3183,9 +3211,8 @@ h1, h2, h3, .font-display {
 
 .mm-group-mobile-grid {
   flex: 1 1 auto;
+  min-height: 0;
   height: auto;
-  min-height: min(46dvh, 18rem);
-  max-height: 55dvh;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(0, 1fr));
@@ -3193,6 +3220,18 @@ h1, h2, h3, .font-display {
   padding: 0.45rem 0.5rem;
   position: relative;
   background: rgba(0, 0, 0, 0.35);
+  transition: flex 0.38s cubic-bezier(0.4, 0, 0.2, 1), max-height 0.38s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mm-group-mobile-main--chat-open .mm-group-mobile-grid {
+  flex: 0 0 42%;
+  min-height: 10.5rem;
+  max-height: 45%;
+}
+
+.mm-group-mobile-main:not(.mm-group-mobile-main--chat-open) .mm-group-mobile-grid {
+  flex: 1 1 auto;
+  max-height: none;
 }
 
 .mm-group-mobile-grid .mm-group-status-stack {
@@ -3216,6 +3255,7 @@ h1, h2, h3, .font-display {
   background: rgba(10, 12, 20, 0.95);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   overflow: hidden;
+  transition: flex 0.38s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .mm-group-mobile-chat--collapsed {

@@ -223,11 +223,11 @@ function VideoTile({ stream, label, country, flag, isMe, isEmpty, isSearching, i
   const showLogoInsteadOfVideo = !streamLive;
 
   return (
-    <div className={`video-tile min-h-0 min-w-0 transition-all duration-500 overflow-hidden ${deskStyle ? 'mm-group-desk-tile' : ''} ${isMe ? 'mirror' : ''} ${isActiveSpeaker && !deskStyle ? 'ring-4 ring-violet-500/40 ring-inset shadow-[0_0_30px_rgba(167,139,250,0.2)] scale-[1.02] z-10' : deskStyle && isActiveSpeaker ? 'mm-group-desk-tile--speaking' : 'brightness-90 hover:brightness-100'}`}>
+    <div className={`video-tile relative min-h-0 min-w-0 transition-all duration-500 overflow-hidden ${deskStyle ? 'mm-group-desk-tile' : ''} ${isMe ? 'mirror' : ''} ${isActiveSpeaker && !deskStyle ? 'ring-4 ring-violet-500/40 ring-inset shadow-[0_0_30px_rgba(167,139,250,0.2)] scale-[1.02] z-10' : deskStyle && isActiveSpeaker ? 'mm-group-desk-tile--speaking' : 'brightness-90 hover:brightness-100'}`}>
       {showLogoInsteadOfVideo ? (
         <VideoLogoPlaceholder label={isMe ? 'Camera starting…' : 'Reconnecting…'} compact />
       ) : (
-        <video ref={ref} autoPlay playsInline muted={isMe} className="w-full h-full object-contain bg-black" />
+        <video ref={ref} autoPlay playsInline muted={isMe} className="absolute inset-0 w-full h-full object-cover bg-black" />
       )}
 
       <VideoWatermark />
@@ -395,10 +395,10 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const [showProfileHandle, setShowProfileHandle] = useState(null);
   const [showRating, setShowRating] = useState(false);
   const [ratingDone, setRatingDone] = useState(false);
-  const [chatCollapsed, setChatCollapsed] = useState(false);
+  const [chatCollapsed, setChatCollapsed] = useState(true);
   const [chatUnread, setChatUnread] = useState(0);
   const [peerRecording, setPeerRecording] = useState(false);
-  const [showSafetyNudge, setShowSafetyNudge] = useState(() => !sessionStorage.getItem('mm_group_video_safety_seen'));
+  const [showSafetyNudge, setShowSafetyNudge] = useState(false);
   const [videoDevices, setVideoDevices] = useState([]);
   const [audioDevices, setAudioDevices] = useState([]);
   const chatPanelRef = useRef(null);
@@ -485,7 +485,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   useChatSwipeCollapse(chatPanelRef, () => isMobile && setChatCollapsed(true));
 
   useEffect(() => {
-    if (showChat && !chatCollapsed) setChatUnread(0);
+    if (!chatCollapsed) setChatUnread(0);
   }, [showChat, chatCollapsed]);
 
   useEffect(() => {
@@ -522,6 +522,19 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     onTipCreator: p.isCreator ? () => { setTipTargetSid(p.socketId); setShowTipModal(true); } : undefined,
     canTip: balance >= 10,
   });
+
+  const toggleGroupChat = () => {
+    if (!chatCollapsed) {
+      setChatCollapsed(true);
+      return;
+    }
+    setChatCollapsed(false);
+    setShowChat(true);
+    setChatUnread(0);
+    requestAnimationFrame(() => {
+      chatPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  };
 
   const dismissSafetyNudge = () => {
     sessionStorage.setItem('mm_group_video_safety_seen', '1');
@@ -1295,7 +1308,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         }
         if (data.socketId !== socket.id) {
           playMessageSound();
-          if (isMobile && (!showChat || chatCollapsed)) setChatUnread((n) => n + 1);
+          if (chatCollapsed) setChatUnread((n) => n + 1);
         }
       }
     };
@@ -1862,7 +1875,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
             </div>
           </header>
 
-          <main className="mm-group-desk-body">
+          <main className={`mm-group-desk-body ${chatCollapsed ? 'mm-group-desk-body--chat-collapsed' : ''}`}>
             <div className="mm-group-desk-stage">
               {statusBanners}
               {isRecording && isCreator && <RecordingIndicator />}
@@ -1905,6 +1918,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               </div>
             </div>
 
+            {!chatCollapsed && (
             <aside ref={chatPanelRef} className="mm-group-desk-chat">
               <div className="mm-group-desk-chat__head">
                 <span className="mm-group-desk-chat__head-title">Group Chat</span>
@@ -1916,6 +1930,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                   {PHASE_3_PRO.miniChatGames && (roomIdRef.current || roomId) && (
                     <button type="button" onClick={() => setShowGameModal(true)} className="opacity-60 hover:opacity-100" title="Mini game">🎲</button>
                   )}
+                  <button type="button" onClick={() => setChatCollapsed(true)} className="opacity-60 hover:opacity-100" title="Close chat" aria-label="Close chat">✕</button>
                 </div>
               </div>
               <div id="group-video-chat-messages" className="mm-group-desk-chat__messages custom-scrollbar">
@@ -1939,6 +1954,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                 </button>
               </div>
             </aside>
+            )}
           </main>
 
           <footer className="mm-group-desk-toolbar">
@@ -1957,10 +1973,10 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               Share
               <span className="mm-group-desk-tool__chev">▾</span>
             </button>
-            <button type="button" className="mm-group-desk-tool mm-group-desk-tool--active" onClick={() => chatPanelRef.current?.querySelector('.mm-group-desk-chat__input')?.focus()}>
+            <button type="button" className={`mm-group-desk-tool ${!chatCollapsed ? 'mm-group-desk-tool--active' : ''}`} onClick={toggleGroupChat}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
               Chat
-              {chatUnread > 0 && <span className="mm-group-desk-tool__dot" />}
+              {chatUnread > 0 && chatCollapsed && <span className="mm-group-desk-tool__dot" />}
             </button>
             <button type="button" className="mm-group-desk-tool" title={`${participantCount} participants`}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
@@ -2022,7 +2038,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
             </div>
           </header>
 
-          <main className="mm-group-mobile-main">
+          <main className={`mm-group-mobile-main ${!chatCollapsed ? 'mm-group-mobile-main--chat-open' : ''}`}>
             <div className="mm-group-mobile-grid">
               {statusBanners}
               {isRecording && isCreator && <RecordingIndicator />}
@@ -2134,7 +2150,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
             </button>
             <button
               type="button"
-              onClick={() => { setChatCollapsed(false); setShowChat(true); chatPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }}
+              onClick={toggleGroupChat}
               className={`mm-mobile-bar__item ${!chatCollapsed ? 'mm-mobile-bar__item--active' : ''}`}
             >
               <span className="mm-mobile-bar__icon mm-mobile-bar__icon--blue relative">
@@ -2402,15 +2418,6 @@ function RemoteVideoTile({ stream, socketId }) {
   return (
     <div className="absolute inset-0 w-full h-full bg-[#0c0e1a] overflow-hidden">
       <video ref={ref} autoPlay playsInline className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ${isPlaying && hasVideo ? 'opacity-100' : 'opacity-0'}`} />
-
-      {/* WATERMARKS & AI STATUS */}
-      <div className="absolute top-4 left-4 z-50 flex items-center gap-3">
-        <div className="ai-status-dot" />
-        <div className="glass-watermark">AI MONITOR ACTIVE</div>
-      </div>
-      <div className="absolute bottom-4 right-4 z-50">
-        <div className="glass-watermark"><HellooooBrand size="sm" /></div>
-      </div>
 
       {(!isPlaying || !hasVideo) && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-indigo-500/10">
