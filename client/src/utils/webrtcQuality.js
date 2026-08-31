@@ -39,10 +39,16 @@ export function bootVideoConstraints(facingMode = 'user', audioDeviceId = null) 
       height: { ideal: q.height, max: 720 },
       frameRate: { ideal: q.frameRate, max: 30 },
     },
+    // Prefer ideal — exact deviceId fails hard when the device disappears and
+    // was also restarting getUserMedia every time enumerateDevices auto-selected an id.
     audio: audioDeviceId
-      ? { deviceId: { exact: audioDeviceId }, echoCancellation: true, noiseSuppression: true }
+      ? { deviceId: { ideal: audioDeviceId }, echoCancellation: true, noiseSuppression: true }
       : { echoCancellation: true, noiseSuppression: true },
   };
+}
+
+export function streamHasLiveTracks(stream) {
+  return !!stream?.getTracks?.().some((t) => t.readyState === 'live');
 }
 
 export async function applyCaptureQuality(stream, tier = 'boot') {

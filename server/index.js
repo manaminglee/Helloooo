@@ -853,17 +853,22 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 
+// One origin allowlist for BOTH HTTP CORS and Socket.IO CORS. Keeping these in
+// sync matters: a domain allowed over HTTP but not for sockets shows up to
+// users as an endless "connecting…" state.
+const ALLOWED_ORIGINS = NODE_ENV === 'production'
+  ? [
+    'https://helloooo.site',
+    'https://www.helloooo.site',
+    'https://manamingle.site',
+    'https://www.manamingle.site',
+    process.env.FRONTEND_ORIGIN,
+    'http://localhost:5173',
+  ].filter(Boolean)
+  : true;
+
 app.use(cors({
-  origin: NODE_ENV === 'production'
-    ? [
-      'https://helloooo.site',
-      'https://www.helloooo.site',
-      'https://manamingle.site',
-      'https://www.manamingle.site',
-      process.env.FRONTEND_ORIGIN,
-      'http://localhost:5173',
-    ].filter(Boolean)
-    : true,
+  origin: ALLOWED_ORIGINS,
   credentials: true,
 }));
 
@@ -899,6 +904,16 @@ const creatorLoginLimiter = rateLimit({
   message: { error: 'Too many login attempts. Try again in 15 minutes.' },
   standardHeaders: true,
 });
+
+// AI endpoints proxy to a paid external provider; the generic 120/min limit is
+// too loose for calls that cost money per request. Cap them tightly per IP.
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: { error: 'AI is busy. Please slow down and try again shortly.' },
+  standardHeaders: true,
+});
+app.use('/api/ai', aiLimiter);
 
 // Public settings (for client feature flags like ads, dev tools, ad HTML slots)
 app.get('/api/settings', (req, res) => {
@@ -1036,6 +1051,11 @@ app.post('/api/admin/terminate-user', requireAdmin, (req, res) => {
 
 // Debug: Supabase connection status (safe - no secrets exposed)
 app.get('/api/debug/status', async (req, res) => {
+  // Operational detail (storage backend, unique-IP counts) is admin-only in
+  // production; /health stays public for the platform health check.
+  if (NODE_ENV === 'production' && !isAdminRequest(req)) {
+    return res.status(404).json({ error: 'Not found' });
+  }
   const result = {
     supabase_client_initialized: !!supabase,
     storage_mode: supabase ? 'supabase' : 'local_json',
@@ -1590,39 +1610,57 @@ app.post('/api/creators/withdraw', async (req, res) => {
     const { creator, ip } = await getApprovedCreatorForRequest(req);
     if (!creator || creator.status !== 'approved') return res.status(403).json({ error: 'Unauthorized' });
     await linkCreatorIpIfNeeded(creator, ip);
-    if ((creator.coins_earned || 0) < MIN_CREATOR_WITHDRAWAL_COINS) {
-      return res.status(400).json({ error: `Minimum ${MIN_CREATOR_WITHDRAWAL_COINS} coins required for withdrawal.` });
-    }
 
-    const coinsToWithdraw = creator.coins_earned || 0;
-    const withdrawal = {
-      id: generateId('wd'),
-      creator_id: creator.id,
-      handle_name: creator.handle_name,
-      upi: upiCheck.upi,
-      amount: coinsToWithdraw,
-      amount_rs: creatorSecurity.computeEarningsRs(coinsToWithdraw),
-      coins_spent: coinsToWithdraw,
-      status: 'pending',
-      admin_note: null,
-      created_at: new Date().toISOString()
-    };
+    // Critical section: check balance + no-pending, insert the withdrawal, and
+    // zero the balance. This MUST be serialized per creator — two concurrent
+    // requests could otherwise both pass the pending/balance checks and each
+    // insert a full-balance withdrawal before either zeroed it (TOCTOU
+    // double-spend of real money). runLocked (per-key mutex) serializes them.
+    const runCritical = async () => {
+      // Re-read the authoritative balance inside the lock, never trust the
+      // snapshot read before the lock was acquired.
+      let freshCoins = creator.coins_earned || 0;
+      if (supabase) {
+        const { data: fresh } = await supabase.from('creators').select('coins_earned').eq('id', creator.id).maybeSingle();
+        if (fresh) freshCoins = fresh.coins_earned || 0;
+      } else {
+        const fresh = localDb.creators.find((c) => c.id === creator.id);
+        if (fresh) freshCoins = fresh.coins_earned || 0;
+      }
 
-    if (supabase) {
-      const { data: pending } = await supabase.from('withdrawals').select('id').eq('creator_id', creator.id).eq('status', 'pending').limit(1);
-      if (pending?.length) return res.status(400).json({ error: 'You already have a pending withdrawal request.' });
-      await supabase.from('withdrawals').insert(withdrawal);
-      await supabase.from('creators').update({ coins_earned: 0, earnings_rs: 0 }).eq('id', creator.id);
-      await creatorSecurity.logCreatorEvent(supabase, localDb, saveLocalDb, {
-        creatorId: creator.id,
-        eventType: 'withdrawal_requested',
-        amount: -coinsToWithdraw,
-        details: `Withdrawal queued (${upiCheck.upi})`,
-      });
-    } else {
-      const pending = (localDb.withdrawals || []).find(w => w.creator_id === creator.id && w.status === 'pending');
-      if (pending) return res.status(400).json({ error: 'You already have a pending withdrawal request.' });
-      localDb.withdrawals.push(withdrawal);
+      if (freshCoins < MIN_CREATOR_WITHDRAWAL_COINS) {
+        return { status: 400, body: { error: `Minimum ${MIN_CREATOR_WITHDRAWAL_COINS} coins required for withdrawal.` } };
+      }
+
+      const coinsToWithdraw = freshCoins;
+      const withdrawal = {
+        id: generateId('wd'),
+        creator_id: creator.id,
+        handle_name: creator.handle_name,
+        upi: upiCheck.upi,
+        amount: coinsToWithdraw,
+        amount_rs: creatorSecurity.computeEarningsRs(coinsToWithdraw),
+        coins_spent: coinsToWithdraw,
+        status: 'pending',
+        admin_note: null,
+        created_at: new Date().toISOString()
+      };
+
+      if (supabase) {
+        const { data: pending } = await supabase.from('withdrawals').select('id').eq('creator_id', creator.id).eq('status', 'pending').limit(1);
+        if (pending?.length) return { status: 400, body: { error: 'You already have a pending withdrawal request.' } };
+        await supabase.from('withdrawals').insert(withdrawal);
+        await supabase.from('creators').update({ coins_earned: 0, earnings_rs: 0 }).eq('id', creator.id);
+      } else {
+        const pending = (localDb.withdrawals || []).find(w => w.creator_id === creator.id && w.status === 'pending');
+        if (pending) return { status: 400, body: { error: 'You already have a pending withdrawal request.' } };
+        localDb.withdrawals.push(withdrawal);
+        const freshLocal = localDb.creators.find((c) => c.id === creator.id) || creator;
+        freshLocal.coins_earned = 0;
+        freshLocal.earnings_rs = 0;
+        saveLocalDb();
+      }
+      // Keep the in-memory snapshot consistent with the persisted state.
       creator.coins_earned = 0;
       creator.earnings_rs = 0;
       await creatorSecurity.logCreatorEvent(supabase, localDb, saveLocalDb, {
@@ -1631,9 +1669,13 @@ app.post('/api/creators/withdraw', async (req, res) => {
         amount: -coinsToWithdraw,
         details: `Withdrawal queued (${upiCheck.upi})`,
       });
-      saveLocalDb();
-    }
-    res.json({ success: true, message: 'Withdrawal request submitted. Admin will review within 48 hours.' });
+      return { status: 200, body: { success: true, message: 'Withdrawal request submitted. Admin will review within 48 hours.' } };
+    };
+
+    const out = economy?.runLocked
+      ? await economy.runLocked(`withdraw:${creator.id}`, runCritical)
+      : await runCritical();
+    return res.status(out.status).json(out.body);
   } catch (e) { res.status(500).json({ error: 'Withdrawal request failed' }); }
 });
 
@@ -2043,6 +2085,9 @@ app.post('/api/creators/verify-ref', async (req, res) => {
 
 /** Public: whether TURN is configured (no secrets) */
 app.get('/api/debug/webrtc-config', (req, res) => {
+  if (NODE_ENV === 'production' && !isAdminRequest(req)) {
+    return res.status(404).json({ error: 'Not found' });
+  }
   const turnUrl = (process.env.TURN_URL || '').trim();
   const turnUser = (process.env.TURN_USERNAME || '').trim();
   const turnPass = (process.env.TURN_PASSWORD || '').trim();
@@ -2307,10 +2352,14 @@ app.post('/api/creators/follow', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Follow failed' }); }
 });
 
-app.use('/api', (req, res, next) => {
-  console.log(`[API_TRACE] ${req.method} ${req.originalUrl}`);
-  next();
-});
+// Request tracing is a development aid only. In production it floods the log
+// budget and echoes query strings that can carry creator ids / reset tokens.
+if (NODE_ENV !== 'production') {
+  app.use('/api', (req, res, next) => {
+    console.log(`[API_TRACE] ${req.method} ${req.path}`);
+    next();
+  });
+}
 
 // Get active interests for group chats
 app.get('/api/rooms/active-interests', (req, res) => {
@@ -2656,9 +2705,9 @@ app.get('/api/turn', (req, res) => {
       country = geoip.lookup(clean)?.country || '';
     } catch { /* ignore */ }
   }
-  const { iceServers, region } = buildIceServers({ country, region: qRegion });
+  const { iceServers, region, relay } = buildIceServers({ country, region: qRegion });
   res.set('Cache-Control', 'private, max-age=60');
-  res.json({ iceServers, region, country: country || null });
+  res.json({ iceServers, region, relay, country: country || null });
 });
 
 // COIN SYSTEM API
@@ -2880,12 +2929,18 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   path: '/socket.io',
-  cors: { origin: NODE_ENV === 'production' ? process.env.FRONTEND_ORIGIN || true : true, credentials: true },
+  // Same allowlist as HTTP CORS — never fall back to "any origin" in
+  // production, and never reject a domain the HTTP API already allows.
+  cors: { origin: ALLOWED_ORIGINS, credentials: true },
   pingTimeout: 60000,
   pingInterval: 25000,
   connectTimeout: 45000,
   allowEIO3: true
 });
+
+// Channel lookup shared with enhancements (share links) and economy (gift
+// membership checks) — filled once audioChannels registers below.
+const audioChannelLookup = { get: (_id) => null };
 
 const enhancements = registerEnhancements(app, io, {
   rooms,
@@ -2901,6 +2956,7 @@ const enhancements = registerEnhancements(app, io, {
   addUserToRoom,
   removeUserFromRoom,
   saveRating: (payload) => persistence.saveRating(payload),
+  getAudioChannel: (id) => audioChannelLookup.get(id),
 });
 
 const uniqueFeatures = registerUniqueFeatures(app, io, {
@@ -2918,7 +2974,15 @@ app.get('/api/pro/status', async (req, res) => {
   res.json(status);
 });
 
-app.post('/api/pro/activate', async (req, res) => {
+// Pro codes grant paid features; cap activation attempts per IP so a valid code
+// can't be found by brute force (the global 120/min limit is far too loose here).
+const proActivateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  message: { ok: false, error: 'Too many activation attempts. Try again later.' },
+  standardHeaders: true,
+});
+app.post('/api/pro/activate', proActivateLimiter, async (req, res) => {
   const ip = getClientIp(req);
   const code = String(req.body?.code || '').trim();
   if (!code) return res.status(400).json({ ok: false, error: 'Code required' });
@@ -2964,9 +3028,6 @@ const moderation = registerModeration(app, io, {
   nvidiaAi,
   ADMIN_ROOM,
 });
-
-// Channel lookup for gift membership checks — filled after audioChannels registers.
-const audioChannelLookup = { get: (_id) => null };
 
 economy = registerEconomy(app, io, {
   users,
@@ -3760,6 +3821,16 @@ io.on('connection', (socket) => {
     const target = users.get(targetSocketId);
     if (!target?.isCreator || !target.creatorData?.id) {
       return socket.emit('error', { message: 'Tip target is not a verified creator.' });
+    }
+    // Self-tip guard: tipping converts free/spendable coins into the creator's
+    // withdrawable `coins_earned` (real money). A creator tipping their own
+    // account from a second tab would launder promotional coins into cash, so
+    // block a tip to yourself (same socket) or to your own creator account.
+    if (targetSocketId === socket.id) {
+      return socket.emit('error', { message: 'You cannot tip yourself.' });
+    }
+    if (sender?.creatorData?.id && sender.creatorData.id === target.creatorData.id) {
+      return socket.emit('error', { message: 'You cannot tip your own creator account.' });
     }
     const amount = Math.min(Math.max(Math.floor(Number(rawAmount) || 0), 1), 500);
     if (amount <= 0) return;

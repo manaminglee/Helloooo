@@ -89,7 +89,7 @@ function StageAvatar({ member, speaking, size = 'lg', onGiftTap }) {
         if (member && onGiftTap) onGiftTap(member);
       }}
       className={`${dim} rounded-full grid place-items-center font-bold text-white relative transition-all duration-200 ${royal} ${
-        speaking ? 'bg-emerald-500/25 ring-2 ring-emerald-400 scale-105' : live ? 'bg-emerald-500/15 ring-2 ring-emerald-400/50' : 'bg-white/[0.07] ring-1 ring-white/10'
+        speaking ? 'mm-audio-avatar--speaking bg-emerald-500/25 ring-2 ring-emerald-400 scale-105' : live ? 'bg-emerald-500/15 ring-2 ring-emerald-400/50' : 'bg-white/[0.07] ring-1 ring-white/10'
       }`}
       title={onGiftTap ? `Gift ${member?.nickname}` : member?.nickname}
     >
@@ -202,6 +202,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
   const [chatInput, setChatInput] = useState('');
   const [wallpaperBusy, setWallpaperBusy] = useState(false);
   const [wallpaperMsg, setWallpaperMsg] = useState(null);
+  const [uiMsg, setUiMsg] = useState(null);
   const chatEndRef = useRef(null);
   const wallpaperInputRef = useRef(null);
   const liveCameraRef = useRef(null);
@@ -263,7 +264,12 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
   const isHost = me?.role === 'host';
   const isMod = me?.role === 'moderator';
   const canModerate = isHost || isMod;
-  const listeners = members.filter((m) => m.role === 'listener');
+  // Raised hands float to the front so a moderator sees who is waiting
+  // without scanning the whole audience.
+  const listeners = members
+    .filter((m) => m.role === 'listener')
+    .sort((a, b) => (b.handRaised ? 1 : 0) - (a.handRaised ? 1 : 0));
+  const raisedHands = listeners.filter((m) => m.handRaised).length;
   const pendingJoins = channel?.pendingJoins || [];
   const maxSlots = channel?.maxSpeakers || STAGE_SLOTS;
 
@@ -290,6 +296,61 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
     if (channel?.topic) setRenameValue(channel.topic);
   }, [channel?.topic]);
 
+  useEffect(() => {
+    if (!uiMsg) return undefined;
+    const t = setTimeout(() => setUiMsg(null), 2600);
+    return () => clearTimeout(t);
+  }, [uiMsg]);
+
+  // Keyboard shortcuts for the live room:
+  //   M / Space  toggle mic (speakers only)      Esc  leave the room
+  const micRef = useRef(null);
+  const leaveRef = useRef(null);
+  useEffect(() => {
+    if (!channel) return undefined;
+    const handler = (e) => {
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        leaveRef.current?.();
+        return;
+      }
+      // Space must still activate a focused button (keyboard a11y) — only
+      // treat it as push-to-talk when nothing interactive has focus.
+      const focused = document.activeElement;
+      const focusInteractive = !!focused && focused !== document.body
+        && /^(BUTTON|A|SELECT|SUMMARY)$/.test(focused.tagName);
+      if (e.code === 'KeyM' || (e.code === 'Space' && !focusInteractive)) {
+        e.preventDefault();
+        micRef.current?.();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [channel]);
+
+  const shareRoom = async () => {
+    const rid = channel?.channelId || channel?.id;
+    if (!rid) return;
+    const url = `${window.location.origin}/join/${rid}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: channel.topic || 'Live voice room', text: 'Join my live voice room 🎙️', url });
+        return;
+      } catch {
+        return; // user closed the share sheet
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setUiMsg('Invite link copied — send it to friends');
+    } catch {
+      setUiMsg(url);
+    }
+  };
+
   const handleSendChat = () => {
     if (!chatInput.trim()) return;
     sendChat(chatInput);
@@ -303,6 +364,10 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
     leave();
     onExit?.();
   };
+
+  leaveRef.current = handleLeave;
+  // Listeners have no mic to toggle — the shortcut asks for a seat instead.
+  micRef.current = me && me.role !== 'listener' ? toggleMic : null;
 
   const ensureLiveCamera = async () => {
     if (liveCameraRef.current) return liveCameraRef.current;
@@ -439,9 +504,21 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
       <header className="mm-audio-room-header">
         <div className="min-w-0">
           <h2 className="text-base sm:text-lg font-bold truncate">{channel.topic}</h2>
-          <p className="text-[11px] text-white/40">{members.length} here · {slots.filter(Boolean).length}/{maxSlots} on stage</p>
+          <p className="text-[11px] text-white/40">
+            {members.length} here · {slots.filter(Boolean).length}/{maxSlots} on stage
+            {raisedHands > 0 && <span className="text-amber-300 font-semibold"> · ✋ {raisedHands} waiting</span>}
+          </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={shareRoom}
+            className="mm-btn mm-btn--ghost !px-3 !py-1.5 !text-xs"
+            title="Share invite link"
+            aria-label="Share invite link"
+          >
+            🔗 Invite
+          </button>
           {canModerate && (
             <button type="button" onClick={() => setAdminOpen(true)} className={`mm-audio-role-pill ${isHost ? 'mm-audio-role-pill--host' : 'mm-audio-role-pill--mod'}`}>
               {isHost ? '👑 Admin' : '🛡️ Co-taker'}
@@ -455,6 +532,12 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
         <div className="mx-4 mb-2 flex items-center justify-between gap-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-2.5">
           <span className="text-xs text-amber-100">{error}</span>
           <button type="button" onClick={clearError} className="text-amber-100/70 text-lg leading-none px-1">×</button>
+        </div>
+      )}
+
+      {uiMsg && (
+        <div className="mx-4 mb-2 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-2.5">
+          <span className="text-xs text-emerald-100 break-all">{uiMsg}</span>
         </div>
       )}
 
@@ -496,10 +579,21 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
 
           {listeners.length > 0 && (
             <>
-              <h3 className="mm-audio-panel-label mt-5">Viewing · {listeners.length}</h3>
+              <h3 className="mm-audio-panel-label mt-5">
+                Viewing · {listeners.length}
+                {raisedHands > 0 && <span className="text-amber-300"> · {raisedHands} raised hand{raisedHands > 1 ? 's' : ''}</span>}
+              </h3>
               <div className="flex flex-wrap gap-2">
                 {listeners.map((m) => (
-                  <div key={m.socketId} className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-white/5 border border-white/8 text-[10px] text-white/60">
+                  <div
+                    key={m.socketId}
+                    className={`flex items-center gap-1.5 px-2 py-1 rounded-full border text-[10px] ${
+                      m.handRaised
+                        ? 'bg-amber-400/12 border-amber-300/35 text-amber-100'
+                        : 'bg-white/5 border-white/8 text-white/60'
+                    }`}
+                  >
+                    {m.handRaised && <span aria-label="Hand raised" title="Wants to speak">✋</span>}
                     <StageAvatar member={m} speaking={false} size="sm" onGiftTap={m.socketId !== socket?.id ? openGiftFor : undefined} />
                     <button
                       type="button"
@@ -547,7 +641,15 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
       <div className="mm-actionbar sticky bottom-0">
         <div className="mm-shell mm-shell--wide flex items-center gap-2 !px-4">
           {me?.role === 'listener' ? (
-            <button type="button" onClick={() => claimSlot(slots.findIndex((s) => !s))} className="mm-btn mm-btn--ghost flex-1">
+            <button
+              type="button"
+              onClick={() => {
+                const idx = slots.findIndex((s) => !s);
+                if (idx === -1) setUiMsg('Stage is full — a seat will free up when someone steps down');
+                else claimSlot(idx);
+              }}
+              className="mm-btn mm-btn--ghost flex-1"
+            >
               Request a seat
             </button>
           ) : (

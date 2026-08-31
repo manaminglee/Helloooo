@@ -374,7 +374,9 @@ export function useAudioChannel(socket, iceServers) {
     }
   }, [members, socket?.id, ensureMic, publishAudioToAllPeers]);
 
-  useEffect(() => () => teardown(), [teardown]);
+  const teardownRef = useRef(teardown);
+  teardownRef.current = teardown;
+  useEffect(() => () => { teardownRef.current?.(); }, []);
 
   // ---- actions ----
   const join = useCallback(

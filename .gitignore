@@ -161,3 +161,5 @@ Thumbs.db
 test-results/
 playwright-report/
 blob-report/
+# Vite config cache artifacts (auto-generated)
+client/vite.config.js.timestamp-*.mjs

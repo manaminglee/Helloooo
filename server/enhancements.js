@@ -19,6 +19,7 @@ function registerEnhancements(app, io, deps) {
     localDb,
     saveLocalDb,
     countryFromIP,
+    getAudioChannel,
   } = deps;
 
   const reconnectTokens = new Map();
@@ -89,15 +90,30 @@ function registerEnhancements(app, io, deps) {
 
   app.get('/api/rooms/:roomId', (req, res) => {
     const room = rooms.get(req.params.roomId);
-    if (!room) return res.status(404).json({ error: 'Room not found' });
-    res.json({
-      id: room.id,
-      interest: room.interest,
-      mode: room.mode,
-      participantCount: room.users.size,
-      maxSize: room.maxSize,
-      joinable: room.users.size < room.maxSize,
-    });
+    if (room) {
+      return res.json({
+        id: room.id,
+        interest: room.interest,
+        mode: room.mode,
+        participantCount: room.users.size,
+        maxSize: room.maxSize,
+        joinable: room.users.size < room.maxSize,
+      });
+    }
+    // Voice channels live in their own registry but share the /join/<id> deep
+    // link. They ride the group_text mode (the app routes that to voice rooms).
+    const channel = getAudioChannel?.(req.params.roomId);
+    if (channel) {
+      return res.json({
+        id: channel.id,
+        interest: channel.topic || 'voice room',
+        mode: 'group_text',
+        participantCount: channel.members?.size || 0,
+        maxSize: channel.maxMembers || 24,
+        joinable: (channel.members?.size || 0) < (channel.maxMembers || 24),
+      });
+    }
+    res.status(404).json({ error: 'Room not found' });
   });
 
   app.get('/api/creators/public/:handle', async (req, res) => {

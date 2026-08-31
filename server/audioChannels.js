@@ -462,7 +462,9 @@ function registerAudioChannels(app, io, deps) {
     on('audio:approve-join', (data) => {
       const channel = getChannel(data.channelId);
       const me = channel?.members.get(socket.id);
-      const targetId = String(data.targetSocketId || '');
+      // `audio:join-request` announces the requester as `socketId`; accept that
+      // spelling too so echoing the request payload back approves it.
+      const targetId = String(data.targetSocketId || data.socketId || '');
       const target = channel?.members.get(targetId);
       if (!me || !target) return;
       if (ROLE_RANK[me.role] < ROLE_RANK.moderator) {
@@ -488,7 +490,7 @@ function registerAudioChannels(app, io, deps) {
       const channel = getChannel(data.channelId);
       const me = channel?.members.get(socket.id);
       if (!me || ROLE_RANK[me.role] < ROLE_RANK.moderator) return;
-      const targetId = String(data.targetSocketId || '');
+      const targetId = String(data.targetSocketId || data.socketId || '');
       channel.pendingJoins = (channel.pendingJoins || []).filter((p) => p.socketId !== targetId);
       const target = channel.members.get(targetId);
       if (target) target.handRaised = false;

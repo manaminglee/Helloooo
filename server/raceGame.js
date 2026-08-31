@@ -368,11 +368,32 @@ function registerRaceGame(app, io, deps) {
 
   /** Everyone ready (and enough players) starts the race immediately. Solo can solo-ready. */
   function maybeQuickStart(g) {
+    if (g.status !== 'lobby') return;
+    // Never quick-start while another player's entry fee is still settling —
+    // otherwise a solo ready can lock late joiners out of a race they already paid for.
+    if (g.pendingJoins > 0) return;
     const players = [...g.players.values()];
     if (players.length >= MIN_PLAYERS && players.every((p) => p.ready)) startRace(g);
   }
 
   function attachSocketHandlers(socket, ip) {
+    // A join (create/join) escrows the entry fee asynchronously. If the same
+    // socket fires game:ready before that debit settles, the player record
+    // doesn't exist yet and the ready would be silently dropped — so ready
+    // (and boost/leave) await any in-flight join first.
+    let joinInFlight = null;
+    const trackJoin = (promise) => {
+      const tracked = promise.finally(() => {
+        if (joinInFlight === tracked) joinInFlight = null;
+      });
+      joinInFlight = tracked;
+      return tracked;
+    };
+    const awaitJoin = async () => {
+      if (joinInFlight) {
+        try { await joinInFlight; } catch { /* join errors already reported */ }
+      }
+    };
     const on = (evt, fn) => {
       socket.on(evt, async (data) => {
         try {
@@ -416,18 +437,29 @@ function registerRaceGame(app, io, deps) {
         timer: null,
         lobbyTimer: null,
         results: null,
+        pendingJoins: 0, // joins whose entry-fee escrow is still settling
+        joining: new Set(), // socket ids whose join is mid-flight (per-socket dedupe)
       };
       games.set(channel.id, g);
       channel.gameId = g.id;
 
       g.lobbyTimer = setTimeout(() => {
         const cur = games.get(channel.id);
-        if (cur && cur.id === g.id && cur.status === 'lobby') startRace(cur);
+        if (!cur || cur.id !== g.id || cur.status !== 'lobby') return;
+        // Lobby expiry policy: start with 2+ players (even if someone forgot
+        // to ready up), or solo only when that player actually readied.
+        // A solo, unready lobby is abandoned — cancel and refund the escrow.
+        const players = [...cur.players.values()];
+        if (players.length >= 2 || (players.length === 1 && players[0].ready)) {
+          startRace(cur);
+        } else {
+          void refundAll(cur, 'not_enough_players');
+        }
       }, LOBBY_MS);
 
       // If the creator can't pay the entry fee, roll the game back — otherwise
       // an empty zombie lobby would block the channel until it timed out.
-      const joined = await joinGame(socket, ip, g);
+      const joined = await trackJoin(joinGame(socket, ip, g));
       if (!joined) {
         clearTimeout(g.lobbyTimer);
         games.delete(channel.id);
@@ -448,7 +480,16 @@ function registerRaceGame(app, io, deps) {
         emitState(g);
         return true;
       }
-      if (g.players.size >= MAX_PLAYERS) {
+      // Concurrency guard: the player isn't added to g.players until AFTER the
+      // async entry-fee debit below, so a second join firing before the first
+      // settles (double-click / laggy retry) would otherwise sail past the
+      // has() check above and charge the entry fee twice. Reserve the slot
+      // synchronously here so only the first in-flight join for this socket
+      // proceeds to charge.
+      if (g.joining.has(sock.id)) {
+        return true;
+      }
+      if (g.players.size + g.joining.size >= MAX_PLAYERS) {
         sock.emit('game:error', { message: 'Race is full.' });
         return false;
       }
@@ -456,23 +497,33 @@ function registerRaceGame(app, io, deps) {
       const userData = users.get(sock.id);
       if (!userData) return false;
 
-      // Escrow the entry fee before admitting the player.
-      let paid = false;
-      if (g.entryFee > 0) {
-        const result = await economy.debit(playerIp, g.entryFee, 'race_entry', { gameId: g.id });
-        if (!result?.ok) {
-          sock.emit('game:error', {
-            message: result?.error || 'Not enough coins for this entry fee.',
-            needCoins: g.entryFee,
-          });
-          return false;
+      g.joining.add(sock.id);
+      try {
+        // Escrow the entry fee before admitting the player.
+        let paid = false;
+        if (g.entryFee > 0) {
+          g.pendingJoins += 1;
+          let result;
+          try {
+            result = await economy.debit(playerIp, g.entryFee, 'race_entry', { gameId: g.id });
+          } finally {
+            g.pendingJoins = Math.max(0, g.pendingJoins - 1);
+          }
+          if (!result?.ok) {
+            sock.emit('game:error', {
+              message: result?.error || 'Not enough coins for this entry fee.',
+              needCoins: g.entryFee,
+            });
+            // A ready quorum may have been waiting on this join to settle.
+            maybeQuickStart(g);
+            return false;
+          }
+          paid = true;
+          g.pot += g.entryFee;
+          coinsWagered += g.entryFee;
         }
-        paid = true;
-        g.pot += g.entryFee;
-        coinsWagered += g.entryFee;
-      }
 
-      g.players.set(sock.id, {
+        g.players.set(sock.id, {
         socketId: sock.id,
         userId: userData.id,
         ip: playerIp,
@@ -493,8 +544,13 @@ function registerRaceGame(app, io, deps) {
         collectedValue: 0,
         hitHazards: new Set(),
       });
-      emitState(g);
-      return true;
+        emitState(g);
+        // If everyone else already readied while this join settled, re-check now.
+        maybeQuickStart(g);
+        return true;
+      } finally {
+        g.joining.delete(sock.id);
+      }
     }
 
     on('game:join', async (data) => {
@@ -502,10 +558,11 @@ function registerRaceGame(app, io, deps) {
       if (!channel) return;
       const g = games.get(channel.id);
       if (!g) return socket.emit('game:error', { message: 'No race running — start one!' });
-      await joinGame(socket, ip, g);
+      await trackJoin(joinGame(socket, ip, g));
     });
 
-    on('game:ready', (data) => {
+    on('game:ready', async (data) => {
+      await awaitJoin();
       const g = games.get(String(data.channelId || ''));
       const p = g?.players.get(socket.id);
       if (!p || g.status !== 'lobby') return;

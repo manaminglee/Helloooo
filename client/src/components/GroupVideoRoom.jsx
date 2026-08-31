@@ -623,9 +623,27 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     peerConnectionsRef.current.clear();
   }, [stopGridCapture, youtubeLive, livekit]);
 
+  const releaseLocalMediaRef = useRef(releaseLocalMedia);
+  useEffect(() => { releaseLocalMediaRef.current = releaseLocalMedia; }, [releaseLocalMedia]);
+
+  useEffect(() => () => {
+    try {
+      const s = window.socket;
+      if (roomIdRef.current) s?.emit('leave-room', { roomId: roomIdRef.current });
+      else s?.emit('cancel-group-queue');
+    } catch { /* ignore */ }
+    releaseLocalMediaRef.current?.();
+  }, []);
+
   const finishLeaveRoom = useCallback(() => {
+    const rid = roomIdRef.current;
     releaseLocalMedia();
     clearGroupRejoinStorage();
+    try {
+      const s = window.socket;
+      if (rid) s?.emit('leave-room', { roomId: rid });
+      else s?.emit('cancel-group-queue');
+    } catch { /* ignore */ }
     roomIdRef.current = null;
     onLeave();
   }, [onLeave, releaseLocalMedia]);
@@ -905,9 +923,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     }
   };
 
-  useEffect(() => () => {
-    releaseLocalMedia();
-  }, [releaseLocalMedia]);
+  // Media released on true unmount via releaseLocalMediaRef above.
 
   // Sync local stream to video element when ref mounts (handles race)
   useEffect(() => {

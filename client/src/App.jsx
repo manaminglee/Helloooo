@@ -287,6 +287,9 @@ function AppShell() {
   const handleBackInternal = () => {
     if (roomId && socket) {
       socket.emit('leave-room', { roomId });
+      if (mode === MODES.GROUP_TEXT) {
+        socket.emit('audio:leave', { channelId: roomId });
+      }
     } else if ((mode === MODES.GROUP_TEXT || mode === MODES.GROUP_VIDEO) && socket) {
       // Leaving a group mode while still queuing (no room yet) — release the queue slot
       socket.emit('cancel-group-queue');

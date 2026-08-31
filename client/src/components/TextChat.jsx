@@ -226,6 +226,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   const statusRef = useRef(status);
   const skipRef = useRef(null);
   const backRef = useRef(null);
+  const startRef = useRef(null);
   const messagesRef = useRef(messages);
   const userLeftTimerRef = useRef(null);
   const initialFindEmittedRef = useRef(false);
@@ -546,18 +547,36 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     return () => clearTimeout(t);
   }, [isConnected, messages]);
 
-  // keyboard shortcut - stable handler with refs
+  // Keyboard shortcuts — same map as video chat so muscle memory carries over:
+  //   →  / Esc  skip to the next stranger      ←  back out of the mode
+  //   Enter / S start searching when idle
   useEffect(() => {
     const handler = (e) => {
       const target = e.target;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const s = statusRef.current;
+
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (s === 'connected' || s === 'searching') skipRef.current?.();
+        else startRef.current?.();
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        backRef.current?.();
+        return;
+      }
+      if ((e.key === 'Enter' || e.key.toLowerCase() === 's') && (s === 'idle' || s === 'disconnected')) {
+        e.preventDefault();
+        startRef.current?.();
+        return;
+      }
       if (e.key === 'Escape') {
-        const s = statusRef.current;
-        if (s === 'connected' || s === 'searching') {
-          skipRef.current?.();
-        } else {
-          backRef.current?.();
-        }
+        e.preventDefault();
+        if (s === 'connected' || s === 'searching') skipRef.current?.();
+        else backRef.current?.();
       }
     };
     window.addEventListener('keydown', handler);
@@ -587,6 +606,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     setStatus('searching');
     emitFind();
   };
+
+  startRef.current = handleStart;
 
   const handleSkip = useCallback(() => {
     if (roomIdRef.current && socket) {
@@ -620,6 +641,15 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   }, [onBack]);
 
   backRef.current = handleBack;
+
+  // Leave matchmaking when leaving text chat (history back / unmount)
+  useEffect(() => () => {
+    try {
+      const s = window.socket;
+      if (roomIdRef.current) s?.emit('leave-room', { roomId: roomIdRef.current });
+      s?.emit('cancel-find-partner');
+    } catch { /* ignore */ }
+  }, []);
 
   const sendMsg = () => {
     const t = input.trim();

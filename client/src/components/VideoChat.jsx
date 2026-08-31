@@ -37,6 +37,7 @@ import {
   QUALITY_LADDER,
   applySenderBitrate,
   scheduleQualityRamp,
+  streamHasLiveTracks,
 } from '../utils/webrtcQuality';
 import { ChatInputWithEmoji } from './ChatInputWithEmoji';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
@@ -521,6 +522,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const pendingOfferRef = useRef(null);
   const pendingAnswerRef = useRef(null);
   const negotiationRetryRef = useRef(null);
+  // How many ICE restarts we've tried for the current peer. The 2nd+ attempt
+  // escalates to relay-only (TURN), which is what rescues symmetric-NAT peers
+  // that would otherwise sit on a black "connecting" screen forever.
+  const iceRetryCountRef = useRef(0);
   const findPartnerEmittedRef = useRef(false);
   const warmPcRef = useRef(null);
   /** Outbound trickle ICE buffered until roomId is known */
@@ -972,11 +977,16 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   };
 
   useEffect(() => {
-    let s = null;
+    // Acquire camera/mic once on enter. Do NOT depend on selectedAudioDeviceId /
+    // facingMode — auto device enumeration + Strict Mode remounts were stopping
+    // live tracks (black "You" pane) and stalling find-partner at "Signaling".
+    let cancelled = false;
+    let acquired = null;
+
     (async () => {
       try {
-        // Always boot at ~360p for fast first connect; ramp later after ICE is stable
-        const baseConstraints = bootVideoConstraints(facingMode, selectedAudioDeviceId);
+        const baseConstraints = bootVideoConstraints(facingMode, null);
+        let s = null;
         try {
           s = await navigator.mediaDevices.getUserMedia(baseConstraints);
         } catch (e) {
@@ -986,15 +996,22 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               audio: true
             });
           } catch (e2) {
-            // Auto-continue mic-only so matching is not blocked on camera denial
             s = await navigator.mediaDevices.getUserMedia({ audio: true });
-            setAudioOnly(true);
-            setCameraOff(true);
-            setToast('🎙️ Camera unavailable — matching in audio-only mode');
+            if (!cancelled) {
+              setAudioOnly(true);
+              setCameraOff(true);
+              setToast('🎙️ Camera unavailable — matching in audio-only mode');
+            }
           }
+        }
+        acquired = s;
+        if (cancelled) {
+          s.getTracks().forEach((t) => { try { t.stop(); } catch { /* ignore */ } });
+          return;
         }
         localStreamRef.current = s;
         setLocalStream(s);
+        findPartnerEmittedRef.current = false;
         if (!s.getVideoTracks().length) {
           setAudioOnly(true);
           setCameraOff(true);
@@ -1004,23 +1021,30 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         setMicBlocked(false);
         setCameraError(null);
         if (localVideoRef.current) attachStreamToVideo(localVideoRef.current, s);
-        setConnectPhase((p) => (p === 'boot' ? 'media' : p));
+        setConnectPhase((p) => (['boot', 'media'].includes(p) ? 'webrtc' : p));
       } catch (err) {
         mmDebug('camera.error', err);
+        if (cancelled) return;
         setAudioOnly(false);
         setCameraError('We could not access your camera or microphone. Please allow permissions and try again.');
         setConnectPhase('media');
       }
     })();
+
     return () => {
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((t) => { t.stop(); t.enabled = false; });
+      cancelled = true;
+      const toStop = acquired || localStreamRef.current;
+      if (toStop) {
+        toStop.getTracks().forEach((t) => {
+          try { t.stop(); t.enabled = false; } catch { /* ignore */ }
+        });
+      }
+      if (localStreamRef.current === toStop || localStreamRef.current === acquired) {
         localStreamRef.current = null;
-      } else if (s) {
-        s.getTracks().forEach((t) => { t.stop(); t.enabled = false; });
       }
     };
-  }, [selectedAudioDeviceId, facingMode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only; flip/retry use dedicated handlers
+  }, []);
 
   // Pre-warm WebRTC + ICE gathering while waiting for a match (faster SDP on partner-found).
   useEffect(() => {
@@ -1028,7 +1052,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       disposeWarmPc();
       return undefined;
     }
-    if (!localStreamRef.current || !iceServers?.length) return undefined;
+    if (!streamHasLiveTracks(localStreamRef.current) || !iceServers?.length) return undefined;
     if (warmPcRef.current && warmPcRef.current.connectionState !== 'closed') return undefined;
 
     const stream = localStreamRef.current;
@@ -1079,6 +1103,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         setVideoDevices(videos);
         setAudioDevices(audios);
 
+        // Store preferred ids without remounting getUserMedia
         if (!selectedVideoDeviceId && videos[0]?.deviceId) {
           setSelectedVideoDeviceId(videos[0].deviceId);
         }
@@ -1197,6 +1222,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       negotiationRetryRef.current = null;
     }
     peerInfoRef.current.clear();
+    iceRetryCountRef.current = 0;
     setPeer((prev) => {
       if (prev?.stream) {
         prev.stream.getTracks().forEach((t) => {
@@ -1392,18 +1418,38 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (!remoteId || !rid || !socket) return;
     const pc = peerConnectionsRef.current.get(remoteId);
     if (!pc || pc.signalingState === 'closed') return;
+    const attempt = (iceRetryCountRef.current += 1);
     try {
+      // Attempt 1 retries host/srflx candidates. Attempt 2+ forces TURN relay:
+      // on symmetric NAT / restrictive mobile networks direct candidates can
+      // never pair, and only a relay path produces video.
+      const hasRelay = (iceServers || []).some((srv) => {
+        const u = Array.isArray(srv.urls) ? srv.urls.join(' ') : String(srv.urls || '');
+        return u.includes('turn:') || u.includes('turns:');
+      });
+      if (attempt >= 2 && hasRelay) {
+        try {
+          pc.setConfiguration({
+            iceServers,
+            iceCandidatePoolSize: 10,
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require',
+            iceTransportPolicy: 'relay',
+          });
+          mmDebug('iceRestart.relayOnly', remoteId);
+        } catch { /* older browsers ignore mid-call setConfiguration */ }
+      }
       if (typeof pc.restartIce === 'function') pc.restartIce();
       const offer = await pc.createOffer({ iceRestart: true });
       await pc.setLocalDescription(offer);
       socket.emit('webrtc-signal', { roomId: rid, targetSocketId: remoteId, type: 'offer', signal: pc.localDescription });
-      setToast('Reconnecting…');
-      mmDebug('iceRestart', remoteId);
+      setToast(attempt >= 2 ? 'Switching to relay for a stable link…' : 'Reconnecting…');
+      mmDebug('iceRestart', remoteId, 'attempt', attempt);
     } catch (e) {
       mmDebug('iceRestart.err', e);
       setToast('Could not retry link — try Next or Refresh camera');
     }
-  }, [peer?.socketId, socket]);
+  }, [peer?.socketId, socket, iceServers]);
 
   const continueAudioOnly = useCallback(async () => {
     // Camera denied — fall back to mic-only so matching can proceed
@@ -1433,7 +1479,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           height: { ideal: 480 },
           frameRate: { ideal: 30 },
         },
-        audio: selectedAudioDeviceId ? { deviceId: { exact: selectedAudioDeviceId } } : { echoCancellation: true, noiseSuppression: true },
+        audio: selectedAudioDeviceId
+          ? { deviceId: { ideal: selectedAudioDeviceId }, echoCancellation: true, noiseSuppression: true }
+          : { echoCancellation: true, noiseSuppression: true },
       };
       let stream;
       try {
@@ -1444,6 +1492,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       if (localStreamRef.current) localStreamRef.current.getTracks().forEach((t) => t.stop());
       localStreamRef.current = stream;
       setLocalStream(stream);
+      findPartnerEmittedRef.current = false;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       peerConnectionsRef.current.forEach((pc) => {
         if (pc.signalingState === 'closed') return;
@@ -1721,6 +1770,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       mmDebug('ice', remoteId, ice);
       if (ice === 'connected' || ice === 'completed') {
         setP2pHealth('good');
+        iceRetryCountRef.current = 0;
         if (healthTimerRef.current) clearTimeout(healthTimerRef.current);
         // Start low → ramp to 720p once path is viable
         if (qualityRampCleanupRef.current) qualityRampCleanupRef.current();
@@ -1758,12 +1808,24 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   }, [socket, iceServers, disposeWarmPc, emitIceCandidate, flushPendingOutIce, lowBandwidth]);
 
   // Hot-swap TURN credentials onto live peer connections once they load.
+  // setConfiguration() replaces the WHOLE config, and bundlePolicy /
+  // rtcpMuxPolicy may not change after construction — passing a partial object
+  // makes the browser throw and the new TURN credentials silently never apply.
+  // So we always re-send the full config, preserving any relay escalation.
   useEffect(() => {
     if (!iceServers?.length) return;
     peerConnectionsRef.current.forEach((pc) => {
       try {
-        pc.setConfiguration({ iceServers });
-      } catch { /* ignore */ }
+        if (pc.signalingState === 'closed') return;
+        const current = pc.getConfiguration?.() || {};
+        pc.setConfiguration({
+          iceServers,
+          iceCandidatePoolSize: 10,
+          bundlePolicy: current.bundlePolicy || 'max-bundle',
+          rtcpMuxPolicy: current.rtcpMuxPolicy || 'require',
+          iceTransportPolicy: current.iceTransportPolicy || 'all',
+        });
+      } catch { /* older browsers reject mid-call reconfiguration */ }
     });
   }, [iceServers]);
 
@@ -1848,7 +1910,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   // waiting on TURN fetch only delays first connect.
   useEffect(() => {
     if (!socket || !connected || status !== 'searching' || roomIdRef.current) return;
-    if (!localStreamRef.current) return;
+    if (!streamHasLiveTracks(localStreamRef.current)) return;
     if (findPartnerEmittedRef.current) return;
     findPartnerEmittedRef.current = true;
     setConnectPhase('matching');
@@ -1865,6 +1927,32 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       creatorToken: isCreator || creatorToken ? creatorToken : undefined,
     });
   }, [socket, connected, status, localStream, interest, nickname, conversationMode, topicContract, isCreator]);
+
+  // If we stall on Signaling with a live camera, re-queue (covers dropped emit / reconnect races).
+  useEffect(() => {
+    if (!socket || !connected || status !== 'searching' || roomIdRef.current) return undefined;
+    if (connectPhase !== 'signaling' && connectPhase !== 'webrtc') return undefined;
+    const t = setTimeout(() => {
+      if (roomIdRef.current || statusRef.current !== 'searching') return;
+      if (!streamHasLiveTracks(localStreamRef.current)) return;
+      findPartnerEmittedRef.current = false;
+      setConnectPhase('matching');
+      let creatorToken = '';
+      try {
+        creatorToken = window.localStorage.getItem('mm_creatorId') || '';
+      } catch { /* ignore */ }
+      findPartnerEmittedRef.current = true;
+      socket.emit('find-partner', {
+        mode: 'video',
+        interest: interest || 'general',
+        nickname: nickname || 'Anonymous',
+        conversationMode,
+        topicContract,
+        creatorToken: isCreator || creatorToken ? creatorToken : undefined,
+      });
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [socket, connected, status, connectPhase, localStream, interest, nickname, conversationMode, topicContract, isCreator]);
 
   // Auto-recover if connected but remote video never arrives.
   useEffect(() => {
@@ -2337,10 +2425,52 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     };
   }, [socket]);
 
+  const releaseAllMediaRef = useRef(releaseAllMedia);
+  const clearRoomRef = useRef(clearRoom);
+  useEffect(() => { releaseAllMediaRef.current = releaseAllMedia; }, [releaseAllMedia]);
+  useEffect(() => { clearRoomRef.current = clearRoom; }, [clearRoom]);
+
+  // True unmount only — empty deps so socket reconnect does not tear down media.
   useEffect(() => () => {
-    releaseAllMedia();
-    clearRoom();
-  }, [releaseAllMedia, clearRoom]);
+    try {
+      const s = window.socket;
+      s?.emit('cancel-find-partner');
+      if (roomIdRef.current) s?.emit('leave-room', { roomId: roomIdRef.current });
+    } catch { /* ignore */ }
+    releaseAllMediaRef.current?.();
+    clearRoomRef.current?.();
+  }, []);
+
+  const switchAudioDevice = useCallback(async (deviceId) => {
+    if (!deviceId) return;
+    setSelectedAudioDeviceId(deviceId);
+    try { localStorage.setItem('mm_audioDeviceId', deviceId); } catch { /* ignore */ }
+    const current = localStreamRef.current;
+    if (!current) return;
+    try {
+      const micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: { ideal: deviceId }, echoCancellation: true, noiseSuppression: true },
+        video: false,
+      });
+      const newTrack = micStream.getAudioTracks()[0];
+      if (!newTrack) return;
+      const oldTrack = current.getAudioTracks()[0];
+      if (oldTrack) {
+        current.removeTrack(oldTrack);
+        try { oldTrack.stop(); } catch { /* ignore */ }
+      }
+      current.addTrack(newTrack);
+      peerConnectionsRef.current.forEach((pc) => {
+        const sender = pc.getSenders().find((s) => s.track?.kind === 'audio');
+        if (sender) sender.replaceTrack(newTrack).catch(() => {});
+      });
+      setLocalStream(new MediaStream(current.getTracks()));
+      localStreamRef.current = current;
+    } catch (e) {
+      mmDebug('switchAudio', e);
+      setToast('Could not switch microphone');
+    }
+  }, []);
 
   const sendMsg = () => {
     const t = input.trim();
@@ -3089,7 +3219,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         selectedVideoId={selectedVideoDeviceId}
         selectedAudioId={selectedAudioDeviceId}
         onSelectVideo={(id) => { setSelectedVideoDeviceId(id); localStorage.setItem('mm_videoDeviceId', id); }}
-        onSelectAudio={(id) => { setSelectedAudioDeviceId(id); localStorage.setItem('mm_audioDeviceId', id); }}
+        onSelectAudio={switchAudioDevice}
       />
       <TipCreatorModal open={showTipModal} onClose={() => setShowTipModal(false)} onTip={sendTip} balance={balance} creatorName={peer?.nickname} />
       {isCreator && (
@@ -3125,7 +3255,17 @@ function RemoteVideoComponent({ stream, muted, strangerFilter, strangerBlur }) {
       if (el) el.srcObject = null;
       return undefined;
     }
-    return attachStreamToVideo(el, stream);
+    const detach = attachStreamToVideo(el, stream);
+    // Autoplay resilience (iOS/Safari): if the unmuted play() was blocked,
+    // retry on the next user gesture so the stranger never stays frozen/black.
+    const resume = () => {
+      if (el.paused) el.play?.().catch(() => { });
+    };
+    window.addEventListener('pointerdown', resume, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', resume);
+      detach?.();
+    };
   }, [stream, streamLive, streamTick]);
 
   if (!streamLive) {
