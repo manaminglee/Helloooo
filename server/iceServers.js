@@ -58,9 +58,37 @@ function operatorTurn() {
 }
 
 /**
- * Push UDP → TCP → TLS variants for one host, all with the SAME credentials.
- * Ordering matters: UDP gives the best real-time path, TCP survives UDP-blocking
- * networks, TLS/443 survives restrictive corporate proxies.
+ * Parse TURN_URL values:
+ *   free.expressturn.com
+ *   free.expressturn.com:3478
+ *   turn:free.expressturn.com:3478
+ *   turn:host:3478?transport=udp
+ */
+function parseTurnTarget(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return null;
+  if (/^turns?:/i.test(s)) s = s.replace(/^turns?:/i, '');
+  const qIdx = s.indexOf('?');
+  const hostPort = qIdx >= 0 ? s.slice(0, qIdx) : s;
+  const query = qIdx >= 0 ? s.slice(qIdx + 1) : '';
+  const transport = /transport=([^&]+)/i.exec(query)?.[1]?.toLowerCase() || null;
+
+  let hostname = hostPort;
+  let port = null;
+  if (hostPort.includes(':') && !hostPort.startsWith('[')) {
+    const lastColon = hostPort.lastIndexOf(':');
+    const maybePort = hostPort.slice(lastColon + 1);
+    if (/^\d+$/.test(maybePort)) {
+      port = parseInt(maybePort, 10);
+      hostname = hostPort.slice(0, lastColon);
+    }
+  }
+  if (!hostname) return null;
+  return { hostname, port, transport, raw: String(raw || '').trim() };
+}
+
+/**
+ * Metered-style hosts — UDP/TCP/TLS on ports 80 and 443.
  */
 function pushTurnUdpTcpTls(list, host, creds) {
   list.push({
@@ -83,6 +111,44 @@ function pushTurnUdpTcpTls(list, host, creds) {
   });
 }
 
+/** Coturn / ExpressTURN-style — standard port 3478 (or custom) + TLS on 443. */
+function pushTurnStandardPort(list, hostname, port, creds) {
+  const p = port || 3478;
+  list.push({
+    urls: [
+      `turn:${hostname}:${p}?transport=udp`,
+      `turn:${hostname}:${p}?transport=tcp`,
+    ],
+    ...creds,
+  });
+  if (p !== 443) {
+    list.push({
+      urls: `turns:${hostname}:443?transport=tcp`,
+      ...creds,
+    });
+  }
+}
+
+function pushOperatorTurn(list, operator) {
+  const creds = { username: operator.username, credential: operator.credential };
+  const raw = operator.url;
+  const target = parseTurnTarget(raw);
+  if (!target) return;
+
+  // Fully pinned URL (includes ?transport=) — use exactly as configured.
+  if (/^turns?:/i.test(raw) && target.transport) {
+    list.push({ urls: raw, ...creds });
+    return;
+  }
+
+  if (target.port) {
+    pushTurnStandardPort(list, target.hostname, target.port, creds);
+    return;
+  }
+
+  pushTurnUdpTcpTls(list, target.hostname, creds);
+}
+
 /**
  * @param {{ country?: string, region?: string }} opts
  * @returns {{ iceServers: object[], region: string, relay: string }}
@@ -96,20 +162,7 @@ function buildIceServers(opts = {}) {
 
   const operator = operatorTurn();
   if (operator) {
-    const creds = { username: operator.username, credential: operator.credential };
-    if (/^turns?:/i.test(operator.url)) {
-      // A fully-qualified turn:/turns: URL is used verbatim — the operator has
-      // already chosen host, port and transport.
-      iceServers.push({ urls: operator.url, ...creds });
-      // Add the sibling transports for the same host so a UDP-blocked client
-      // still has a path, unless the URL already pins a transport we can't vary.
-      const host = operator.url.replace(/^turns?:/i, '').split('?')[0].split(':')[0];
-      if (host && !/transport=/i.test(operator.url)) {
-        pushTurnUdpTcpTls(iceServers, host, creds);
-      }
-    } else {
-      pushTurnUdpTcpTls(iceServers, operator.url.replace(/^turns?:/i, '').split('?')[0], creds);
-    }
+    pushOperatorTurn(iceServers, operator);
   }
 
   // Shared relay fallback. Skipped when the operator has their own TURN and has
@@ -134,6 +187,8 @@ module.exports = {
   buildIceServers,
   resolveRegion,
   operatorTurn,
+  parseTurnTarget,
+  pushOperatorTurn,
   REGION_BY_COUNTRY,
   REGION_HOSTS,
 };
