@@ -68,8 +68,11 @@ export function useUniqueSession({
   }, [messages.length]);
 
   useEffect(() => {
-    if (autoConsent && status === 'connected') setConsentComplete(true);
-  }, [autoConsent, status]);
+    if (!autoConsent || status !== 'connected' || !socket || !roomId) return;
+    setConsentComplete(true);
+    socket.emit('session-consent-ready', { roomId });
+    socket.emit('session-set-contract', { roomId, contract: topicContract, mode: conversationMode });
+  }, [autoConsent, status, socket, roomId, topicContract, conversationMode]);
 
   useEffect(() => {
     if (status !== 'connected') return;

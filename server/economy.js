@@ -264,6 +264,7 @@ function registerEconomy(app, io, deps) {
         nickname: payload.fromNickname,
         text: `🎁 sent ${gift.icon} ${gift.name} to ${payload.toNickname}`,
         kind: 'gift',
+        persist: true,
         gift: payload,
         ts: Date.now(),
       });
@@ -361,6 +362,7 @@ function registerEconomy(app, io, deps) {
         nickname: sender?.nickname || 'Someone',
         text: `🎁 sent ${gift.icon} ${gift.name} to everyone (${results.length})`,
         kind: 'gift',
+        persist: true,
         ts: Date.now(),
       });
     }

@@ -391,7 +391,51 @@ const VIDEO_CONNECT_STEPS = [
   { id: 'video', label: 'Video live' },
 ];
 
-/** Fast-connect pipeline — shows where you are in the match → video flow. */
+/** Simple searching / connecting UI — no technical step checklist. */
+export function VideoSearchingOverlay({
+  label = 'Searching…',
+  sublabel = 'Finding someone for you',
+  compact = false,
+  fill = false,
+}) {
+  if (compact) {
+    return (
+      <div className="mm-video-connecting-badge" aria-live="polite">
+        <span className="mm-omegle-search__spinner mm-omegle-search__spinner--sm" aria-hidden />
+        <span>{label}</span>
+      </div>
+    );
+  }
+
+  const inner = (
+    <>
+      <div className="mm-omegle-search__spinner" aria-hidden />
+      <p className="text-sm font-semibold text-white mb-1">{label}</p>
+      {sublabel ? (
+        <p className="text-xs text-white/45 text-center max-w-[16rem]">{sublabel}</p>
+      ) : null}
+      <div className="mm-search-dots" aria-hidden>
+        <span /><span /><span />
+      </div>
+    </>
+  );
+
+  if (fill) {
+    return (
+      <div className="mm-omegle-search" aria-live="polite">
+        {inner}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center text-center py-2" aria-live="polite">
+      {inner}
+    </div>
+  );
+}
+
+/** @deprecated UI removed from video chat — kept for reference */
 export function VideoConnectPipeline({ phase = 'boot', compact = false }) {
   const idx = Math.max(0, VIDEO_CONNECT_STEPS.findIndex((s) => s.id === phase));
   const current = VIDEO_CONNECT_STEPS[idx] || VIDEO_CONNECT_STEPS[0];

@@ -139,7 +139,7 @@ export function CoinRaceGame({ socket, channelId, coins = 0 }) {
   const sorted = [...game.players].sort((a, b) => (b.progress || 0) - (a.progress || 0));
 
   return (
-    <div className="mm-card overflow-hidden relative">
+    <div className="mm-card mm-card-glow mm-race-game overflow-hidden relative">
       {/* Win flash */}
       {flash && (
         <div className="absolute inset-0 z-20 grid place-items-center pointer-events-none">

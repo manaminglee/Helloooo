@@ -11,7 +11,7 @@ export function useMessageTtl(m, ttlSec = MESSAGE_TTL_SEC) {
   const [timeLeft, setTimeLeft] = useState(ttlSec);
 
   useEffect(() => {
-    if (m?.system || m?.persist) {
+    if (m?.system || m?.persist || m?.kind === 'gift') {
       setTimeLeft(ttlSec);
       return undefined;
     }

@@ -21,7 +21,7 @@ export const PHASE_3_PRO = {
 };
 
 export const PHASE_4_UNIQUE = {
-  mutualConsent: true,
+  mutualConsent: false,
   nvidiaCopilot: true,
   structuredModes: true,
   trustScore: true,

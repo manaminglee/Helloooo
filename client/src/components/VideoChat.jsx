@@ -66,7 +66,7 @@ import {
   VideoMoreSheet,
   VideoReactionBar,
   VideoSessionBanners,
-  VideoConnectPipeline,
+  VideoSearchingOverlay,
 } from './VideoSessionUI';
 
 function MessageSpark({ x, y }) {
@@ -515,6 +515,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   }, [status]);
 
   const localVideoRef = useRef(null);
+  const localVideoSplitRef = useRef(null);
+  const localVideoSplitRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const localStreamRef = useRef(null);
   const peerConnectionsRef = useRef(new Map());
@@ -593,6 +595,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   const bindLocalVideo = useCallback((el) => {
     localVideoRef.current = el;
+    if (el && localStreamRef.current) {
+      attachStreamToVideo(el, localStreamRef.current);
+    }
+  }, []);
+
+  const bindLocalSplitVideo = useCallback((el) => {
+    localVideoSplitRef.current = el;
     if (el && localStreamRef.current) {
       attachStreamToVideo(el, localStreamRef.current);
     }
@@ -808,6 +817,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     conversationMode,
     topicContract,
     calmMode,
+    autoConsent: true,
   });
 
   useEffect(() => {
@@ -1166,7 +1176,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (localVideoRef.current && localStream) {
       attachStreamToVideo(localVideoRef.current, localStream);
     }
-  }, [localStream, status]);
+    if (localVideoSplitRef.current && localStream) {
+      attachStreamToVideo(localVideoSplitRef.current, localStream);
+    }
+  }, [localStream, status, chatCollapsed]);
 
   useEffect(() => {
     const el = remoteVideoRef.current;
@@ -2503,10 +2516,18 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   };
 
   const scrollToChat = () => {
+    if (status !== 'connected') return;
+    if (!chatCollapsed) {
+      setChatCollapsed(true);
+      return;
+    }
     setShowChat(true);
     setChatCollapsed(false);
-    const el = document.getElementById('video-chat-messages');
-    if (el) el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() => {
+      chatPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      const el = document.getElementById('video-chat-messages');
+      if (el) el.scrollTop = el.scrollHeight;
+    });
   };
 
   const chatMyCountry = myCountry || country;
@@ -2724,7 +2745,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         matchedInterests={status === 'connected' ? selectedInterests : []}
       />
 
-      <main className={desktopLayout ? 'mm-desk-main' : `mm-mobile-main ${status !== 'connected' ? 'mm-mobile-main--solo' : ''}`}>
+      <main className={desktopLayout ? 'mm-desk-main' : `mm-mobile-main ${status !== 'connected' ? 'mm-mobile-main--solo' : ''} ${status === 'connected' && !chatCollapsed ? 'mm-mobile-main--chat-open' : ''}`}>
         {desktopLayout ? (
           <div className={`mm-desk-card${isSidebarDesk ? ' mm-desk-card--sidebar' : ''}`}>
             <div className={`mm-desk-body${isSidebarDesk ? ' mm-desk-body--sidebar' : ''}`}>
@@ -2773,9 +2794,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 <VideoWatermark />
                 {status === 'searching' && (
                   <div className="mm-desk-pane__placeholder">
-                    <div className="mm-omegle-search__spinner mb-3" aria-hidden />
-                    <p className="text-sm font-semibold text-white/80 mb-3">Looking for someone…</p>
-                    <VideoConnectPipeline phase={connectPhase} />
+                    <VideoSearchingOverlay label="Searching…" sublabel="Finding someone for you" />
                   </div>
                 )}
                 {status === 'idle' && (
@@ -2786,8 +2805,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 {status === 'connected' && (
                   <>
                     {connectPhase !== 'video' && (
-                      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40">
-                        <VideoConnectPipeline phase={connectPhase} compact />
+                      <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 backdrop-blur-[2px]">
+                        <VideoSearchingOverlay
+                          compact
+                          label={connectPhase === 'matched' ? 'Match found…' : 'Connecting…'}
+                        />
                       </div>
                     )}
                     <RemoteVideoComponent stream={peer?.stream} muted={mutedStranger} strangerFilter={strangerFilter} strangerBlur={strangerBlur || (!unique.consentComplete && autoStrangerBlur)} />
@@ -2843,7 +2865,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           </div>
         ) : (
           <>
-          <div ref={remoteStageRef} className={`mm-mobile-video ${status !== 'connected' ? 'mm-mobile-video--solo' : ''}`}>
+          <div
+            ref={remoteStageRef}
+            className={`mm-mobile-video ${status !== 'connected' ? 'mm-mobile-video--solo' : ''} ${status === 'connected' && !chatCollapsed ? 'mm-mobile-video--split' : ''} ${status === 'connected' && chatCollapsed ? 'mm-mobile-video--immersive' : ''}`}
+          >
             {status === 'idle' && (
               <div className="mm-omegle-idle">
                 {cameraError && (
@@ -2871,12 +2896,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               </div>
             )}
             {status === 'searching' && (
-              <div className="mm-omegle-search">
-                <div className="mm-omegle-search__spinner" aria-hidden />
-                <p className="text-sm font-semibold text-white mb-1">Looking for someone…</p>
-                <p className="text-xs text-white/45 text-center max-w-[16rem] mb-3">Matching you with a random stranger.</p>
-                <VideoConnectPipeline phase={connectPhase} />
-              </div>
+              <VideoSearchingOverlay
+                fill
+                label="Searching…"
+                sublabel="Finding someone for you"
+              />
             )}
             {(status === 'idle' || status === 'searching') && (
               <>
@@ -2892,10 +2916,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               </>
             )}
             {status === 'connected' && (
-              <div className="relative w-full h-full">
+              <div className={`mm-mobile-video-stage ${!chatCollapsed ? 'mm-mobile-video-stage--split' : ''}`}>
                 {connectPhase !== 'video' && (
-                  <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40">
-                    <VideoConnectPipeline phase={connectPhase} compact />
+                  <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 backdrop-blur-[2px]">
+                    <VideoSearchingOverlay
+                      compact
+                      label={connectPhase === 'matched' ? 'Match found…' : 'Connecting…'}
+                    />
                   </div>
                 )}
                 <SecurityShield />
@@ -2906,27 +2933,46 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                     Live on YouTube
                   </div>
                 )}
-                <div
-                  className={`h-full relative overflow-hidden ${peer?.isCreator ? 'cursor-pointer group' : 'cursor-default'}`}
-                  onClick={() => peer?.isCreator && setShowProfileHandle(peer.nickname)}
-                >
-                  <RemoteVideoComponent stream={peer?.stream} muted={mutedStranger} strangerFilter={strangerFilter} strangerBlur={strangerBlur || (!unique.consentComplete && autoStrangerBlur)} />
-                  <FloatingVideoReactions reactions={localReactions} />
-                  <StrangerRevealOverlay show={showStrangerReveal && (strangerBlur || !unique.consentComplete) && !unique.consentComplete} onReveal={() => { revealStranger(); unique.markReady(); }} />
-                  {PHASE_4_UNIQUE.liveCaptions && (
-                    <LiveCaptionsBar caption={unique.caption} enabled={unique.captionsOn} onToggle={() => unique.setCaptionsOn((v) => !v)} />
-                  )}
-                  {peer?.isCreator && (
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center pointer-events-none">
-                      <span className="opacity-0 group-hover:opacity-100 bg-white text-black px-4 py-1.5 rounded-full text-[10px] font-bold shadow-lg transition-all">View creator</span>
+                <div className="mm-mobile-remote-pane">
+                  <div
+                    className={`h-full relative overflow-hidden ${peer?.isCreator ? 'cursor-pointer group' : 'cursor-default'}`}
+                    onClick={() => peer?.isCreator && setShowProfileHandle(peer.nickname)}
+                  >
+                    <RemoteVideoComponent stream={peer?.stream} muted={mutedStranger} strangerFilter={strangerFilter} strangerBlur={strangerBlur || (!unique.consentComplete && autoStrangerBlur)} />
+                    <FloatingVideoReactions reactions={localReactions} />
+                    <StrangerRevealOverlay show={showStrangerReveal && (strangerBlur || !unique.consentComplete) && !unique.consentComplete} onReveal={() => { revealStranger(); unique.markReady(); }} />
+                    {PHASE_4_UNIQUE.liveCaptions && (
+                      <LiveCaptionsBar caption={unique.caption} enabled={unique.captionsOn} onToggle={() => unique.setCaptionsOn((v) => !v)} />
+                    )}
+                    {peer?.isCreator && (
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center pointer-events-none">
+                        <span className="opacity-0 group-hover:opacity-100 bg-white text-black px-4 py-1.5 rounded-full text-[10px] font-bold shadow-lg transition-all">View creator</span>
+                      </div>
+                    )}
+                  </div>
+                  {strangerCameraOff && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 z-20">
+                      <span className="text-xs font-semibold text-white/50 uppercase tracking-wider">Stranger&apos;s camera is off</span>
                     </div>
                   )}
                 </div>
-                {strangerCameraOff && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/70 z-20">
-                    <span className="text-xs font-semibold text-white/50 uppercase tracking-wider">Stranger&apos;s camera is off</span>
+                <div className="mm-mobile-local-pane" aria-hidden={chatCollapsed}>
+                  <video
+                    ref={bindLocalSplitVideo}
+                    autoPlay
+                    muted
+                    playsInline
+                    className={`w-full h-full object-cover ${mirrorLocalVideo ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
+                    style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }}
+                  />
+                  <div className="mm-mobile-pip__footer">
+                    <span>You</span>
+                    <MobSignalBars quality={connectionQuality} />
                   </div>
-                )}
+                  {isCreator && filterTimer > 0 && (
+                    <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-amber-500 text-black text-[7px] font-black uppercase">FX</div>
+                  )}
+                </div>
                 <ConsentSessionGate
                   visible={PHASE_4_UNIQUE.mutualConsent && !unique.consentComplete}
                   partnerReady={unique.partnerReady}
@@ -2939,7 +2985,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   audioIntroDone={unique.audioIntroComplete}
                   aiOnline={unique.aiOnline}
                 />
-                <div className="mm-mobile-pip">
+                <div className="mm-mobile-pip" aria-hidden={!chatCollapsed}>
                   <video
                     ref={bindLocalVideo}
                     autoPlay

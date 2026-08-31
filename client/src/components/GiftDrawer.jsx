@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 const TIER_STYLES = {
   basic: 'border-white/15',
@@ -30,6 +31,11 @@ export function GiftDrawer({
   const [tab, setTab] = useState('gifts');
   const [notice, setNotice] = useState(null);
   const [sending, setSending] = useState(false);
+  const [displayCoins, setDisplayCoins] = useState(coins);
+
+  useEffect(() => {
+    setDisplayCoins(coins);
+  }, [coins]);
 
   useEffect(() => {
     if (!socket) return undefined;
@@ -43,15 +49,21 @@ export function GiftDrawer({
       setNotice({ type: 'err', text: message || 'Gift failed' });
       setTimeout(() => setNotice(null), 4000);
     };
-    const onSent = ({ toAll: blast, count }) => {
+    const onSent = ({ toAll: blast, count, balance }) => {
       setSending(false);
+      if (balance !== undefined) setDisplayCoins(balance);
       setNotice({
         type: 'ok',
         text: blast ? `Gift sent to ${count || 'everyone'}!` : 'Gift sent!',
       });
       setTimeout(() => setNotice(null), 2500);
     };
-    const onBought = ({ coins: added }) => {
+    const onCoinsUpdated = ({ coins: next }) => {
+      if (next !== undefined) setDisplayCoins(next);
+    };
+    const onBought = ({ coins: added, balance }) => {
+      if (balance !== undefined) setDisplayCoins(balance);
+      else if (added) setDisplayCoins((c) => c + added);
       setNotice({ type: 'ok', text: `+${added} coins added` });
       setTab('gifts');
       setTimeout(() => setNotice(null), 2500);
@@ -60,14 +72,21 @@ export function GiftDrawer({
     socket.on('gift:error', onError);
     socket.on('gift:sent', onSent);
     socket.on('gift:pack-bought', onBought);
+    socket.on('coins-updated', onCoinsUpdated);
     socket.emit('gift:catalog');
     return () => {
       socket.off('gift:catalog', onCatalog);
       socket.off('gift:error', onError);
       socket.off('gift:sent', onSent);
       socket.off('gift:pack-bought', onBought);
+      socket.off('coins-updated', onCoinsUpdated);
     };
   }, [socket]);
+
+  useEffect(() => {
+    if (!open || !socket) return;
+    socket.emit('gift:catalog');
+  }, [open, socket]);
 
   const others = useMemo(
     () => members.filter((m) => m.socketId !== socket?.id),
@@ -127,13 +146,13 @@ export function GiftDrawer({
     socket?.emit('coins:buy-package', { packageId });
   };
 
-  return (
-    <div className="fixed inset-x-0 bottom-0 z-[60] sm:inset-auto sm:right-4 sm:bottom-20 sm:w-[24rem]">
+  const drawer = (
+    <div className="fixed inset-x-0 bottom-0 z-[600] sm:inset-auto sm:right-4 sm:bottom-20 sm:w-[24rem]">
       <div className="rounded-t-2xl sm:rounded-2xl border border-white/12 bg-[#12151c] p-4 shadow-2xl max-h-[78dvh] flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <h4 className="text-sm font-semibold text-white">Gifts & coins</h4>
           <div className="flex items-center gap-3">
-            <span className="text-[11px] text-amber-300 font-semibold">🪙 {coins}</span>
+            <span className="text-[11px] text-amber-300 font-semibold">🪙 {displayCoins}</span>
             <button type="button" onClick={onClose} className="text-white/50 hover:text-white text-lg leading-none">×</button>
           </div>
         </div>
@@ -164,7 +183,7 @@ export function GiftDrawer({
           </div>
         ) : (
           <>
-            {coins <= 0 && (
+            {coins <= 0 && displayCoins <= 0 && (
               <p className="mb-2 text-[11px] text-amber-200/90 bg-amber-500/10 border border-amber-400/25 rounded-lg px-3 py-2">
                 You have 0 coins. Open <button type="button" className="underline font-bold" onClick={() => setTab('packs')}>Buy coins</button> or wait for your activity bonus.
               </p>
@@ -235,7 +254,7 @@ export function GiftDrawer({
             <div className="grid grid-cols-4 gap-2 overflow-y-auto min-h-0 flex-1 pr-0.5">
               {filtered.map((g) => {
                 const cost = toAll ? g.cost * Math.max(1, (stagePeople.length || others.length || 1)) : g.cost;
-                const affordable = coins >= cost;
+                const affordable = displayCoins >= cost;
                 const canSend = !!channelId && (toAll ? others.length > 0 : !!target);
                 return (
                   <button
@@ -267,6 +286,8 @@ export function GiftDrawer({
       </div>
     </div>
   );
+
+  return createPortal(drawer, document.body);
 }
 
 /** Full-screen animation that flies gifts toward the recipient&apos;s stage avatar. */
@@ -297,7 +318,7 @@ export function GiftOverlay({ socket }) {
   if (!flying.length) return null;
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-[70] overflow-hidden">
+    <div className="pointer-events-none fixed inset-0 z-[650] overflow-hidden">
       {flying.map((g, i) => (
         <div
           key={g.id}

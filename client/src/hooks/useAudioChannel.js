@@ -281,7 +281,8 @@ export function useAudioChannel(socket, iceServers) {
     };
 
     const onChatMessage = (msg) => {
-      if (!msg?.text) return;
+      if (msg?.channelId && channelIdRef.current && msg.channelId !== channelIdRef.current) return;
+      if (!msg?.text && msg?.kind !== 'gift') return;
       setChatMessages((prev) => [...prev.slice(-99), msg]);
     };
 

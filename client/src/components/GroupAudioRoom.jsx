@@ -55,12 +55,13 @@ function compressWallpaper(file, maxBytes = 380_000) {
 
 function AudioChatBubble({ m, isMe }) {
   const timeLeft = useMessageTtl(m);
-  if (!m.system && !m.kind && timeLeft <= 0) return null;
+  const isGift = m.kind === 'gift';
+  if (!m.system && !isGift && timeLeft <= 0) return null;
   return (
-    <div className={`mm-audio-chat-bubble ${isMe ? 'mm-audio-chat-bubble--me' : ''} ${m.kind === 'gift' ? 'mm-audio-chat-bubble--gift' : ''}`}>
+    <div className={`mm-audio-chat-bubble ${isMe ? 'mm-audio-chat-bubble--me' : ''} ${isGift ? 'mm-audio-chat-bubble--gift' : ''}`}>
       <span className="mm-audio-chat-bubble__name">{isMe ? 'You' : m.nickname}</span>
-      <p className="mm-audio-chat-bubble__text">{m.text}</p>
-      {!m.system && (
+      <p className="mm-audio-chat-bubble__text">{m.text || (m.gift ? `${m.gift.icon} ${m.gift.name}` : '')}</p>
+      {!m.system && !isGift && (
         <span className={`mm-desk-bubble__ttl text-[9px] ${timeLeft <= 10 ? 'mm-desk-bubble__ttl--warn' : ''}`}>
           {formatTtl(timeLeft)}
         </span>
@@ -84,6 +85,7 @@ function StageAvatar({ member, speaking, size = 'lg', onGiftTap }) {
     <button
       type="button"
       data-audio-member={member?.socketId || undefined}
+      data-gift-avatar={member?.socketId || undefined}
       onClick={(e) => {
         e.stopPropagation();
         if (member && onGiftTap) onGiftTap(member);
@@ -767,11 +769,14 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
       )}
 
       {raceOpen && channel.gamesEnabled !== false && (
-        <div className="fixed inset-0 z-[500] flex items-end sm:items-center justify-center p-4 bg-black/75" onClick={() => setRaceOpen(false)} role="presentation">
-          <div className="w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0f121a] p-4" onClick={(e) => e.stopPropagation()} role="dialog">
+        <div className="fixed inset-0 z-[500] flex items-end sm:items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setRaceOpen(false)} role="presentation">
+          <div className="mm-race-modal w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl border border-violet-400/20 bg-gradient-to-b from-[#12151f] to-[#0a0c12] p-4 shadow-[0_0_60px_rgba(139,92,246,0.15)]" onClick={(e) => e.stopPropagation()} role="dialog">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold">Highway Heist · Coin Race</h3>
-              <button type="button" onClick={() => setRaceOpen(false)} className="w-8 h-8 rounded-lg bg-white/5">✕</button>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-white">Highway Heist</h3>
+                <p className="text-[10px] text-violet-200/60 mt-0.5">Coin Race · boost near loot · dodge hazards</p>
+              </div>
+              <button type="button" onClick={() => setRaceOpen(false)} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-white/70">✕</button>
             </div>
             <CoinRaceGame socket={socket} channelId={channel.channelId} coins={coins} />
           </div>

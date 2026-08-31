@@ -1843,6 +1843,52 @@ h1, h2, h3, .font-display {
   to { transform: rotate(360deg); }
 }
 
+.mm-omegle-search__spinner--sm {
+  width: 1.125rem;
+  height: 1.125rem;
+  margin-bottom: 0;
+  border-width: 2px;
+}
+
+.mm-video-connecting-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.mm-search-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
+.mm-search-dots span {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: #4ade80;
+  animation: mm-search-dot 1.1s ease-in-out infinite;
+}
+
+.mm-search-dots span:nth-child(2) { animation-delay: 0.15s; }
+.mm-search-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes mm-search-dot {
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
 .mm-connect-pipeline {
   width: 100%;
   max-width: 15rem;
@@ -3447,17 +3493,66 @@ h1, h2, h3, .font-display {
 }
 
 .mm-mobile-video {
-  flex: 0 0 42%;
-  min-height: 10.5rem;
-  max-height: 45%;
+  flex: 1 1 auto;
+  min-height: 0;
   position: relative;
   background: #000;
   overflow: hidden;
+  transition: flex 0.38s cubic-bezier(0.4, 0, 0.2, 1), max-height 0.38s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mm-mobile-main--chat-open .mm-mobile-video {
+  flex: 0 0 42%;
+  min-height: 10.5rem;
+  max-height: 45%;
 }
 
 .mm-mobile-video--solo {
   flex: 1 1 auto;
   max-height: none;
+}
+
+.mm-mobile-video-stage {
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr 0fr;
+  grid-template-columns: 1fr;
+  width: 100%;
+  height: 100%;
+  transition: grid-template-rows 0.38s cubic-bezier(0.4, 0, 0.2, 1), gap 0.38s cubic-bezier(0.4, 0, 0.2, 1);
+  gap: 0;
+}
+
+.mm-mobile-video-stage--split {
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mm-mobile-remote-pane {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.mm-mobile-local-pane {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  grid-row: 2;
+  grid-column: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.32s ease;
+  border-top: 2px solid rgba(59, 130, 246, 0.45);
+  box-shadow: inset 0 0 24px rgba(59, 130, 246, 0.08);
+}
+
+.mm-mobile-video-stage--split .mm-mobile-local-pane {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .mm-mobile-video video {
@@ -3478,6 +3573,16 @@ h1, h2, h3, .font-display {
   border: 2px solid rgba(59, 130, 246, 0.85);
   box-shadow: 0 0 18px rgba(59, 130, 246, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
   background: #000;
+  opacity: 1;
+  transform: scale(1) translateY(0);
+  transition: opacity 0.32s ease, transform 0.38s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: auto;
+}
+
+.mm-mobile-video-stage--split .mm-mobile-pip {
+  opacity: 0;
+  transform: scale(0.88) translateY(-0.35rem);
+  pointer-events: none;
 }
 
 .mm-mobile-pip__footer {
@@ -3530,6 +3635,7 @@ h1, h2, h3, .font-display {
   -webkit-backdrop-filter: blur(18px);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   overflow: hidden;
+  transition: flex 0.38s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.32s ease;
 }
 
 .mm-mobile-chat--collapsed {
@@ -3819,7 +3925,7 @@ h1, h2, h3, .font-display {
 }
 
 @media (orientation: landscape) and (max-height: 500px) {
-  .mm-mobile-video {
+  .mm-mobile-main--chat-open .mm-mobile-video {
     flex: 0 0 55%;
     max-height: 58%;
   }
@@ -4856,6 +4962,42 @@ h1, h2, h3, .font-display {
 .mm-gift-cat:focus-visible {
   outline: 2px solid rgba(167, 139, 250, 0.55);
   outline-offset: 2px;
+}
+
+.mm-race-canvas-wrap {
+  position: relative;
+  margin: 0 0.5rem;
+  border-radius: 0.875rem;
+  overflow: hidden;
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  box-shadow:
+    inset 0 0 40px rgba(99, 102, 241, 0.08),
+    0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.mm-race-canvas {
+  display: block;
+  background: #050508;
+}
+
+.mm-race-game.mm-card-glow {
+  border-color: rgba(139, 92, 246, 0.2);
+  box-shadow: 0 0 40px rgba(139, 92, 246, 0.08);
+}
+
+.mm-race-modal {
+  animation: mmRaceModalIn 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes mmRaceModalIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .mm-audio-chat-bubble .mm-desk-bubble__ttl {
