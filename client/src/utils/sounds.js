@@ -104,6 +104,12 @@ export const playLockSound = () => play((ac, dest) => {
   tone(ac, dest, { freq: 280, endFreq: 180, peak: 0.85, attack: 0.008, decay: 0.22, type: 'triangle' });
 });
 
+/** Knock at door — soft double tap. */
+export const playKnockSound = () => play((ac, dest) => {
+  tone(ac, dest, { freq: 220, at: 0, peak: 0.75, attack: 0.005, decay: 0.08, type: 'triangle' });
+  tone(ac, dest, { freq: 180, at: 0.14, peak: 0.7, attack: 0.005, decay: 0.1, type: 'triangle' });
+});
+
 /** Room unlock — bright release chime. */
 export const playUnlockSound = () => play((ac, dest) => {
   tone(ac, dest, { freq: 440, at: 0, peak: 0.9, attack: 0.01, decay: 0.28 });

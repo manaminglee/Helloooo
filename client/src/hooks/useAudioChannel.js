@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { hapticNotify, hapticSuccess, hapticTap } from '../utils/haptics';
-import { playInviteSound, playStickerSound, playStreakSound, playWaveSound } from '../utils/sounds';
+import { playInviteSound, playKnockSound, playStickerSound, playStreakSound, playWaveSound } from '../utils/sounds';
 import { ensureNotifyPermission, notifyUser } from '../utils/browserNotify';
 import { useLiveKitAudio } from './useLiveKitAudio';
 
@@ -25,6 +25,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
   const [giftBonus, setGiftBonus] = useState(null);
   const [scheduledEvents, setScheduledEvents] = useState([]);
   const [useSfu, setUseSfu] = useState(false);
+  const [knockStatus, setKnockStatus] = useState(null); // { channelId, waiting } | null
   const channelIdRef = useRef(null);
 
   const livekit = useLiveKitAudio({
@@ -47,6 +48,26 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
   useEffect(() => {
     if (iceServers?.length) iceConfig.current = { iceServers };
   }, [iceServers]);
+
+  const audioMountRef = useRef(null);
+
+  useEffect(() => {
+    let mount = document.getElementById('mm-audio-remote-mount');
+    if (!mount) {
+      mount = document.createElement('div');
+      mount.id = 'mm-audio-remote-mount';
+      mount.setAttribute('aria-hidden', 'true');
+      mount.style.cssText = 'position:fixed;width:0;height:0;overflow:hidden;pointer-events:none;opacity:0';
+      document.body.appendChild(mount);
+    }
+    audioMountRef.current = mount;
+    return () => {
+      audioElsRef.current.forEach((el) => {
+        try { el.pause(); el.srcObject = null; el.remove(); } catch { /* ignore */ }
+      });
+      audioElsRef.current.clear();
+    };
+  }, []);
 
   /** Lazily acquire the mic — only speakers ever need it. */
   const ensureMic = useCallback(async () => {
@@ -84,19 +105,24 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
   }, []);
 
   const attachRemote = useCallback((socketId, stream) => {
+    if (!stream) return;
     let el = audioElsRef.current.get(socketId);
     if (!el) {
-      el = new Audio();
+      el = document.createElement('audio');
       el.autoplay = true;
       el.playsInline = true;
       el.setAttribute('playsinline', 'true');
+      el.setAttribute('webkit-playsinline', 'true');
+      el.preload = 'auto';
       audioElsRef.current.set(socketId, el);
+      audioMountRef.current?.appendChild(el);
     }
-    el.srcObject = stream;
+    if (el.srcObject !== stream) el.srcObject = stream;
     el.muted = false;
-    el.play().catch(() => {
-      /* autoplay may need a gesture; resumeRemoteAudio on unmute/tap */
-    });
+    el.volume = 1;
+    const play = () => { void el.play().catch(() => {}); };
+    play();
+    el.onloadedmetadata = play;
 
     // Voice-activity detection for the speaking ring.
     try {
@@ -110,7 +136,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
         analysersRef.current.set(socketId, { ctx, analyser, data: new Uint8Array(analyser.frequencyBinCount) });
         if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       }
-    } catch (_) {
+    } catch {
       /* VAD is cosmetic */
     }
   }, []);
@@ -131,7 +157,10 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
           });
         }
       };
-      pc.ontrack = (e) => attachRemote(peerId, e.streams[0]);
+      pc.ontrack = (e) => {
+        const stream = e.streams?.[0] || (e.track ? new MediaStream([e.track]) : null);
+        if (stream) attachRemote(peerId, stream);
+      };
       pc.onconnectionstatechange = () => {
         if (['failed', 'closed'].includes(pc.connectionState)) {
           pc.close();
@@ -199,6 +228,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     if (!socket) return undefined;
 
     const onJoined = async ({ channelId, topic, you, peers, maxSpeakers, wallpaper, gamesEnabled, pendingJoins, pendingKnocks, isPa, hasLockCode, locked, themeId, paInviteToken, paEndsAt, paAloneCloseAt, useSfu: sfu, entryFee, scheduledStartAt }) => {
+      setKnockStatus(null);
       if (channelIdRef.current && channelIdRef.current !== channelId) {
         pcsRef.current.forEach((pc) => pc.close());
         pcsRef.current.clear();
@@ -247,6 +277,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
       if (!sfu) {
         peers.forEach((p) => createPeer(p.socketId, String(you.socketId) > String(p.socketId)));
       }
+      resumeRemoteAudio();
     };
 
     const onPeerJoined = ({ member }) => {
@@ -401,7 +432,6 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
 
     const onSfuMode = (payload) => {
       if (payload?.channelId && channelIdRef.current && payload.channelId !== channelIdRef.current) return;
-      if (payload.enabled) closeMeshPeers();
       setUseSfu(!!payload.enabled);
     };
 
@@ -414,6 +444,26 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     const onScheduled = ({ events }) => setScheduledEvents(events || []);
     const onEventReminder = (payload) => {
       notifyUser('Voice event starting soon', `${payload.topic || 'Live room'} · ${new Date(payload.startsAt).toLocaleTimeString()}`);
+    };
+
+    const onKnockRequest = (payload) => {
+      if (payload?.channelId && channelIdRef.current && payload.channelId !== channelIdRef.current) return;
+      hapticNotify();
+      playKnockSound();
+      notifyUser('Someone is knocking', `${payload.nickname || 'Guest'} wants to join your room`);
+      setChannel((prev) => {
+        if (!prev) return prev;
+        const existing = prev.pendingKnocks || [];
+        if (existing.some((k) => k.socketId === payload.socketId)) return prev;
+        return {
+          ...prev,
+          pendingKnocks: [...existing, { socketId: payload.socketId, nickname: payload.nickname || 'Guest' }],
+        };
+      });
+    };
+
+    const onKnockSent = (payload) => {
+      setKnockStatus({ channelId: payload.channelId, waiting: true });
     };
 
     const onChatMessage = (msg) => {
@@ -442,7 +492,11 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     socket.on('audio:sfu-mode', onSfuMode);
     socket.on('audio:scheduled', onScheduled);
     socket.on('audio:event-reminder', onEventReminder);
+    socket.on('audio:knock-request', onKnockRequest);
+    socket.on('audio:knock-sent', onKnockSent);
     socket.on('audio:entry-fee-earned', onEntryFeeEarned);
+
+    ensureNotifyPermission().catch(() => {});
 
     return () => {
       socket.off('audio:joined', onJoined);
@@ -465,9 +519,28 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
       socket.off('audio:sfu-mode', onSfuMode);
       socket.off('audio:scheduled', onScheduled);
       socket.off('audio:event-reminder', onEventReminder);
+      socket.off('audio:knock-request', onKnockRequest);
+      socket.off('audio:knock-sent', onKnockSent);
       socket.off('audio:entry-fee-earned', onEntryFeeEarned);
     };
-  }, [socket, createPeer, ensureMic, teardown, closeMeshPeers]);
+  }, [socket, createPeer, ensureMic, teardown, closeMeshPeers, resumeRemoteAudio]);
+
+  // Tear down mesh only after LiveKit is connected; fall back if SFU fails.
+  useEffect(() => {
+    if (useSfu && livekit.connected) {
+      closeMeshPeers();
+      return;
+    }
+    if (!useSfu || !livekit.error || !socket || !channelIdRef.current) return;
+    setUseSfu(false);
+    const myId = socket.id;
+    members.forEach((p) => {
+      if (p.socketId && p.socketId !== myId && !pcsRef.current.has(p.socketId)) {
+        createPeer(p.socketId, String(myId) > String(p.socketId));
+      }
+    });
+    resumeRemoteAudio();
+  }, [useSfu, livekit.connected, livekit.error, members, socket, createPeer, closeMeshPeers, resumeRemoteAudio]);
 
   // Keep LiveKit mic in sync after SFU handoff.
   useEffect(() => {
@@ -563,6 +636,14 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     (topic, isPrivate, nickname) => {
       setConnecting(true);
       socket?.emit('audio:create', { topic, isPrivate, nickname });
+    },
+    [socket]
+  );
+
+  const createPaRoom = useCallback(
+    (nickname) => {
+      setConnecting(true);
+      socket?.emit('audio:create-pa', { nickname });
     },
     [socket]
   );
@@ -789,9 +870,11 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     giftBonus,
     scheduledEvents,
     useSfu,
+    knockStatus,
     livekitConnected: livekit.connected,
     join,
     create,
+    createPaRoom,
     leave,
     toggleMic,
     requestSpeak,
@@ -825,6 +908,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     dismissGiftStreak,
     dismissHostBonus,
     dismissGiftBonus,
+    clearKnockStatus: () => setKnockStatus(null),
   };
 }
 

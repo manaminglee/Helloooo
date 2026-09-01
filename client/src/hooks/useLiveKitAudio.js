@@ -24,15 +24,27 @@ export function useLiveKitAudio({
     if (!track || track.kind !== 'audio') return;
     let el = remoteElsRef.current.get(identity);
     if (!el) {
-      el = new Audio();
+      el = document.createElement('audio');
       el.autoplay = true;
       el.playsInline = true;
       el.setAttribute('playsinline', 'true');
+      el.setAttribute('webkit-playsinline', 'true');
       remoteElsRef.current.set(identity, el);
+      let mount = document.getElementById('mm-audio-remote-mount');
+      if (!mount) {
+        mount = document.createElement('div');
+        mount.id = 'mm-audio-remote-mount';
+        mount.setAttribute('aria-hidden', 'true');
+        mount.style.cssText = 'position:fixed;width:0;height:0;overflow:hidden;pointer-events:none;opacity:0';
+        document.body.appendChild(mount);
+      }
+      mount.appendChild(el);
     }
     const stream = new MediaStream([track.mediaStreamTrack]);
     el.srcObject = stream;
-    el.play().catch(() => {});
+    el.muted = false;
+    el.volume = 1;
+    void el.play().catch(() => {});
   }, []);
 
   const disconnect = useCallback(async () => {

@@ -62,7 +62,7 @@ const ROOM_THEMES = {
   couple: 'linear-gradient(135deg, rgba(244,114,182,0.35), rgba(167,139,250,0.3))',
 };
 
-const HELLO_EMOJI = { wave: '👋', fire: '🔥', heart: '❤️', sparkle: '✨' };
+const HELLO_EMOJI = { wave: '👋', fire: '🔥', heart: '❤️', purple: '💜', sparkle: '✨' };
 
 function registerAudioChannels(app, io, deps) {
   const {
@@ -560,6 +560,51 @@ function registerAudioChannels(app, io, deps) {
       audit?.('audio_channel_created', { ip, channelId: channel.id, topic });
     });
 
+    /** Solo PA room — host gets a shareable invite link for their partner. */
+    on('audio:create-pa', (data) => {
+      if (!rateOk(joinRates, ip, JOIN_WINDOW_MS, JOIN_MAX)) {
+        return socket.emit('audio:error', { message: 'Slow down — too many channel actions.' });
+      }
+      const userData = users.get(socket.id);
+      if (!userData) return;
+      if (blockedIps.has(ip)) return socket.emit('audio:error', { message: 'Account restricted.' });
+
+      const nick = sanitize(userData.nickname || 'Anonymous', 30);
+      const topic = sanitize(data.topic || `🔒 PA · ${nick}`, TOPIC_MAX);
+      const paChannel = {
+        id: generateId('ach'),
+        topic,
+        isPrivate: false,
+        isPa: true,
+        locked: true,
+        lockCode: null,
+        paInviteToken: generateId('pat'),
+        paMembers: [socket.id],
+        cohostEnabled: true,
+        cohostJoined: false,
+        cohostSocketId: null,
+        maxMembers: 3,
+        maxSpeakers: 2,
+        members: new Map(),
+        bannedIps: new Set(),
+        pendingJoins: [],
+        pendingKnocks: [],
+        gamesEnabled: true,
+        wallpaper: null,
+        createdAt: Date.now(),
+        gameId: null,
+        paStartedAt: Date.now(),
+        paEndsAt: Date.now() + PA_SESSION_MS,
+        entryFee: 0,
+        scheduledStartAt: null,
+        useSfu: false,
+      };
+      channels.set(paChannel.id, paChannel);
+      if (typeof data.nickname === 'string') userData.nickname = sanitize(data.nickname, 30);
+      joinChannel(socket, paChannel, userData, ip);
+      audit?.('audio_pa_created', { ip, channelId: paChannel.id, topic });
+    });
+
     on('audio:join', async (data) => {
       if (!rateOk(joinRates, ip, JOIN_WINDOW_MS, JOIN_MAX)) {
         return socket.emit('audio:error', { message: 'Slow down — too many join attempts.' });
@@ -587,11 +632,16 @@ function registerAudioChannels(app, io, deps) {
           wallpaper: channel.wallpaper || null,
           gamesEnabled: channel.gamesEnabled !== false,
           pendingJoins: [...(channel.pendingJoins || [])],
+          pendingKnocks: (channel.pendingKnocks || []).map((k) => ({ socketId: k.socketId, nickname: k.nickname })),
           isPa: !!channel.isPa,
           hasLockCode: !!channel.lockCode,
           locked: channel.locked || !!channel.lockCode || !!channel.isPa,
           themeId: channel.themeId || 'default',
+          paInviteToken: channel.isPa ? channel.paInviteToken : null,
+          paEndsAt: channel.isPa ? (channel.paEndsAt || null) : null,
+          paAloneCloseAt: channel.isPa ? (channel.paAloneCloseAt || null) : null,
           entryFee: channel.entryFee || 0,
+          scheduledStartAt: channel.scheduledStartAt || null,
           useSfu: !!channel.useSfu,
         });
         broadcastState(channel);
@@ -894,9 +944,8 @@ function registerAudioChannels(app, io, deps) {
 
     on('audio:knock', (data) => {
       const channel = getChannel(data.channelId);
-      const me = channel?.members.get(socket.id);
       const userData = users.get(socket.id);
-      if (!userData || channel.members.has(socket.id)) return;
+      if (!channel || !userData || channel.members.has(socket.id)) return;
       if (!channel?.lockCode && !channel?.locked) {
         return socket.emit('audio:error', { message: 'This room is not locked.' });
       }

@@ -1,73 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { countryToFlag } from '../utils/countryFlag';
-import { useLatency } from '../hooks/useLatency';
-import { API_BASE } from '../config/apiBase';
 import { mmDebug } from '../utils/mmDebug';
 import { nextMsgId } from '../utils/uniqueId';
 import { CoinBadge } from './CoinBadge';
 import { AdSlot } from './AdSlot';
 import { ReportSafetyModal } from './ReportSafetyModal';
 import { ChatInputWithEmoji } from './ChatInputWithEmoji';
-import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
+import { PHASE_2 } from '../constants/features';
 import { ensureNotifyPermission, notifyIfBackground } from '../utils/browserNotify';
 import { playDing, playPop } from '../utils/sounds';
 import { usePrefs } from '../utils/userPrefs';
 import { SettingsPanel, SettingsGearButton } from './SettingsPanel';
 import { HellooooBrand, HellooooLogo } from './HellooooBrand';
-import { ProFeaturesMenu } from './ProFeaturesMenu';
-import { useUniqueSession } from '../hooks/useUniqueSession';
-import {
-  AiStatusPill,
-  CalmModeToggle,
-  CoOpStreakBadge,
-  NvidiaCopilotToast,
-  TrustScoreChip,
-} from './unique/UniqueSessionUI';
 import { ChatMatchStatus } from './VideoSessionUI';
 import { SkipProSheet } from './SkipProSheet';
 import { loadProMatchPrefs } from '../utils/proMatchPrefs';
-
-const AI_ICEBREAKERS = {
-  general: [
-    "If you could travel anywhere right now, where would you go?",
-    "What's the most interesting thing you've learned recently?",
-    "What's your favorite way to spend a rainy afternoon?",
-    "If you could have dinner with any historical figure, who would it be?",
-    "What's the best piece of advice you've ever received?"
-  ],
-  telugu: [
-    "What's your favorite Telugu movie of all time? 🎬",
-    "Which Telugu song are you currently obsessed with? 🎵",
-    "Have you tried the new street food spots in Hyderabad lately?",
-    "What's your favorite memory related to a Telugu festival?",
-    "If you could meet one Telugu actor, who would it be?"
-  ],
-  music: [
-    "What's one song that always puts you in a good mood?",
-    "If you could go to any concert in history, which one would it be?",
-    "What's your favorite genre of music to listen to while working?",
-    "What's the best live performance you've ever seen?",
-    "Do you play any musical instruments?"
-  ],
-  gaming: [
-    "What's the first video game you ever played?",
-    "What's your all-time favorite game soundtrack?",
-    "If you could live in any video game world, which one would it be?",
-    "What's the most challenging game you've ever completed?",
-    "Are you more of a PC gamer or a console gamer?"
-  ]
-};
-
-const EMOJIS_3D = [
-  { char: '🔥', label: 'Fire', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/1f525/512.webp' },
-  { char: '💎', label: 'Gem', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/1f48e/512.webp' },
-  { char: '🚀', label: 'Rocket', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/1f680/512.webp' },
-  { char: '✨', label: 'Sparkle', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/2728/512.webp' },
-  { char: '🎉', label: 'Party', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/1f389/512.webp' },
-  { char: '❤️', label: 'Heart', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/2764_fe0f/512.webp' },
-  { char: '😂', label: 'Laugh', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/1f602/512.webp' },
-  { char: '👑', label: 'Crown', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/1f451/512.webp' },
-];
 
 const ICEBREAKER_POOL = [
   'Hey! 👋', 'Where are you from?', 'What are you up to?',
@@ -76,6 +23,8 @@ const ICEBREAKER_POOL = [
   'Beach or mountains?', 'Dogs or cats?',
 ];
 
+const QUICK_EMOJIS = ['👋', '😂', '❤️', '🔥'];
+
 function pickIcebreakers(n = 3) {
   const shuffled = [...ICEBREAKER_POOL].sort(() => Math.random() - 0.5);
   return shuffled.slice(0, n);
@@ -83,47 +32,18 @@ function pickIcebreakers(n = 3) {
 
 const SEARCHING_STATUSES = [
   'Searching for a next user…',
-  'Matching interests',
-  'Checking availability',
-  'Connecting secure channel',
-  'Finding someone...',
+  'Matching interests…',
+  'Finding someone nearby…',
+  'Connecting secure channel…',
 ];
 
-const MAX_MEDIA_SIZE_MB = 5;
-
 const BlueTick = () => (
-  <span className="inline-flex items-center justify-center w-3 h-3 bg-violet-500 rounded-full ml-1.5 shadow-[0_0_10px_#a78bfa]">
-    <svg className="w-2 h-2 text-black" fill="currentColor" viewBox="0 0 20 20">
-      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-    </svg>
+  <span className="mm-text-chat__verified" aria-label="Verified creator">
+    <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
   </span>
 );
 
-function MessageSpark({ x, y }) {
-  const [active, setActive] = useState(true);
-  useEffect(() => {
-    const t = setTimeout(() => setActive(false), 800);
-    return () => clearTimeout(t);
-  }, []);
-  if (!active) return null;
-  return (
-    <div className="fixed pointer-events-none z-[3000]" style={{ left: x, top: y }}>
-      {[...Array(6)].map((_, i) => (
-        <div
-          key={i}
-          className="absolute w-1 h-1 bg-violet-400 rounded-full animate-spark"
-          style={{
-            '--tx': `${(Math.random() - 0.5) * 60}px`,
-            '--ty': `${(Math.random() - 0.5) * 60}px`,
-            animationDelay: `${i * 50}ms`
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function VanishingMessage({ m, isMe, onReply }) {
+function ChatBubble({ m, isMe }) {
   const { vanishMessages } = usePrefs();
   const [timeLeft, setTimeLeft] = useState(60);
 
@@ -132,12 +52,8 @@ function VanishingMessage({ m, isMe, onReply }) {
     const age = Math.floor((Date.now() - (m.ts || Date.now())) / 1000);
     const rem = Math.max(0, 60 - age);
     setTimeLeft(rem);
-
     if (rem <= 0) return;
-
-    const int = setInterval(() => {
-      setTimeLeft(prev => Math.max(0, prev - 1));
-    }, 1000);
+    const int = setInterval(() => setTimeLeft((prev) => Math.max(0, prev - 1)), 1000);
     return () => clearInterval(int);
   }, [m.ts, m.system, vanishMessages]);
 
@@ -145,64 +61,37 @@ function VanishingMessage({ m, isMe, onReply }) {
 
   if (m.system) {
     return (
-      <div className="flex justify-center my-2">
-        <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider bg-white/5 px-2 py-0.5 rounded shadow-sm text-center">
-          {m.text}
-        </span>
+      <div className="mm-text-chat__system">
+        <span>{m.text}</span>
       </div>
     );
   }
 
-  const mStr = Math.floor(timeLeft / 60);
-  const sStr = (timeLeft % 60).toString().padStart(2, '0');
+  const time = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
   return (
-    <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-message-pop mt-2`}>
-        <div className={`msg-bubble ${isMe ? 'me' : 'them'} flex flex-col gap-1 relative group min-w-[60px]`}>
-            {!m.system && (
-              <button
-                onClick={() => onReply && onReply(m)}
-                className={`absolute -top-3 ${isMe ? '-left-3' : '-right-3'} opacity-0 group-hover:opacity-100 bg-white/10 hover:bg-white/20 p-1 rounded-full text-xs transition-opacity z-10`}
-                title="Reply"
-                aria-label="Reply to message"
-              >
-                ↩️
-              </button>
-            )}
-            {m.replyTo && (
-              <div className="text-[10px] opacity-60 mb-1 border-l-2 border-white/20 pl-2 italic">
-                <span className="font-black">{m.replyTo.isCreator ? `@${m.replyTo.nickname}` : (m.replyTo.nickname || 'Someone')}</span>: {m.replyTo.text?.slice(0, 40)}{m.replyTo.text?.length > 40 ? '...' : ''}
-              </div>
-            )}
-            <div className="flex items-center gap-1 mb-0.5">
-              <span className={`text-[10px] font-semibold ${isMe ? 'text-violet-300/90' : 'text-white/45'}`}>
-                {m.isCreator ? `@${m.nickname}` : (isMe ? 'You' : m.nickname || 'Stranger')}
-              </span>
-              {m.isCreator && <BlueTick />}
-            </div>
-            <div className="flex gap-2 items-end">
-                {m.media ? (
-                    <div className="max-w-[180px] rounded-lg overflow-hidden border border-white/10">
-                        {m.type === 'video' ? (
-                            <video src={m.content} controls className="w-full" autoPlay playsInline muted />
-                        ) : (
-                            <img src={m.content} className="w-full h-auto" alt="media" />
-                        )}
-                    </div>
-                ) : m.type === 'voice' ? (
-                    <audio controls src={m.audio || m.text} className="max-w-[220px] w-full" />
-                ) : (
-                    <p className="text-[15px] sm:text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                      {m.text}
-                    </p>
-                )}
-                {vanishMessages && (
-                  <span className={`text-[9px] font-mono shrink-0 mb-[-2px] ${timeLeft <= 10 ? 'text-amber-400 animate-pulse font-bold' : 'opacity-40'}`}>
-                      {mStr}:{sStr}
-                  </span>
-                )}
-            </div>
+    <div className={`mm-text-chat__row ${isMe ? 'mm-text-chat__row--me' : ''}`}>
+      <div className={`mm-text-chat__bubble ${isMe ? 'mm-text-chat__bubble--me' : 'mm-text-chat__bubble--them'}`}>
+        {!isMe && (
+          <span className="mm-text-chat__bubble-name">
+            {m.isCreator ? `@${m.nickname}` : (m.nickname || 'Stranger')}
+            {m.isCreator && <BlueTick />}
+          </span>
+        )}
+        {m.type === 'voice' ? (
+          <audio controls src={m.audio || m.text} className="mm-text-chat__voice" />
+        ) : (
+          <p className="mm-text-chat__bubble-text">{m.text}</p>
+        )}
+        <div className="mm-text-chat__bubble-meta">
+          {vanishMessages && (
+            <span className={`mm-text-chat__ttl ${timeLeft <= 10 ? 'mm-text-chat__ttl--warn' : ''}`}>
+              {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}
+            </span>
+          )}
+          {time && <span>{time}</span>}
         </div>
+      </div>
     </div>
   );
 }
@@ -210,30 +99,22 @@ function VanishingMessage({ m, isMe, onReply }) {
 export default function TextChat({ socket, connected, country, onlineCount, interest = 'general', nickname = 'Anonymous', language = '', region = '', isCreator = false, onBack, onJoined, onFindNewPartner, adsEnabled = false, adScripts = {}, coinState, registered = false, currentActiveSeconds = 0, conversationMode = 'free', topicContract = 'chill', calmMode: calmModeProp = false, isPro = false, subscription = null }) {
   const { balance, streak, canClaim, nextClaim, claimCoins } = coinState;
   const [messages, setMessages] = useState([]);
-  const [sparks, setSparks] = useState([]);
   const [input, setInput] = useState('');
   const [roomId, setRoomId] = useState(null);
   const [peer, setPeer] = useState(null);
   const [sharedInterests, setSharedInterests] = useState([]);
   const [quickPrompts, setQuickPrompts] = useState(() => pickIcebreakers());
-  // status: idle | searching | connected
   const [status, setStatus] = useState('searching');
-  const latency = useLatency();
-  const [isAiGenerating, setIsAiGenerating] = useState(false);
-  const [isTranslatorActive, setIsTranslatorActive] = useState(false);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [active3dEmoji, setActive3dEmoji] = useState(null);
-  const [mutedStranger, setMutedStranger] = useState(false);
   const [strangerTyping, setStrangerTyping] = useState(false);
   const [searchStatusIndex, setSearchStatusIndex] = useState(0);
   const [connectedSecs, setConnectedSecs] = useState(0);
   const [showReportModal, setShowReportModal] = useState(false);
-  const [replyingTo, setReplyingTo] = useState(null);
-  const [calmMode, setCalmMode] = useState(calmModeProp);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showSkipSheet, setShowSkipSheet] = useState(false);
   const roomIdRef = useRef(null);
+  const chatScrollRef = useRef(null);
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
-  const fileInputRef = useRef(null);
   const typingTimerRef = useRef(null);
   const statusRef = useRef(status);
   const skipRef = useRef(null);
@@ -247,7 +128,6 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   const [toast, setToast] = useState(null);
   const toastTimerRef = useRef(null);
   const prefs = usePrefs();
-  const [showSkipSheet, setShowSkipSheet] = useState(false);
   const proMatchOptsRef = useRef({});
   statusRef.current = status;
   messagesRef.current = messages;
@@ -263,26 +143,29 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
   const isConnected = !!peer && !!roomId;
 
-  const unique = useUniqueSession({
-    socket,
-    roomId,
-    status,
-    messages,
-    interest,
-    conversationMode,
-    topicContract,
-    calmMode,
-    autoConsent: true,
-  });
+  useEffect(() => {
+    const box = chatScrollRef.current;
+    if (!box) return;
+    box.scrollTop = box.scrollHeight;
+  }, [messages, strangerTyping]);
+
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.overflow;
+    const prevBody = body.style.overflow;
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    return () => {
+      html.style.overflow = prevHtml;
+      body.style.overflow = prevBody;
+    };
+  }, []);
 
   const isFromMe = (m) => {
     if (!m) return false;
     return m.socketId === socket.id || m.fromSelf;
   };
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
 
   const emitFind = useCallback(() => {
     if (!socket || !connected) return;
@@ -343,7 +226,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       setPeer(data.peer);
       setSharedInterests(Array.isArray(data.sharedInterests) ? data.sharedInterests : []);
       setQuickPrompts(pickIcebreakers());
-      if (data.mutualSkipReconnect) setUiMsg('↩️ Reconnected — you both skipped at the same time');
+      if (data.mutualSkipReconnect) setToast('↩️ Reconnected — you both skipped at the same time');
       setStatus('connected');
       onJoinedRef.current?.(data.roomId);
       notifyIfBackground('Text match', 'You have a new Helloooo text chat 💬.');
@@ -358,13 +241,6 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       if (data.roomId === roomIdRef.current) {
         setMessages((m) => [...m.slice(-100), data]);
         if (!isFromMe(data)) playDing();
-        // Trigger spark for incoming messages on message location
-        const el = document.getElementById('text-chat-messages');
-        if (el) {
-          const rect = el.getBoundingClientRect();
-          // Fix #8: Cap sparks to 20 to prevent memory growth
-          setSparks(prev => [...prev.slice(-20), { id: nextMsgId('spark'), x: rect.left + rect.width / 2, y: rect.bottom - 100 }]);
-        }
       }
     };
 
@@ -381,20 +257,6 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
     const onWaiting = () => setStatus('searching');
     const onSystemMsg = (data) => setMessages((m) => [...m, { id: nextMsgId('sys'), system: true, text: `📢 ADMIN: ${data.message}`, ts: Date.now() }]);
-
-    const on3dEmoji = (data) => {
-      setActive3dEmoji(data);
-      setMessages(prev => [...prev.slice(-100), {
-        id: nextMsgId('emoji'),
-        text: `Sent a 3D ${data.emoji.char || data.emoji}`,
-        system: false,
-        socketId: data.socketId,
-        nickname: data.nickname,
-        ts: Date.now(),
-        isEmoji: true
-      }]);
-      setTimeout(() => setActive3dEmoji(null), 3000);
-    };
 
     const onContentFlagged = (data) => {
       setMessages(m => [...m, { id: nextMsgId('sys'), system: true, text: `🛡️ ${data.message}`, ts: Date.now() }]);
@@ -418,7 +280,6 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     socket.on('stranger-typing', onStrangerTyping);
     socket.on('waiting-for-partner', onWaiting);
     socket.on('system-announcement', onSystemMsg);
-    socket.on('3d-emoji', on3dEmoji);
     socket.on('content-flagged', onContentFlagged);
     socket.on('error', onServerError);
     socket.on('disconnect', onDisconnect);
@@ -432,106 +293,12 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       socket.off('stranger-typing', onStrangerTyping);
       socket.off('waiting-for-partner', onWaiting);
       socket.off('system-announcement', onSystemMsg);
-      socket.off('3d-emoji', on3dEmoji);
       socket.off('content-flagged', onContentFlagged);
       socket.off('error', onServerError);
       socket.off('disconnect', onDisconnect);
     };
   // Handlers read latest values through refs — register once per socket
   }, [socket]);
-
-  useEffect(() => {
-    if (!socket) return;
-    const onMediaMessage = (data) => {
-      setMessages(prev => [...prev.slice(-100), { ...data, media: true }]);
-    };
-    socket.on('media-message', onMediaMessage);
-    return () => {
-      socket.off('media-message', onMediaMessage);
-    };
-  }, [socket]);
-
-  const send3dEmoji = (emojiObj) => {
-    // Fix #10: Guard room existence before emitting
-    if (!roomIdRef.current) return;
-    if (balance < 5) { setToast('⚠️ Need 5 coins for 3D Emoji!'); return; }
-    if (socket) {
-      socket.emit('send-3d-emoji', { roomId: roomIdRef.current, emoji: emojiObj });
-      setShowEmojiPicker(false);
-    }
-  };
-
-  const handleMediaUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (file.size > MAX_MEDIA_SIZE_MB * 1024 * 1024) {
-      setToast(`⚠️ File must be under ${MAX_MEDIA_SIZE_MB}MB`);
-      e.target.value = '';
-      return;
-    }
-    const type = file.type.startsWith('video') ? 'video' : 'image';
-    const cost = type === 'video' ? 15 : 10;
-    if (balance < cost) { setToast(`⚠️ Need ${cost} coins!`); e.target.value = ''; return; }
-
-    if (type === 'video') {
-      const video = document.createElement('video');
-      video.preload = 'metadata';
-      video.onloadedmetadata = function () {
-        window.URL.revokeObjectURL(video.src);
-        if (video.duration > 6) { // Allowing small buffer
-          setToast('⚠️ Video must be 5 seconds or less!');
-          return;
-        }
-        processUpload(file);
-      };
-      video.src = URL.createObjectURL(file);
-    } else {
-      processUpload(file);
-    }
-    e.target.value = '';
-  };
-
-  const processUpload = (file) => {
-    // Fix #5: Guard room existence before uploading
-    if (!roomIdRef.current) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      socket.emit('send-media', { roomId: roomIdRef.current, type: file.type.startsWith('video') ? 'video' : 'image', content: ev.target.result });
-    };
-    reader.readAsDataURL(file);
-  };
-
-  // Fix #6: Translator with infinite loop guard
-  useEffect(() => {
-    if (!isTranslatorActive) return;
-
-    // Find messages from stranger that aren't translated yet
-    const toTranslate = messages.find(m =>
-      !m.system &&
-      !m.media &&
-      !isFromMe(m) &&
-      !m.translated &&
-      !m.translating
-    );
-    // Fix #6: Guard — if already translating, do nothing (prevents infinite loop)
-    if (!toTranslate || toTranslate.translating) return;
-
-    const targetId = toTranslate.id;
-    setMessages(prev => prev.map(m => m.id === targetId ? { ...m, translating: true } : m));
-
-    fetch(`${API_BASE}/api/ai/translate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: toTranslate.text })
-    })
-      .then(res => res.json())
-      .then(data => {
-        setMessages(prev => prev.map(m => m.id === targetId ? { ...m, translated: data.translated, translating: false } : m));
-      })
-      .catch(() => {
-        setMessages(prev => prev.map(m => m.id === targetId ? { ...m, translating: false } : m));
-      });
-  }, [messages, isTranslatorActive]);
 
   // Rotating searching status
   useEffect(() => {
@@ -666,11 +433,9 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     const r = roomIdRef.current;
     socket.emit('typing', { roomId: r, isTyping: false });
     const payload = { roomId: r, text: t };
-    if (replyingTo) payload.replyTo = { id: replyingTo.id, text: replyingTo.text, nickname: replyingTo.nickname };
     socket.emit('send-message', payload);
     playPop();
     setInput('');
-    setReplyingTo(null);
   };
 
   const handleVoiceMessage = (audioDataUrl) => {
@@ -688,435 +453,181 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     }
   };
 
-  const generateAiSpark = async () => {
-    if (isAiGenerating) return;
-    setIsAiGenerating(true);
-
-    try {
-      const res = await fetch(`${API_BASE}/api/ai/spark`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ interest })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setInput(data.spark);
-      } else {
-        const list = AI_ICEBREAKERS[interest.toLowerCase()] || AI_ICEBREAKERS.general;
-        setInput(list[Math.floor(Math.random() * list.length)]);
-      }
-    } catch (e) {
-      const list = AI_ICEBREAKERS[interest.toLowerCase()] || AI_ICEBREAKERS.general;
-      setInput(list[Math.floor(Math.random() * list.length)]);
-    } finally {
-      setIsAiGenerating(false);
-      inputRef.current?.focus();
-    }
+  const sendQuickEmoji = (emoji) => {
+    if (!socket || !roomIdRef.current) return;
+    socket.emit('send-message', { roomId: roomIdRef.current, text: emoji });
   };
 
-  const formatTime = (ts) => {
-    if (!ts) return '';
-    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const shuffleIcebreaker = () => {
+    setInput(pickIcebreakers(1)[0]);
+    inputRef.current?.focus();
   };
+
+  const formatTimer = (secs) =>
+    `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
 
   return (
-    <div className="min-h-screen flex flex-col bg-realm-void text-[#f8fafc] font-sans selection:bg-violet-500/30 selection:text-violet-100 overflow-hidden relative">
-      {sparks.map(s => <MessageSpark key={s.id} x={s.x} y={s.y} />)}
-      {/* SYSTEM BACKGROUND DECOR */}
-      <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-violet-500/5 rounded-full blur-[120px]" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-500/5 rounded-full blur-[120px]" />
-        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-[0.03]" />
-      </div>
-
-      {/* SAFETY LAYER */}
-      <div className="absolute top-[84px] left-1/2 -translate-x-1/2 z-[100] pointer-events-none px-6 py-2 bg-emerald-500/5 border border-emerald-500/20 rounded-full flex items-center gap-3 animate-pulse">
-         <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_10px_#34d399]" />
-         <span className="text-[10px] font-black uppercase tracking-[0.4em] text-emerald-400 italic">Safe Mode Active</span>
-      </div>
-
-      {/* HEADER */}
-      <header className="fixed top-0 left-0 right-0 z-[150] h-20 px-8 flex items-center justify-between bg-black/20 backdrop-blur-3xl border-b border-white/5">
-        <div className="flex items-center gap-4">
-          <button
-            id="text-back-btn"
-            type="button"
-            onClick={handleBack}
-            className="w-10 h-10 rounded-xl bg-white/[0.03] border border-white/5 hover:border-white/20 transition-all flex items-center justify-center text-white/40 hover:text-white"
-            title="Disconnect"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
+    <div className="mm-text-chat">
+      <header className="mm-text-chat__header">
+        <div className="mm-text-chat__header-start">
+          <button type="button" onClick={handleBack} className="mm-text-chat__icon-btn" aria-label="Leave chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
           </button>
-          <img src="/helloooo-logo.png" alt="Helloooo" className="w-8 h-8 object-contain rounded-lg sm:hidden" />
-          <div className="hidden sm:flex sm:items-center sm:gap-2">
-            <HellooooLogo size={28} />
+          <div className="mm-text-chat__brand">
+            <HellooooLogo size={24} />
             <div>
               <HellooooBrand size="sm" />
-              <p className="text-[8px] font-bold text-white/20 uppercase tracking-widest mt-0.5">
-                # {interest || 'General'} Topics
-              </p>
+              <p className="mm-text-chat__topic">#{interest || 'general'}</p>
             </div>
           </div>
         </div>
-
-        <div className="flex items-center gap-4">
-          {PHASE_3_PRO.reconnectToken && <ProFeaturesMenu isProUser={isPro || subscription === 'pro'} />}
-          {PHASE_4_UNIQUE.trustScore && <TrustScoreChip trust={unique.trust} />}
-          {PHASE_4_UNIQUE.nvidiaCopilot && <AiStatusPill online={unique.aiOnline} />}
-          {PHASE_4_UNIQUE.coOpStreak && <CoOpStreakBadge minutes={unique.coOpMinutes} />}
-          {PHASE_4_UNIQUE.calmMode && (
-            <CalmModeToggle enabled={calmMode} onToggle={() => setCalmMode((c) => !c)} />
-          )}
+        <div className="mm-text-chat__header-end">
           {connected && (
-            <>
-              <div className="hidden lg:block">
-                 <CoinBadge balance={balance} streak={streak} canClaim={canClaim} nextClaim={nextClaim ?? 0} claimCoins={claimCoins} registered={registered} currentActiveSeconds={currentActiveSeconds} isCreator={isCreator} />
-              </div>
-              <div className="flex px-3 py-1.5 rounded-xl bg-emerald-500/5 border border-emerald-500/20 text-[9px] font-black text-white/40 uppercase tracking-widest gap-2 items-center">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_#34d399]" />
-                {(typeof onlineCount === 'object' ? onlineCount?.count : onlineCount) || 0} Users Online
-              </div>
-            </>
+            <CoinBadge
+              balance={balance}
+              streak={streak}
+              canClaim={canClaim}
+              nextClaim={nextClaim ?? 0}
+              claimCoins={claimCoins}
+              registered={registered}
+              currentActiveSeconds={currentActiveSeconds}
+              isCreator={isCreator}
+            />
           )}
-          {status === 'connected' && (
-            <button
-              onClick={() => setIsTranslatorActive(!isTranslatorActive)}
-              className={`p-2.5 rounded-xl border transition-all ${isTranslatorActive ? 'bg-violet-500/10 border-violet-500/50 text-violet-400' : 'bg-white/5 border-white/5 text-white/30 hover:text-white hover:border-white/20'}`}
-              title="AI Smart Translator"
-              aria-label="AI Smart Translator"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
-              </svg>
-            </button>
-          )}
-          <SettingsGearButton
-            onClick={() => setShowSettings(true)}
-            className="p-2.5 rounded-xl border bg-white/5 border-white/5 text-white/30 hover:text-white hover:border-white/20 transition-all"
-          />
+          <SettingsGearButton onClick={() => setShowSettings(true)} className="mm-text-chat__icon-btn" />
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col pt-24 pb-8 max-w-4xl w-full mx-auto px-6 gap-4 min-h-0 relative z-10">
-        <AdSlot slotKey="chat_banner" script={adScripts?.chat_banner} adsEnabled={adsEnabled} compact className="shrink-0" />
-        
-        {/* CHAT CONTAINER */}
-        <div className="flex-1 flex flex-col rounded-[40px] overflow-hidden border border-white/[0.05] bg-[#0a0a0a]/60 backdrop-blur-3xl shadow-[0_0_50px_rgba(0,0,0,0.5)] min-h-0 relative">
-          
-          {active3dEmoji && (
-            <div className="absolute inset-0 pointer-events-none z-[100] flex items-center justify-center overflow-hidden">
-               <div className="animate-in-zoom flex flex-col items-center gap-4">
-                  <picture className="drop-shadow-[0_0_30px_rgba(167,139,250,0.4)]">
-                    <source srcSet={active3dEmoji.emoji.url} type="image/webp" />
-                    <img src={active3dEmoji.emoji.url} className="w-40 h-40 object-contain" alt="3d" />
-                  </picture>
-                  <span className="bg-black/60 backdrop-blur-xl px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border border-white/10 text-violet-400 shadow-2xl">
-                    Stranger Sent {active3dEmoji.emoji.char}
-                  </span>
-               </div>
-            </div>
-          )}
+      {adsEnabled && (
+        <AdSlot slotKey="chat_banner" script={adScripts?.chat_banner} adsEnabled={adsEnabled} compact className="mm-text-chat__ad" />
+      )}
 
-          {/* PEER HEADER */}
-          {status === 'connected' && peer && (
-            <>
-              {PHASE_4_UNIQUE.structuredModes && unique.modePrompt && (
-                <div className="px-6 py-2 bg-[#76B900]/5 border-b border-[#76B900]/20 text-center">
-                  <p className="text-[11px] text-white/70 italic">&ldquo;{unique.modePrompt}&rdquo;</p>
-                </div>
-              )}
-            <div className="flex items-center justify-between px-8 py-5 border-b border-white/[0.05] bg-white/[0.01]">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-center text-xl shadow-inner group">
-                   {peer.isCreator ? '⭐' : '👤'}
-                </div>
-                <div>
-                  <h3 className="text-xs font-black uppercase tracking-[0.2em] text-white flex items-center gap-2">
-                    {countryToFlag(peer?.country)} {peer.isCreator ? `@${peer.nickname}` : 'Anonymous Stranger'}
-                    {peer.isCreator && <BlueTick />}
-                  </h3>
-                  <div className="flex items-center gap-2 mt-1">
-                     <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse shadow-[0_0_5px_#c4b5fd]" />
-                     <span className="text-[10px] font-bold text-white/20 uppercase tracking-widest">
-                       Connected • {String(Math.floor(connectedSecs / 60)).padStart(2, '0')}:{String(connectedSecs % 60).padStart(2, '0')}
-                     </span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMutedStranger((m) => !m)}
-                  className={`p-2.5 rounded-xl border transition-all ${mutedStranger ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-white/5 border-white/5 text-white/30 hover:text-white'}`}
-                  aria-label={mutedStranger ? 'Unmute stranger messages' : 'Mute stranger messages'}
-                  title={mutedStranger ? 'Unmute stranger' : 'Mute stranger'}
-                >
-                  {mutedStranger ? '🔇' : '🔊'}
-                </button>
-                <div className="w-px h-6 bg-white/5 mx-1" />
-                <button
-                  type="button"
-                  onClick={() => setShowReportModal(true)}
-                  className="px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-rose-300/90 text-[10px] font-black uppercase tracking-widest hover:bg-rose-500/10 transition-all"
-                >
-                  Report
-                </button>
-                <button
-                  type="button"
-                  onClick={() => requestSkip()}
-                  className="px-6 py-2.5 rounded-xl bg-rose-500/5 border border-rose-500/20 text-rose-400 text-[10px] font-black uppercase tracking-widest hover:bg-rose-500/10 transition-all active:scale-95"
-                >
-                  End Chat
-                </button>
-              </div>
+      {status === 'connected' && peer && (
+        <div className="mm-text-chat__peer">
+          <div className="mm-text-chat__peer-info">
+            <span className="mm-text-chat__peer-avatar" aria-hidden>{peer.isCreator ? '⭐' : '👤'}</span>
+            <div className="min-w-0">
+              <p className="mm-text-chat__peer-name">
+                {countryToFlag(peer?.country)}{' '}
+                {peer.isCreator ? `@${peer.nickname}` : (peer.nickname || 'Stranger')}
+                {peer.isCreator && <BlueTick />}
+              </p>
+              <p className="mm-text-chat__peer-meta">Connected · {formatTimer(connectedSecs)}</p>
             </div>
-            </>
-          )}
-
-          {/* IDLE / SEARCHING STATES */}
-          {(status === 'idle' || status === 'searching') && (
-            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center gap-8">
-              <div className="relative">
-                <div className="w-32 h-32 rounded-[40px] bg-white/[0.02] border border-violet-500/10 flex items-center justify-center text-5xl relative z-10 animate-pulse-slow shadow-[inset_0_0_40px_rgba(167,139,250,0.05)]">
-                  {status === 'idle' ? '💬' : '🔍'}
-                </div>
-                <div className="absolute inset-[-20px] border border-violet-500/5 rounded-[60px] animate-spin-slower" />
-                <div className="absolute inset-[-40px] border border-violet-500/[0.03] rounded-[80px] animate-reverse-spin-slow opacity-50" />
-              </div>
-              <div className="space-y-4 max-w-sm">
-                <h2 className="text-xl font-black italic uppercase tracking-tighter text-white">
-                  {status === 'idle' ? 'Start Text Chat' : SEARCHING_STATUSES[searchStatusIndex]}
-                </h2>
-                <p className="text-[10px] font-bold text-white/20 uppercase tracking-[0.3em] leading-relaxed">
-                  {status === 'idle' 
-                    ? 'Connect with people across the globe. Privacy protected.' 
-                    : 'System is matching you with an available person...'}
-                </p>
-              </div>
-              {status === 'searching' && (
-                <div className="flex gap-2">
-                   <div className="w-2 h-2 rounded-full bg-violet-400 animate-bounce" />
-                   <div className="w-2 h-2 rounded-full bg-violet-400 animate-bounce [animation-delay:0.2s]" />
-                   <div className="w-2 h-2 rounded-full bg-violet-400 animate-bounce [animation-delay:0.4s]" />
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* CHAT MESSAGES DISPLAY */}
-          {status === 'connected' && (
-            <div
-              className="flex-1 overflow-y-auto custom-scrollbar px-3 py-4 sm:px-6 sm:py-6 space-y-1 min-h-0 overscroll-contain"
-              id="text-chat-messages"
-            >
-              {messages.length === 0 && (
-                <div className="text-center py-12 px-4">
-                  <div className="text-3xl mb-2" aria-hidden>👋</div>
-                  <p className="text-sm font-semibold text-white/70">You&apos;re connected</p>
-                  <p className="text-xs text-white/35 mt-1">Say hello to break the ice.</p>
-                </div>
-              )}
-              {messages.map((m, i) => {
-                const isMe = isFromMe(m);
-                if (mutedStranger && !isMe && !m.system) return null;
-                // Fix #9: Stable key — never use array index as fallback
-                return <VanishingMessage key={m.id ?? `${m.socketId}-${m.ts}`} m={m} isMe={isMe} onReply={(msg) => setReplyingTo(msg)} />;
-              })}
-              {strangerTyping && (
-                <div className="flex items-center gap-2 self-start mt-1" aria-live="polite">
-                  <div className="flex gap-1 items-center bg-white/[0.07] border border-white/10 py-2.5 px-3.5 rounded-2xl rounded-bl-md text-white/70">
-                    <span className="mm-typing-dot" />
-                    <span className="mm-typing-dot" />
-                    <span className="mm-typing-dot" />
-                  </div>
-                  <span className="text-[11px] text-white/35">typing…</span>
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-          )}
+          </div>
+          <div className="mm-text-chat__peer-actions">
+            <button type="button" className="mm-text-chat__peer-btn" onClick={() => setShowReportModal(true)}>Report</button>
+            <button type="button" className="mm-text-chat__peer-btn mm-text-chat__peer-btn--skip" onClick={requestSkip}>Skip</button>
+          </div>
         </div>
+      )}
 
-        {/* INPUT & CONTROLS */}
-        <div className="flex flex-col gap-3 relative z-10">
-           {replyingTo && (
-              <div className="absolute -top-12 left-4 right-4 bg-black/60 backdrop-blur-md border border-white/10 rounded-xl px-4 py-2 flex justify-between items-center z-[100] animate-in-zoom">
-                <div className="flex items-center gap-2 overflow-hidden">
-                   <span className="text-xs">↩️</span>
-                   <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Replying to {replyingTo.nickname || 'Stranger'}:</span>
-                   <span className="text-xs text-white/80 truncate opacity-60 italic">"{replyingTo.text?.slice(0, 40)}{replyingTo.text?.length > 40 ? '...' : ''}"</span>
-                </div>
-                <button onClick={() => setReplyingTo(null)} className="text-white/40 hover:text-white p-1 ml-2">✕</button>
+      <main className="mm-text-chat__main">
+        {(status === 'idle' || status === 'searching') && (
+          <div className="mm-text-chat__empty">
+            <div className="mm-text-chat__empty-icon" aria-hidden>{status === 'idle' ? '💬' : '🔍'}</div>
+            <h2>{status === 'idle' ? 'Text chat' : SEARCHING_STATUSES[searchStatusIndex]}</h2>
+            <p>{status === 'idle' ? 'Tap start to match with someone new.' : 'Hang tight — finding your next chat…'}</p>
+            {status === 'searching' && (
+              <div className="mm-text-chat__dots" aria-hidden>
+                <span /><span /><span />
               </div>
-           )}
+            )}
+          </div>
+        )}
 
-           {(status === 'connected' || status === 'searching') && (
-             <ChatMatchStatus
-               className="mm-chat-match-status--text"
-               status={status === 'connected' ? 'connected' : 'searching'}
-               peerCountry={peer?.country}
-               peerName={peer?.nickname}
-               matchedInterests={status === 'connected' ? sharedInterests : []}
-             />
-           )}
+        {status === 'connected' && (
+          <div ref={chatScrollRef} className="mm-text-chat__messages custom-scrollbar" id="text-chat-messages">
+            {messages.length === 0 && (
+              <div className="mm-text-chat__welcome">
+                <p>👋 You&apos;re connected</p>
+                <span>Say hello to start the conversation.</span>
+              </div>
+            )}
+            {messages.map((m) => (
+              <ChatBubble key={m.id ?? `${m.socketId}-${m.ts}`} m={m} isMe={isFromMe(m)} />
+            ))}
+            {strangerTyping && (
+              <div className="mm-text-chat__typing" aria-live="polite">
+                <span className="mm-typing-dot" /><span className="mm-typing-dot" /><span className="mm-typing-dot" />
+                <span>typing…</span>
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+        )}
+      </main>
 
-           {status === 'connected' && (
-             <div className="flex flex-wrap gap-1.5 mb-1">
-               {quickPrompts.map((q) => (
-                 <button
-                   key={q}
-                   type="button"
-                   onClick={() => setInput(q)}
-                   className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-white/[0.04] border border-white/10 text-white/55 hover:border-violet-500/35 hover:text-violet-200 transition-colors"
-                 >
-                   {q}
-                 </button>
-               ))}
-             </div>
-           )}
+      <footer className="mm-text-chat__footer">
+        {(status === 'connected' || status === 'searching') && (
+          <ChatMatchStatus
+            className="mm-chat-match-status--text"
+            status={status === 'connected' ? 'connected' : 'searching'}
+            peerCountry={peer?.country}
+            peerName={peer?.nickname}
+            matchedInterests={status === 'connected' ? sharedInterests : []}
+          />
+        )}
 
-           <SkipProSheet
-             open={showSkipSheet}
-             onClose={() => setShowSkipSheet(false)}
-             onSkip={executeSkip}
-             isPro={isPro || subscription === 'pro'}
-             partnerName={peer?.nickname || 'stranger'}
-             partnerUserId={peer?.userId}
-             userCountry={country}
-             onActivated={() => window.location.reload()}
-           />
+        {status === 'connected' && (
+          <div className="mm-text-chat__prompts">
+            {quickPrompts.map((q) => (
+              <button key={q} type="button" className="mm-text-chat__prompt" onClick={() => setInput(q)}>{q}</button>
+            ))}
+            <button type="button" className="mm-text-chat__prompt mm-text-chat__prompt--shuffle" onClick={shuffleIcebreaker}>💡 Idea</button>
+          </div>
+        )}
 
-           <div className="flex items-end gap-2 sm:gap-3">
-              {(status === 'idle') ? (
-                <button
-                  onClick={handleStart}
-                  className="flex-1 min-h-[52px] sm:min-h-[56px] rounded-2xl bg-violet-500 text-black font-bold text-sm hover:bg-violet-400 transition-all shadow-[0_0_28px_rgba(167,139,250,0.35)] active:scale-[0.98]"
-                >
-                  Start chat
-                </button>
-              ) : (
-                <button
-                  onClick={requestSkip}
-                  className="shrink-0 px-4 sm:w-28 min-h-[52px] sm:min-h-[56px] rounded-2xl bg-white/[0.04] border border-white/10 hover:border-violet-500/40 text-white/60 hover:text-violet-300 font-semibold text-xs transition-all hover:bg-violet-500/5"
-                >
-                  {status === 'searching' ? 'Abort' : 'Skip'}
-                </button>
+        <SkipProSheet
+          open={showSkipSheet}
+          onClose={() => setShowSkipSheet(false)}
+          onSkip={executeSkip}
+          isPro={isPro || subscription === 'pro'}
+          partnerName={peer?.nickname || 'stranger'}
+          partnerUserId={peer?.userId}
+          userCountry={country}
+          onActivated={() => window.location.reload()}
+        />
+
+        <div className="mm-text-chat__input-bar">
+          {status === 'idle' ? (
+            <button type="button" className="mm-btn mm-btn--primary mm-text-chat__start" onClick={handleStart}>Start chat</button>
+          ) : (
+            <>
+              <button type="button" className="mm-text-chat__skip-btn" onClick={requestSkip}>
+                {status === 'searching' ? 'Stop' : 'Skip'}
+              </button>
+              {status === 'connected' && (
+                <div className="mm-text-chat__emoji-row">
+                  {QUICK_EMOJIS.map((emoji) => (
+                    <button key={emoji} type="button" className="mm-text-chat__emoji-btn" onClick={() => sendQuickEmoji(emoji)} aria-label={`Send ${emoji}`}>{emoji}</button>
+                  ))}
+                </div>
               )}
-
               {(status === 'connected' || status === 'searching') && (
                 <ChatInputWithEmoji
                   value={input}
                   onChange={handleInputChange}
                   onSend={sendMsg}
-                  placeholder={
-                    status === 'connected'
-                      ? (isAiGenerating ? 'AI is thinking…' : 'Type a message…')
-                      : 'Searching for a next user…'
-                  }
-                  disabled={status !== 'connected' || isAiGenerating}
+                  placeholder={status === 'connected' ? 'Type a message…' : 'Searching for a next user…'}
+                  disabled={status !== 'connected'}
                   showVoice={PHASE_2.voiceMessages}
                   onVoiceMessage={handleVoiceMessage}
                   enterToSend={prefs.enterToSend}
                   className="flex-1 min-w-0"
-                  /* 16px font stops iOS Safari zooming on focus */
-                  inputClassName="min-h-[52px] sm:min-h-[56px] rounded-2xl bg-white/[0.05] border-white/10 focus:border-violet-500/50 text-[16px] sm:text-sm font-normal normal-case tracking-normal not-italic backdrop-blur-xl placeholder:text-white/30"
+                  inputClassName="mm-text-chat__input"
                 />
               )}
-           </div>
-
-           {/* ACTION DOCK */}
-           {status === 'connected' && (
-             <div className="flex items-center justify-between px-2">
-                <div className="flex items-center gap-2">
-                   {QUICK_REACTIONS.map(emoji => (
-                     <button
-                       key={emoji}
-                       onClick={() => {
-                        if (balance >= 5) send3dEmoji(EMOJIS_3D.find(e => e.char === emoji) || {char: emoji, url: ''});
-                        else socket.emit('send-message', {roomId: roomIdRef.current, text: emoji});
-                       }}
-                       className="w-10 h-10 rounded-xl bg-white/[0.02] border border-white/5 hover:border-violet-500/20 text-lg flex items-center justify-center grayscale hover:grayscale-0 transition-all"
-                       aria-label={`Send reaction ${emoji}`}
-                     >
-                       {emoji}
-                     </button>
-                   ))}
-                   <div className="w-px h-6 bg-white/5 mx-2" />
-                   <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-10 h-10 rounded-xl bg-white/[0.02] border border-white/5 hover:border-emerald-500/40 text-emerald-400 flex items-center justify-center text-lg hover:bg-emerald-500/5 transition-all"
-                    aria-label="Send image or video"
-                   >📂</button>
-                   <input type="file" ref={fileInputRef} className="hidden" accept="image/*,video/*" onChange={handleMediaUpload} />
-
-                   <div className="relative">
-                     <button
-                      onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                      className={`w-10 h-10 rounded-xl bg-white/[0.02] border ${showEmojiPicker ? 'border-amber-500 bg-amber-500/10' : 'border-white/5'} hover:border-amber-500/40 text-amber-400 flex items-center justify-center text-lg transition-all`}
-                      aria-label="Open emoji picker"
-                     >✨</button>
-                     {showEmojiPicker && (
-                       <div className="absolute bottom-full left-0 mb-4 p-5 bg-black/90 backdrop-blur-3xl border border-white/10 rounded-[40px] w-[280px] shadow-[0_0_50px_rgba(0,0,0,0.8)] animate-in-zoom z-[500]">
-                          <div className="text-[9px] font-black uppercase tracking-[0.3em] text-white/20 mb-4">Expressive Icons (Free)</div>
-                          <div className="grid grid-cols-6 gap-2 mb-6">
-                             {['😊','😂','🔥','❤️','✨','💎','🚀','🎉','🤔','😮','👑','🍕'].map(c => (
-                               <button key={c} onClick={() => {
-                                 const rid = roomIdRef.current;
-                                 if (socket && rid) socket.emit('send-message', {roomId: rid, text: c});
-                                 setShowEmojiPicker(false);
-                               }} className="w-9 h-9 rounded-xl hover:bg-white/10 flex items-center justify-center text-lg transition-all">{c}</button>
-                             ))}
-                          </div>
-                          
-                          <div className="text-[9px] font-black uppercase tracking-[0.3em] text-violet-400/40 mb-4">Premium Emojis (5🪙)</div>
-                          <div className="grid grid-cols-4 gap-2">
-                             {EMOJIS_3D.map(e => (
-                               <button key={e.char} onClick={() => send3dEmoji(e)} className="w-12 h-12 rounded-xl bg-white/[0.03] border border-white/5 hover:border-violet-500/40 flex items-center justify-center text-xl transition-all shadow-inner">{e.char}</button>
-                             ))}
-                          </div>
-                       </div>
-                     )}
-                   </div>
-                </div>
-
-                <button 
-                  onClick={generateAiSpark}
-                  disabled={isAiGenerating}
-                  className={`px-5 py-2.5 rounded-2xl border transition-all text-[9px] font-black uppercase tracking-widest flex items-center gap-2 ${isAiGenerating ? 'bg-violet-500/10 border-violet-500/30 text-violet-400 animate-pulse' : 'bg-white/5 border-white/5 text-white/30 hover:border-violet-500/40 hover:text-violet-400'}`}
-                >
-                  <svg className={`w-3.5 h-3.5 ${isAiGenerating ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                  {isAiGenerating ? 'AI thinking...' : 'AI Icebreaker'}
-                </button>
-             </div>
-           )}
+            </>
+          )}
         </div>
-
-        <div className="flex justify-between items-center px-4 font-black uppercase text-[8px] tracking-[0.5em] text-white/5">
-           <span>Secure Encryption Active</span>
-           <span>User ID {socket?.id?.substring(0, 8)}</span>
-        </div>
-      </main>
-
-      <NvidiaCopilotToast
-        prompt={unique.copilotPrompt}
-        onUse={() => unique.applyCopilotToInput(setInput)}
-        onDismiss={unique.dismissCopilot}
-      />
+      </footer>
 
       {toast && (
-        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-[2000] max-w-[90vw] px-4 py-3 rounded-2xl bg-black/90 border border-white/10 text-xs font-bold text-white shadow-2xl animate-fade-in-up">
-          {toast}
-        </div>
+        <div className="mm-text-chat__toast" role="status">{toast}</div>
       )}
 
-      <ReportSafetyModal
-        open={showReportModal}
-        onClose={() => setShowReportModal(false)}
-        onSubmit={submitSafetyReport}
-      />
-
+      <ReportSafetyModal open={showReportModal} onClose={() => setShowReportModal(false)} onSubmit={submitSafetyReport} />
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </div>
   );
