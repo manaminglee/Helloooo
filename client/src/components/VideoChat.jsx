@@ -43,6 +43,7 @@ import { ChatInputWithEmoji } from './ChatInputWithEmoji';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { useUniqueSession } from '../hooks/useUniqueSession';
 import { useAdminMonitorFrames } from '../hooks/useAdminMonitorFrames';
+import { useFaceBlurStream } from '../hooks/useFaceBlurStream';
 import {
   AiStatusPill,
   CalmModeToggle,
@@ -426,6 +427,21 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [localMirrored, setLocalMirrored] = useState(true);
   const [lowBandwidth, setLowBandwidth] = useState(false);
   const [localStream, setLocalStream] = useState(null);
+  const [faceBlur, setFaceBlur] = useState(() => {
+    try { return localStorage.getItem('mm_face_blur') === '1'; } catch { return false; }
+  });
+
+  const mirrorForFaceBlur = (typeof window !== 'undefined' && window.innerWidth < 640)
+    ? facingMode === 'user'
+    : localMirrored;
+
+  const {
+    publishStream: faceBlurStream,
+    loading: faceBlurLoading,
+    error: faceBlurError,
+  } = useFaceBlurStream(localStream, { enabled: faceBlur, mirror: mirrorForFaceBlur });
+
+  const localPreviewStream = faceBlurStream || localStream;
   const latency = useLatency(); // coarse fallback only until real RTC stats arrive
   const [rtcLatency, setRtcLatency] = useState(null); // real RTT (ms) from RTCPeerConnection.getStats()
   const [isAiGenerating, setIsAiGenerating] = useState(false);
@@ -455,7 +471,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     () => (typeof window !== 'undefined' ? window.localStorage.getItem('mm_audioDeviceId') : null)
   );
   const [remoteVolume, setRemoteVolume] = useState(1);
-  const [cameraBlur, setCameraBlur] = useState(false);
   const [connectedSecs, setConnectedSecs] = useState(0);
   const connectedSecsRef = useRef(0);
   const [p2pHealth, setP2pHealth] = useState('good');
@@ -515,7 +530,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   }, [status]);
 
   const localVideoRef = useRef(null);
-  const localVideoSplitRef = useRef(null);
   const localVideoSplitRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const localStreamRef = useRef(null);
@@ -597,17 +611,17 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   const bindLocalVideo = useCallback((el) => {
     localVideoRef.current = el;
-    if (el && localStreamRef.current) {
-      attachStreamToVideo(el, localStreamRef.current);
+    if (el && localPreviewStream) {
+      attachStreamToVideo(el, localPreviewStream);
     }
-  }, []);
+  }, [localPreviewStream]);
 
   const bindLocalSplitVideo = useCallback((el) => {
     localVideoSplitRef.current = el;
-    if (el && localStreamRef.current) {
-      attachStreamToVideo(el, localStreamRef.current);
+    if (el && localPreviewStream) {
+      attachStreamToVideo(el, localPreviewStream);
     }
-  }, []);
+  }, [localPreviewStream]);
 
   useAdminMonitorFrames(socket, {
     active: status === 'connected' && !!roomId,
@@ -1117,9 +1131,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   }, [selectedVideoDeviceId, selectedAudioDeviceId]);
 
   useEffect(() => {
-    if (!localStream) return;
-    const vt = localStream.getVideoTracks()[0];
-    const at = localStream.getAudioTracks()[0];
+    const stream = localPreviewStream;
+    if (!stream) return;
+    const vt = stream.getVideoTracks()[0];
+    const at = stream.getAudioTracks()[0];
 
     peerConnectionsRef.current.forEach((pc) => {
       if (pc.signalingState === 'closed') return;
@@ -1128,17 +1143,17 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       const as = senders.find((s) => s.track?.kind === 'audio');
 
       if (!vs && vt) {
-        try { pc.addTrack(vt, localStream); } catch { /* already negotiating */ }
+        try { pc.addTrack(vt, stream); } catch { /* already negotiating */ }
       } else if (vs && vt) {
         vs.replaceTrack(vt).catch(() => { });
       }
       if (!as && at) {
-        try { pc.addTrack(at, localStream); } catch { /* ignore */ }
+        try { pc.addTrack(at, stream); } catch { /* ignore */ }
       } else if (as && at) {
         as.replaceTrack(at).catch(() => { });
       }
     });
-  }, [localStream]);
+  }, [localPreviewStream]);
 
   useEffect(() => {
     if (!localStream) return;
@@ -1159,13 +1174,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   }, [lowBandwidth, autoBandwidth, effectiveLatency, localStream]);
 
   useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      attachStreamToVideo(localVideoRef.current, localStream);
+    if (localVideoRef.current && localPreviewStream) {
+      attachStreamToVideo(localVideoRef.current, localPreviewStream);
     }
-    if (localVideoSplitRef.current && localStream) {
-      attachStreamToVideo(localVideoSplitRef.current, localStream);
+    if (localVideoSplitRef.current && localPreviewStream) {
+      attachStreamToVideo(localVideoSplitRef.current, localPreviewStream);
     }
-  }, [localStream, status, chatCollapsed]);
+  }, [localPreviewStream, status, chatCollapsed]);
 
   useEffect(() => {
     const el = remoteVideoRef.current;
@@ -1310,7 +1325,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     findPartnerEmittedRef.current = false;
     setConnectPhase(connected ? 'signaling' : 'webrtc');
     setStatus('searching');
-    setGoodVibesSent(false); setGoodVibesMatch(false); setCameraBlur(false);
+    setGoodVibesSent(false); setGoodVibesMatch(false); setFaceBlur(false);
     setStrangerFilter('none'); setStrangerBlur(false);
     if (socket) {
       if (rid) socket.emit('leave-room', { roomId: rid });
@@ -1336,7 +1351,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     disposeWarmPc();
     setConnectPhase('boot');
     setStatus('idle');
-    setGoodVibesSent(false); setGoodVibesMatch(false); setCameraBlur(false);
+    setGoodVibesSent(false); setGoodVibesMatch(false); setFaceBlur(false);
     setStrangerFilter('none'); setStrangerBlur(false);
     if (rid && socket) socket.emit('leave-room', { roomId: rid });
     socket?.emit('cancel-find-partner');
@@ -1586,7 +1601,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       }
       if (e.code === 'KeyM') { e.preventDefault(); toggleMute(); }
       if (e.code === 'KeyV') { e.preventDefault(); toggleCamera(); }
-      if (e.code === 'KeyB') { e.preventDefault(); setCameraBlur(prev => !prev); }
+      if (e.code === 'KeyB') {
+        e.preventDefault();
+        setFaceBlur((prev) => {
+          const next = !prev;
+          try { localStorage.setItem('mm_face_blur', next ? '1' : '0'); } catch { /* ignore */ }
+          return next;
+        });
+      }
       if (e.code === 'KeyC') { e.preventDefault(); setShowChat(prev => !prev); }
       if (e.key.toLowerCase() === 's' && status === 'idle') { e.preventDefault(); handleStart(); }
     };
@@ -1613,9 +1635,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   useEffect(() => {
     if (socket && roomIdRef.current && status === 'connected') {
-      socket.emit('video-style', { roomId: roomIdRef.current, filter: activeFilter, blur: cameraBlur });
+      socket.emit('video-style', { roomId: roomIdRef.current, filter: activeFilter, blur: false });
     }
-  }, [activeFilter, cameraBlur, socket, status]);
+  }, [activeFilter, socket, status]);
 
   const balanceRef = useRef(balance);
   useEffect(() => {
@@ -2806,8 +2828,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                     {connectPhase !== 'video' && (
                       <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 backdrop-blur-[2px]">
                         <VideoSearchingOverlay
-                          compact
-                          label={connectPhase === 'matched' ? 'Match found…' : 'Connecting…'}
+                          label="Searching…"
+                          sublabel="Almost connected"
                         />
                       </div>
                     )}
@@ -2894,13 +2916,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 </button>
               </div>
             )}
-            {status === 'searching' && (
-              <VideoSearchingOverlay
-                fill
-                label="Searching…"
-                sublabel="Finding someone for you"
-              />
-            )}
             {(status === 'idle' || status === 'searching') && (
               <>
                 {cameraError && !localStream && <AudioOnlyFallback nickname={nickname} micBlocked={micBlocked} onRetryCamera={retryMediaLocal} onAudioOnly={continueAudioOnly} />}
@@ -2919,8 +2934,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 {connectPhase !== 'video' && (
                   <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 backdrop-blur-[2px]">
                     <VideoSearchingOverlay
-                      compact
-                      label={connectPhase === 'matched' ? 'Match found…' : 'Connecting…'}
+                      label="Searching…"
+                      sublabel="Almost connected"
                     />
                   </div>
                 )}
@@ -3004,6 +3019,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               </div>
             )}
           </div>
+
+          {status === 'searching' && (
+            <VideoSearchingOverlay
+              panel
+              label="Searching…"
+              sublabel="Finding someone for you"
+            />
+          )}
 
           {status === 'connected' && (
             <div ref={chatPanelRef} className={`mm-mobile-chat ${chatCollapsed ? 'mm-mobile-chat--collapsed' : ''}`} id="video-chat-messages-wrap">
@@ -3263,6 +3286,15 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           localStorage.setItem('mm_auto_stranger_blur', next ? '1' : '0');
         }}
         autoStrangerBlur={autoStrangerBlur}
+        onToggleFaceBlur={() => {
+          setFaceBlur((prev) => {
+            const next = !prev;
+            try { localStorage.setItem('mm_face_blur', next ? '1' : '0'); } catch { /* ignore */ }
+            return next;
+          });
+        }}
+        faceBlur={faceBlur}
+        faceBlurLoading={faceBlurLoading}
       />
       <DevicePickerSheet
         open={showDevicePicker}

@@ -18,6 +18,8 @@ import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream, releaseM
 import { createGroupGridCapture, pickRecorderMimeType } from '../utils/groupGridCapture';
 import { useYoutubeLive } from '../hooks/useYoutubeLive';
 import { useLiveKitGroup } from '../hooks/useLiveKitGroup';
+import { useFaceBlurStream } from '../hooks/useFaceBlurStream';
+import { replaceOutgoingVideoTracks } from '../utils/replaceOutgoingVideoTracks';
 import { MiniChatGameModal } from './MiniChatGamePanel';
 import { CreatorLiveModal } from './CreatorLiveModal';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
@@ -105,6 +107,15 @@ function avatarColor(name = '') {
   let h = 0;
   for (let i = 0; i < name.length; i++) h += name.charCodeAt(i);
   return hues[h % hues.length];
+}
+
+function GroupChatFadeNotice({ text, noticeKey }) {
+  if (!text) return null;
+  return (
+    <div key={noticeKey} className="mm-group-chat-fade-notice" role="status">
+      {text}
+    </div>
+  );
 }
 
 function GroupDeskChatRow({ m, isMe }) {
@@ -341,6 +352,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const [icebreaker] = useState(() => ICEBREAKERS[Math.floor(Math.random() * ICEBREAKERS.length)]);
   const localVideoRef = useRef(null);
   const localStreamRef = useRef(null);
+  const [rawLocalStream, setRawLocalStream] = useState(null);
   const [localStreamReady, setLocalStreamReady] = useState(false);
   const peerConnectionsRef = useRef(new Map());
   const pendingCandidatesRef = useRef(new Map());
@@ -373,8 +385,11 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const gridCaptureRef = useRef(null);
   const isRecordingRef = useRef(false);
   const chunksRef = useRef([]);
-  const [toast, setToast] = useState(null);
-  const [cameraBlur, setCameraBlur] = useState(false);
+  const [chatNotice, setChatNotice] = useState(null);
+  const [chatNoticeKey, setChatNoticeKey] = useState(0);
+  const [faceBlur, setFaceBlur] = useState(() => {
+    try { return localStorage.getItem('mm_face_blur') === '1'; } catch { return false; }
+  });
   const [connectedSecs, setConnectedSecs] = useState(0);
   const [showWave, setShowWave] = useState(false);
   const [moodEmoji, setMoodEmoji] = useState(null);
@@ -398,7 +413,6 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const [chatCollapsed, setChatCollapsed] = useState(true);
   const [chatUnread, setChatUnread] = useState(0);
   const [peerRecording, setPeerRecording] = useState(false);
-  const [showSafetyNudge, setShowSafetyNudge] = useState(false);
   const [videoDevices, setVideoDevices] = useState([]);
   const [audioDevices, setAudioDevices] = useState([]);
   const chatPanelRef = useRef(null);
@@ -408,7 +422,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const [localReactions, setLocalReactions] = useState([]); // {id, emoji, x, y}
   const audioAnalyzersRef = useRef(new Map()); // socketId -> analyzer
   const typingTimerRef = useRef(null);
-  const toastTimerRef = useRef(null);
+  const chatNoticeTimerRef = useRef(null);
   const inputRef = useRef(null);
   const connTimerRef = useRef(null);
   const [calmMode, setCalmMode] = useState(calmModeProp);
@@ -416,6 +430,14 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const [sfuRoomId, setSfuRoomId] = useState(null);
   const sfuEnabledRef = useRef(false);
   useEffect(() => { sfuEnabledRef.current = sfuEnabled; }, [sfuEnabled]);
+
+  const showChatNotice = useCallback((text, duration = 4000) => {
+    if (!text) return;
+    setChatNotice(text);
+    setChatNoticeKey((k) => k + 1);
+    clearTimeout(chatNoticeTimerRef.current);
+    chatNoticeTimerRef.current = setTimeout(() => setChatNotice(null), duration);
+  }, []);
 
   const livekit = useLiveKitGroup({
     enabled: sfuEnabled,
@@ -425,15 +447,40 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     active: !isQueuing && sfuEnabled && !!sfuRoomId,
   });
 
+  useEffect(() => {
+    if (sfuEnabled && livekit.localStream) {
+      setRawLocalStream(livekit.localStream);
+      localStreamRef.current = livekit.localStream;
+      setLocalStreamReady(true);
+    }
+  }, [sfuEnabled, livekit.localStream]);
+
+  const cameraSource = sfuEnabled ? livekit.localStream : rawLocalStream;
+  const {
+    publishStream: faceBlurStream,
+    loading: faceBlurLoading,
+  } = useFaceBlurStream(cameraSource, {
+    enabled: faceBlur,
+    mirror: facingMode === 'user',
+  });
+  const outboundStream = faceBlurStream || cameraSource;
+
   // SFU path: bind LiveKit local + remote tracks into existing UI state
   useEffect(() => {
     if (!sfuEnabled) return;
-    if (livekit.localStream) {
-      localStreamRef.current = livekit.localStream;
+    if (outboundStream) {
+      localStreamRef.current = outboundStream;
       setLocalStreamReady(true);
-      if (localVideoRef.current) attachStreamToVideo(localVideoRef.current, livekit.localStream);
+      if (localVideoRef.current) attachStreamToVideo(localVideoRef.current, outboundStream);
     }
-  }, [sfuEnabled, livekit.localStream]);
+  }, [sfuEnabled, outboundStream]);
+
+  useEffect(() => {
+    if (!sfuEnabled || !livekit.connected || isScreenSharing) return;
+    const vt = faceBlur ? outboundStream?.getVideoTracks()?.[0] : cameraSource?.getVideoTracks()?.[0];
+    if (!vt) return;
+    livekit.replacePublishedVideo(vt);
+  }, [sfuEnabled, livekit.connected, faceBlur, outboundStream, cameraSource, isScreenSharing, livekit]);
 
   useEffect(() => {
     if (!sfuEnabled) return;
@@ -449,13 +496,13 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
   useEffect(() => {
     if (!sfuEnabled || !livekit.error) return;
-    setToast(`⚠️ SFU: ${livekit.error}`);
+    showChatNotice(`⚠️ SFU: ${livekit.error}`);
   }, [sfuEnabled, livekit.error]);
 
   useEffect(() => {
     if (sfuEnabled && livekit.connected) {
       setP2pHealth('good');
-      setToast('📡 Connected via LiveKit SFU');
+      showChatNotice('📡 Connected via LiveKit SFU');
     }
   }, [sfuEnabled, livekit.connected]);
 
@@ -513,7 +560,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     const target = targetSid || tipTargetSid || peers.find((p) => p.isCreator)?.socketId;
     if (!socket || !rid || !target || balance < amount) return;
     socket.emit('tip-creator', { roomId: rid, targetSocketId: target, amount });
-    setToast(`Sent ${amount} coins!`);
+    showChatNotice(`Sent ${amount} coins!`);
     setTipTargetSid(null);
   };
 
@@ -536,17 +583,12 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     });
   };
 
-  const dismissSafetyNudge = () => {
-    sessionStorage.setItem('mm_group_video_safety_seen', '1');
-    setShowSafetyNudge(false);
-  };
-
   const handleRateConversation = (rating) => {
     const rid = roomIdRef.current || roomId;
     socket?.emit('rate-conversation', { rating, roomId: rid });
     setRatingDone(true);
     setShowRating(false);
-    setToast('Thanks for your feedback!');
+    showChatNotice('Thanks for your feedback!');
     finishLeaveRoom();
   };
 
@@ -696,7 +738,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       const nick = (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('mm_group_rejoin_nick') : null) || nickname || 'Anonymous';
       if (rid) {
         socket.emit('join-specific-group', { roomId: rid, nickname: nick });
-        setToast('🔄 Rejoining your pod after reconnect…');
+        showChatNotice('🔄 Rejoining your pod after reconnect…');
       }
     };
     socket.on('connect', onConnect);
@@ -712,11 +754,11 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   };
 
   const startRecording = () => {
-    if (!isCreator) { setToast('⚠️ Recording is for verified creators only.'); return; }
-    if (!localStreamRef.current) { setToast('⚠️ Start your camera first.'); return; }
+    if (!isCreator) { showChatNotice('⚠️ Recording is for verified creators only.'); return; }
+    if (!localStreamRef.current) { showChatNotice('⚠️ Start your camera first.'); return; }
     const mimeType = pickRecorderMimeType();
     if (!MediaRecorder.isTypeSupported(mimeType)) {
-      setToast('⚠️ WebM recording not supported on this browser.');
+      showChatNotice('⚠️ WebM recording not supported on this browser.');
       return;
     }
     const capture = ensureGridCapture();
@@ -744,20 +786,20 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     recorderRef.current = recorder;
     setIsRecording(true);
     emitRecordingStatus(true);
-    setToast('🎥 Recording 2×2 grid');
+    showChatNotice('🎥 Recording 2×2 grid');
   };
 
   const stopRecording = () => {
     if (!recorderRef.current) return;
     recorderRef.current.stop();
     recorderRef.current = null;
-    setToast('🎥 Recording saved');
+    showChatNotice('🎥 Recording saved');
   };
 
   const startYoutubeLive = async (streamKey) => {
     if (!isCreator || !socket) return;
     if (!localStreamRef.current) {
-      setToast('⚠️ Start your camera first.');
+      showChatNotice('⚠️ Start your camera first.');
       throw new Error('Start your camera first.');
     }
     const capture = ensureGridCapture();
@@ -765,20 +807,20 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     try {
       await youtubeLive.startLive(streamKey, combined);
       setShowLiveModal(false);
-      setToast('🔴 Live on YouTube');
+      showChatNotice('🔴 Live on YouTube');
     } catch (err) {
       if (!isRecordingRef.current) {
         gridCaptureRef.current?.stop();
         gridCaptureRef.current = null;
       }
-      setToast(`⚠️ ${err.message || 'Could not go live'}`);
+      showChatNotice(`⚠️ ${err.message || 'Could not go live'}`);
       throw err;
     }
   };
 
   const stopYoutubeLive = () => {
     youtubeLive.stopLive();
-    setToast('Live stream ended');
+    showChatNotice('Live stream ended');
   };
 
   // Fetch active groups/interests on mount and when modal opens
@@ -800,13 +842,35 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     gridCaptureRef.current?.updateStreams(getGridStreams());
   }, [peers, isRecording, youtubeLive.isLive, getGridStreams, localStreamReady]);
 
-  // Toast auto-dismiss
   useEffect(() => {
-    if (!toast) return;
-    clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
-    return () => clearTimeout(toastTimerRef.current);
-  }, [toast]);
+    if (sessionStorage.getItem('mm_group_video_safety_seen')) return;
+    showChatNotice('Stay safe — never share personal info. Report or leave anytime.', 6000);
+    sessionStorage.setItem('mm_group_video_safety_seen', '1');
+  }, [showChatNotice]);
+
+  const peerRecordingNotified = useRef(false);
+  useEffect(() => {
+    if (peerRecording && !isCreator) {
+      if (!peerRecordingNotified.current) {
+        showChatNotice('A creator may be recording this session.', 5000);
+        peerRecordingNotified.current = true;
+      }
+      return;
+    }
+    peerRecordingNotified.current = false;
+  }, [peerRecording, isCreator, showChatNotice]);
+
+  const creatorLiveNotified = useRef(false);
+  useEffect(() => {
+    if (creatorLiveActive && !isCreator) {
+      if (!creatorLiveNotified.current) {
+        showChatNotice('🔴 Creator is live on YouTube', 5000);
+        creatorLiveNotified.current = true;
+      }
+      return;
+    }
+    creatorLiveNotified.current = false;
+  }, [creatorLiveActive, isCreator, showChatNotice]);
 
   // Connection timer
   useEffect(() => {
@@ -838,7 +902,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   useEffect(() => {
     if (!socket) return;
     const onWave = () => { setShowWave(true); setTimeout(() => setShowWave(false), 2800); playWaveSound(); };
-    const onGoodVibesMatch = () => { setGoodVibesMatch(true); setToast('🤝 Group Synergy! Everyone felt the good vibes!'); playConnectSound(); };
+    const onGoodVibesMatch = () => { setGoodVibesMatch(true); showChatNotice('🤝 Group Synergy! Everyone felt the good vibes!'); playConnectSound(); };
     const onTyping = ({ isTyping, socketId }) => {
       if (socketId === socket.id) return;
       setStrangerTyping(isTyping);
@@ -869,7 +933,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     if (socket && roomId) {
       socket.emit('send-good-vibes', { roomId });
       setGoodVibesSent(true);
-      setToast('🤝 Good Vibes sent to the room!');
+      showChatNotice('🤝 Good Vibes sent to the room!');
     }
   };
 
@@ -915,6 +979,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         });
       }
       localStreamRef.current = s;
+      setRawLocalStream(s);
       setLocalStreamReady(true);
       setMediaError(null);
       if (localVideoRef.current) {
@@ -940,28 +1005,28 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
   // Sync local stream to video element when ref mounts (handles race)
   useEffect(() => {
-    if (localStreamReady && localStreamRef.current && localVideoRef.current) {
-      localVideoRef.current.srcObject = localStreamRef.current;
+    if (localStreamReady && outboundStream && localVideoRef.current) {
+      localVideoRef.current.srcObject = outboundStream;
     }
-  }, [localStreamReady, facingMode]);
+  }, [localStreamReady, outboundStream, facingMode]);
 
-  // Apply tracks to all active peer connections when local stream changes
+  // Apply tracks to all active peer connections when outbound stream changes
   useEffect(() => {
-    const s = localStreamRef.current;
-    if (!s) return;
+    const s = outboundStream;
+    if (!s || sfuEnabledRef.current) return;
     const vt = s.getVideoTracks()[0];
     const at = s.getAudioTracks()[0];
 
     peerConnectionsRef.current.forEach((pc) => {
       if (pc.signalingState === 'closed') return;
       const senders = pc.getSenders();
-      const vs = senders.find(s => s.track?.kind === 'video');
-      const as = senders.find(s => s.track?.kind === 'audio');
+      const vs = senders.find((snd) => snd.track?.kind === 'video');
+      const as = senders.find((snd) => snd.track?.kind === 'audio');
 
       if (vs && vt) vs.replaceTrack(vt).catch(() => { });
       if (as && at) as.replaceTrack(at).catch(() => { });
     });
-  }, [localStreamReady, facingMode]);
+  }, [outboundStream, localStreamReady, facingMode]);
 
   // Setup local audio analyzer for speaking detection
   useEffect(() => {
@@ -1044,8 +1109,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       iceTransportPolicy: 'all',
     });
 
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current));
+    const publish = outboundStream || localStreamRef.current;
+    if (publish) {
+      publish.getTracks().forEach((t) => pc.addTrack(t, publish));
     } else {
       // No local stream — recv-only so negotiation still completes
       pc.addTransceiver('video', { direction: 'recvonly' });
@@ -1185,7 +1251,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         mmDebug('grp-ice-restart.err', remoteId, e);
       }
     }
-    setToast('Reconnecting group video links…');
+    showChatNotice('Reconnecting group video links…');
   }, [roomId, socket]);
 
   const sendMessage = (overrideText) => {
@@ -1194,7 +1260,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     const t = String(raw || '').trim();
     const rid = roomIdRef.current || roomId;
     if (!t || !socket || !rid) {
-      if (t && socket && !rid) setToast('Still joining room… try again in a moment');
+      if (t && socket && !rid) showChatNotice('Still joining room… try again in a moment');
       return;
     }
     const payload = { roomId: rid, text: t };
@@ -1252,7 +1318,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               roomId: rid,
               text: `🌟 Hey team! I'm @${nicknameRef.current} (Verified Creator). Check out my world: ${window.location.origin}/creator/${nicknameRef.current}`
             });
-            setToast('Identity Broadcasted to Room');
+            showChatNotice('Identity Broadcasted to Room');
           }, 2000);
         }
       }
@@ -1417,18 +1483,18 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
     const onSystemMsg = (data) => setMessages((m) => [...m, { id: nextMsgId('sys'), system: true, text: `📢 ADMIN: ${data.message}`, ts: Date.now() }]);
     const onRoomEndedByAdmin = (data) => {
-      setToast(data?.message || '⚠️ This session was terminated by administrative protocol.');
+      showChatNotice(data?.message || '⚠️ This session was terminated by administrative protocol.');
       setTimeout(() => handleLeaveRoomRef.current?.(), 2000);
     };
 
     const onSessionTerminatedByAdmin = (data) => {
-      setToast(data?.message || '⚠️ Your session was terminated by a moderator.');
+      showChatNotice(data?.message || '⚠️ Your session was terminated by a moderator.');
       setTimeout(() => handleLeaveRoomRef.current?.(), 2500);
     };
 
     const onGroupRenamed = (data) => {
       setDisplayInterest(data.interest);
-      setToast(`🏷️ Room renamed to #${data.interest} by ${data.nickname}`);
+      showChatNotice(`🏷️ Room renamed to #${data.interest} by ${data.nickname}`);
     };
 
     socket.on('group-joined', onGroupJoined);
@@ -1444,7 +1510,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     socket.on('group-renamed', onGroupRenamed);
     const onSignalRateLimited = (data) => {
       const msg = data?.message || 'Too many WebRTC signals. Please wait.';
-      setToast(typeof msg === 'string' ? `⏱️ ${msg}` : '⏱️ Rate limited — wait a few seconds.');
+      showChatNotice(typeof msg === 'string' ? `⏱️ ${msg}` : '⏱️ Rate limited — wait a few seconds.');
     };
     socket.on('signal-rate-limited', onSignalRateLimited);
 
@@ -1476,10 +1542,10 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       setMessages(prev => [...prev.slice(-100), { ...data, media: true }]);
     };
     const onServerError = (data) => {
-      setToast(data?.message || 'Something went wrong.');
+      showChatNotice(data?.message || 'Something went wrong.');
     };
     const onRoomFull = (data) => {
-      setToast(data?.message || 'This room is full. Try another hub or wait.');
+      showChatNotice(data?.message || 'This room is full. Try another hub or wait.');
       setTimeout(() => handleLeaveRoomRef.current?.(), 2500);
     };
     const onQueueWait = (data) => {
@@ -1501,7 +1567,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     };
     const onPeerRecording = ({ recording }) => setPeerRecording(!!recording);
     const onCreatorLive = ({ live }) => setCreatorLiveActive(!!live);
-    const onTipReceived = ({ fromNickname, amount }) => setToast(`💰 ${fromNickname} tipped you ${amount} coins!`);
+    const onTipReceived = ({ fromNickname, amount }) => showChatNotice(`💰 ${fromNickname} tipped you ${amount} coins!`);
     socket.on('3d-emoji', on3dEmoji);
     socket.on('media-message', onMediaMessage);
     socket.on('error', onServerError);
@@ -1543,18 +1609,18 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const copyRoomLink = () => {
     const url = window.location.href;
     navigator.clipboard.writeText(url);
-    setToast('Meeting link copied to clipboard! 📋');
+    showChatNotice('Meeting link copied to clipboard! 📋');
   };
 
   const generateRandomRoom = () => {
     const randomId = Math.random().toString(36).substring(2, 10);
     setJoinRoomIdInput(randomId);
-    setToast('🎲 Random ID Generated!');
+    showChatNotice('🎲 Random ID Generated!');
   };
 
   const send3dEmoji = (emoji) => {
-    if (!isCreator) { setToast('⚠️ Creator feature only'); return; }
-    if (balance < 5) { setToast('⚠️ Need 5 coins!'); return; }
+    if (!isCreator) { showChatNotice('⚠️ Creator feature only'); return; }
+    if (balance < 5) { showChatNotice('⚠️ Need 5 coins!'); return; }
     if (socket && (roomIdRef.current || roomId)) {
       // Server authoritatively charges coins on send-3d-emoji — no client spend-coins
       socket.emit('send-3d-emoji', { roomId: roomIdRef.current || roomId, emoji });
@@ -1567,7 +1633,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     if (!file) return;
     const type = file.type.startsWith('video') ? 'video' : 'image';
     const cost = type === 'video' ? 15 : 10;
-    if (balance < cost) { setToast(`⚠️ Need ${cost} coins!`); e.target.value = ''; return; }
+    if (balance < cost) { showChatNotice(`⚠️ Need ${cost} coins!`); e.target.value = ''; return; }
 
     if (type === 'video') {
       const video = document.createElement('video');
@@ -1575,7 +1641,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       video.onloadedmetadata = function () {
         window.URL.revokeObjectURL(video.src);
         if (video.duration > 6) {
-          setToast('⚠️ Video must be 5 seconds or less!');
+          showChatNotice('⚠️ Video must be 5 seconds or less!');
           return;
         }
         processUpload(file);
@@ -1596,7 +1662,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   };
 
   const startScreenShare = async () => {
-    if (balance < 50) { setToast('⚠️ Need 50 coins for Screen Share!'); return; }
+    if (balance < 50) { showChatNotice('⚠️ Need 50 coins for Screen Share!'); return; }
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       const track = stream.getVideoTracks()[0];
@@ -1611,12 +1677,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       socket.emit('spend-coins', { reason: 'screenshare' });
       track.onended = () => {
         setIsScreenSharing(false);
-        if (localStreamRef.current) {
-          const localTrack = localStreamRef.current.getVideoTracks()[0];
-          for (const pc of peerConnectionsRef.current.values()) {
-            const sender = pc.getSenders().find(s => s.track.kind === 'video');
-            if (sender) sender.replaceTrack(localTrack);
-          }
+        const restore = outboundStream?.getVideoTracks()?.[0] || rawLocalStream?.getVideoTracks()?.[0];
+        if (restore) {
+          replaceOutgoingVideoTracks(peerConnectionsRef.current, restore);
         }
       };
     } catch (e) {
@@ -1706,7 +1769,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       });
       if (block && target) {
         socket.emit('block-user', { targetSocketId: target });
-        setToast('User blocked');
+        showChatNotice('User blocked');
       }
     }
     mmDebug('group-report', reason, block);
@@ -1733,44 +1796,6 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const roomTitle = (displayInterest || 'general').replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   const connLevel = p2pHealth === 'failed' ? 1 : p2pHealth !== 'good' ? 2 : [...connectionQuality.values()].some((q) => q === 'poor') ? 2 : 4;
   const connLabel = connLevel >= 4 ? 'Good Connection' : connLevel >= 2 ? 'Fair Connection' : 'Poor Connection';
-
-  const statusBanners = (
-    <div className="mm-group-status-stack" aria-live="polite">
-      {(reconnectingPeers.size > 0 || (p2pHealth !== 'good' && !isQueuing)) && (
-        <div
-          className={`mm-group-status-chip ${p2pHealth === 'failed' ? 'mm-group-status-chip--danger' : 'mm-group-status-chip--warn'}`}
-          role="status"
-        >
-          <span>
-            {p2pHealth === 'failed'
-              ? 'Group video link lost'
-              : reconnectingPeers.size > 0
-                ? 'Some peer links are reconnecting'
-                : 'Unstable group network'}
-          </span>
-          {p2pHealth !== 'good' && !isQueuing && (
-            <button type="button" onClick={retryAllIce}>Retry links</button>
-          )}
-        </div>
-      )}
-      {showSafetyNudge && (
-        <div className="mm-group-status-chip mm-group-status-chip--safe">
-          <span>Stay safe — never share personal info. Report or leave anytime.</span>
-          <button type="button" onClick={dismissSafetyNudge} aria-label="Dismiss">✕</button>
-        </div>
-      )}
-      {peerRecording && !isCreator && (
-        <div className="mm-group-status-chip mm-group-status-chip--danger" role="status">
-          A creator may be recording this session
-        </div>
-      )}
-      {creatorLiveActive && !isCreator && (
-        <div className="mm-group-status-chip mm-group-status-chip--danger" role="status">
-          🔴 Creator is live on YouTube
-        </div>
-      )}
-    </div>
-  );
 
   return (
     <div className={`h-[100dvh] min-h-0 flex flex-col text-white overflow-hidden font-sans select-none selection:bg-violet-500/25 ${desktopLayout ? 'mm-group-desk-shell' : 'mm-group-mobile-shell'}`}>
@@ -1877,7 +1902,6 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
           <main className={`mm-group-desk-body ${chatCollapsed ? 'mm-group-desk-body--chat-collapsed' : ''}`}>
             <div className="mm-group-desk-stage">
-              {statusBanners}
               {isRecording && isCreator && <RecordingIndicator />}
               {youtubeLive.isLive && isCreator && (
                 <div className="absolute top-4 right-4 z-[100] flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-600/25 border border-rose-500/40 backdrop-blur-md">
@@ -1890,7 +1914,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                 <VideoTile
                   deskStyle
                   isMe
-                  stream={localStreamRef.current}
+                  stream={outboundStream}
                   label={nickname || 'Anonymous'}
                   country={myCountry}
                   isCreator={isCreator}
@@ -1934,6 +1958,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                 </div>
               </div>
               <div id="group-video-chat-messages" className="mm-group-desk-chat__messages custom-scrollbar">
+                <GroupChatFadeNotice text={chatNotice} noticeKey={chatNoticeKey} />
                 {messages.map((m, i) => (
                   <GroupDeskChatRow key={m.id || i} m={m} isMe={!m.system && m.socketId === socket?.id} />
                 ))}
@@ -2040,7 +2065,6 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
 
           <main className={`mm-group-mobile-main ${!chatCollapsed ? 'mm-group-mobile-main--chat-open' : ''}`}>
             <div className="mm-group-mobile-grid">
-              {statusBanners}
               {isRecording && isCreator && <RecordingIndicator />}
               {youtubeLive.isLive && isCreator && (
                 <div className="absolute top-4 right-4 z-[100] flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-600/25 border border-rose-500/40 backdrop-blur-md">
@@ -2053,7 +2077,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                 deskStyle
                 hideTileMic
                 isMe
-                stream={localStreamRef.current}
+                stream={outboundStream}
                 label={nickname || 'Anonymous'}
                 country={myCountry}
                 isCreator={isCreator}
@@ -2103,6 +2127,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               {!chatCollapsed && (
                 <>
                   <div id="group-video-chat-messages" className="mm-group-mobile-chat__messages custom-scrollbar">
+                    <GroupChatFadeNotice text={chatNotice} noticeKey={chatNoticeKey} />
                     {messages.map((m, i) => (
                       <GroupDeskChatRow key={m.id || i} m={m} isMe={!m.system && m.socketId === socket?.id} />
                     ))}
@@ -2197,7 +2222,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                   key={e.char}
                   type="button"
                   onClick={() => {
-                    if (balance < 5) { setToast('⚠️ Requires 5 Mana (Coins)'); return; }
+                    if (balance < 5) { showChatNotice('⚠️ Requires 5 Mana (Coins)'); return; }
                     socket.emit('send-3d-emoji', { emoji: e, roomId: roomIdProp || roomIdRef.current });
                   }}
                   className="mm-group-mobile-creator-bar__btn"
@@ -2227,7 +2252,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           onChange={(e) => setRenameInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
-              if (balance < 25) { setToast('⚠️ Insufficient Mana'); return; }
+              if (balance < 25) { showChatNotice('⚠️ Insufficient Mana'); return; }
               socket.emit('rename-group-room', { roomId: roomIdProp || roomIdRef.current, newInterest: renameInput.trim() });
               setShowRenameModal(false);
             }
@@ -2240,7 +2265,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           <button onClick={() => setShowRenameModal(false)} className="flex-1 py-2.5 rounded-xl bg-white/5 text-[9px] font-black uppercase tracking-widest text-white/50 hover:bg-white/10">Back</button>
           <button
             onClick={() => {
-              if (balance < 25) { setToast('⚠️ Insufficient Mana'); return; }
+              if (balance < 25) { showChatNotice('⚠️ Insufficient Mana'); return; }
               socket.emit('rename-group-room', { roomId: roomIdProp || roomIdRef.current, newInterest: renameInput.trim() });
               setShowRenameModal(false);
             }}
@@ -2287,10 +2312,19 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         showGames
         balance={balance}
         onRoomBoost={isCreator ? () => {
-          if (balance < 25) { setToast('⚠️ Need 25 coins'); return; }
+          if (balance < 25) { showChatNotice('⚠️ Need 25 coins'); return; }
           socket?.emit('spend-coins', { reason: 'room-boost' });
-          setToast('Pod boosted in public room browser!');
+          showChatNotice('Pod boosted in public room browser!');
         } : undefined}
+        onToggleFaceBlur={() => {
+          setFaceBlur((prev) => {
+            const next = !prev;
+            try { localStorage.setItem('mm_face_blur', next ? '1' : '0'); } catch { /* ignore */ }
+            return next;
+          });
+        }}
+        faceBlur={faceBlur}
+        faceBlurLoading={faceBlurLoading}
         peerOptions={peers.map((p) => ({ id: p.socketId, label: p.nickname || 'User' }))}
         onPinPeer={(id) => setPinnedId(id)}
         onPinLocal
@@ -2303,8 +2337,8 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         audioDevices={audioDevices}
         selectedVideoId=""
         selectedAudioId=""
-        onSelectVideo={() => setToast('Switch camera in system settings or flip button')}
-        onSelectAudio={() => setToast('Audio device saved for next session')}
+        onSelectVideo={() => showChatNotice('Switch camera in system settings or flip button')}
+        onSelectAudio={() => showChatNotice('Audio device saved for next session')}
       />
       <TipCreatorModal
         open={showTipModal}
@@ -2337,17 +2371,11 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         onStart={startYoutubeLive}
         onStop={() => { stopYoutubeLive(); setShowLiveModal(false); }}
       />
-
-      {toast && (
-        <div className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-[200] max-w-[90vw] px-4 py-3 rounded-2xl bg-black/90 border border-white/10 text-xs font-bold text-white shadow-2xl animate-fade-in-up">
-          {toast}
-        </div>
-      )}
     </div>
   );
 }
 
-function PiPLocalVideo({ stream, cameraBlur, mirrorSelf = true }) {
+function PiPLocalVideo({ stream, mirrorSelf = true }) {
   const ref = useRef(null);
   useEffect(() => {
     if (ref.current && stream) ref.current.srcObject = stream;
@@ -2355,7 +2383,7 @@ function PiPLocalVideo({ stream, cameraBlur, mirrorSelf = true }) {
   if (!stream) return <div className="w-full h-full flex items-center justify-center bg-indigo-500/20 text-2xl">🙋</div>;
   return (
     <div className="relative w-full h-full">
-      <video ref={ref} autoPlay muted playsInline className={`w-full h-full object-cover ${mirrorSelf ? '-scale-x-100' : ''}`} style={cameraBlur ? { filter: 'blur(15px)' } : {}} />
+      <video ref={ref} autoPlay muted playsInline className={`w-full h-full object-cover ${mirrorSelf ? '-scale-x-100' : ''}`} />
       <div className="absolute top-2 left-2 z-50 flex items-center gap-2">
         <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
       </div>

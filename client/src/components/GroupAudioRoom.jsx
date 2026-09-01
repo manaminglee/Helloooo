@@ -8,7 +8,7 @@ import { GiftDrawer } from './GiftDrawer';
 import { CreatorLiveModal } from './CreatorLiveModal';
 import { playLockSound, playUnlockSound } from '../utils/sounds';
 import { countryToFlag } from '../utils/countryFlag';
-import { AudioName, AudioCoinShop } from './AudioIdentityGate';
+import { AudioName, AudioCoinShop, AudioIdentityGate } from './AudioIdentityGate';
 
 const LOBBY_FEATURES = [
   { icon: '👤', label: 'Tap any speaker', hint: 'PA invite · gift · hello' },
@@ -509,7 +509,7 @@ function StageSlot({
 
 export function GroupAudioRoom({
   socket, iceServers: iceServersProp, coins = 0, nickname = 'Anonymous',
-  audioIdentity = null, onIdentityUpdate,
+  audioIdentity = null, audioIdentityHook = null, onIdentityUpdate,
   initialChannelId = null, initialPaToken = null, initialAsCohost = false, isCreator = false, onExit,
 }) {
   const { iceServers: iceFromHook } = useIceServers();
@@ -555,6 +555,8 @@ export function GroupAudioRoom({
   const [coinShopOpen, setCoinShopOpen] = useState(false);
   const [entryAnim, setEntryAnim] = useState(null);
   const [localIdentity, setLocalIdentity] = useState(audioIdentity);
+  const isSignedIn = !!(audioIdentityHook?.isSignedIn && (localIdentity?.username || audioIdentity?.username));
+  const identityHydrating = !!(audioIdentityHook?.token && !isSignedIn);
 
   useEffect(() => { setCoinBalance(coins); }, [coins]);
   useEffect(() => { setLocalIdentity(audioIdentity); }, [audioIdentity]);
@@ -594,7 +596,7 @@ export function GroupAudioRoom({
   });
 
   useEffect(() => {
-    if (!socket) return undefined;
+    if (!socket || !isSignedIn) return undefined;
     const onList = ({ channels: c, events }) => {
       setChannels(c || []);
       if (events?.length) setLobbyScheduled(events);
@@ -628,7 +630,7 @@ export function GroupAudioRoom({
       socket.off('audio:scheduled', onScheduled);
       clearInterval(id);
     };
-  }, [socket]);
+  }, [socket, isSignedIn]);
 
   const autoJoinRef = useRef(false);
   useEffect(() => {
@@ -636,10 +638,10 @@ export function GroupAudioRoom({
   }, [channel]);
 
   useEffect(() => {
-    if (!socket || !initialChannelId || channel || autoJoinRef.current) return;
+    if (!socket || !initialChannelId || channel || autoJoinRef.current || !isSignedIn) return;
     autoJoinRef.current = true;
     join(initialChannelId, nickname, undefined, initialPaToken, initialAsCohost);
-  }, [socket, initialChannelId, initialPaToken, initialAsCohost, channel, join, nickname]);
+  }, [socket, initialChannelId, initialPaToken, initialAsCohost, channel, join, nickname, isSignedIn]);
 
   const me = useMemo(
     () => members.find((m) => m.socketId === socket?.id) || channel?.you || null,
@@ -947,12 +949,43 @@ export function GroupAudioRoom({
   };
 
   if (!channel) {
+    if (!isSignedIn && audioIdentityHook) {
+      if (identityHydrating) {
+        return (
+          <div className="mm-shell mm-section mm-voice-lobby mm-voice-lobby--locked flex items-center justify-center min-h-[50dvh]">
+            <p className="mm-body text-white/60">Restoring your voice identity…</p>
+          </div>
+        );
+      }
+      return (
+        <div className="mm-shell mm-section mm-voice-lobby mm-voice-lobby--locked">
+          <header className="mm-voice-lobby__hero mm-voice-lobby__hero--dim">
+            <span className="mm-eyebrow">🎙️ Voice rooms</span>
+            <h2 className="mm-h2 mt-3 text-white">Talk live · 6 stage seats</h2>
+            <p className="mm-body mt-1.5">Sign in to see live rooms and join the stage.</p>
+          </header>
+          <AudioIdentityGate
+            variant="popup"
+            identityHook={audioIdentityHook}
+            onSignedIn={() => {
+              audioIdentityHook.refresh?.();
+              onIdentityUpdate?.();
+            }}
+            onCancel={onExit}
+          />
+        </div>
+      );
+    }
+
     return (
       <div className="mm-shell mm-section mm-voice-lobby">
         <header className="mm-voice-lobby__hero">
           <span className="mm-eyebrow">🎙️ Voice rooms</span>
           <h2 className="mm-h2 mt-3 text-white">Talk live · 6 stage seats</h2>
-          <p className="mm-body mt-1.5">Create a room to become admin. Guests tap empty seats — you approve who joins the panel.</p>
+          <p className="mm-body mt-1.5">
+            Welcome, <strong style={{ color: localIdentity?.nameColor || '#f472b6' }}>@{localIdentity?.username || nickname}</strong>
+            {' '}· Create a room or join one below.
+          </p>
         </header>
 
         <div className="mm-voice-lobby__create">

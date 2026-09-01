@@ -93,6 +93,9 @@ export function VideoMoreSheet({
   lowBandwidth,
   onToggleAutoBlur,
   autoStrangerBlur,
+  onToggleFaceBlur,
+  faceBlur,
+  faceBlurLoading,
   onHidePip,
   pipHidden,
   onCyclePipSize,
@@ -136,6 +139,15 @@ export function VideoMoreSheet({
                 />
               )}
               {onToggleAutoBlur && <Item onClick={onToggleAutoBlur} label="Auto-blur strangers" sub="Blur new matches briefly" active={autoStrangerBlur} />}
+              {onToggleFaceBlur && (
+                <Item
+                  onClick={onToggleFaceBlur}
+                  label={faceBlurLoading ? 'Face blur loading…' : 'AI face blur'}
+                  sub="Blur only your face with live tracking"
+                  active={faceBlur}
+                  disabled={faceBlurLoading}
+                />
+              )}
             </>
           ) : (
             <>
@@ -156,6 +168,15 @@ export function VideoMoreSheet({
             />
           )}
           {onToggleAutoBlur && <Item onClick={onToggleAutoBlur} label="Auto-blur strangers" sub="Blur new matches for 5 seconds" active={autoStrangerBlur} />}
+          {onToggleFaceBlur && (
+            <Item
+              onClick={onToggleFaceBlur}
+              label={faceBlurLoading ? 'Face blur loading…' : 'AI face blur'}
+              sub="Blur only your face with live tracking"
+              active={faceBlur}
+              disabled={faceBlurLoading}
+            />
+          )}
           {isMobile && onHidePip && <Item onClick={onHidePip} label={pipHidden ? 'Show self view' : 'Hide self view'} sub="Picture-in-picture" active={pipHidden} />}
           {isMobile && onCyclePipSize && <Item onClick={onCyclePipSize} label={`PIP size: ${pipSize || 'md'}`} sub="Small / medium / large" />}
           {onRoomBoost && <Item onClick={onRoomBoost} label="Boost room visibility" sub="25 coins — public browser" disabled={balance < 25} />}
@@ -416,23 +437,13 @@ export function AudioOnlyFallback({ nickname, onRetryCamera, onAudioOnly, micBlo
   );
 }
 
-const VIDEO_CONNECT_STEPS = [
-  { id: 'boot', label: 'Open Helloooo' },
-  { id: 'media', label: 'Camera & mic' },
-  { id: 'webrtc', label: 'WebRTC ready' },
-  { id: 'signaling', label: 'Signaling' },
-  { id: 'matching', label: 'Find match' },
-  { id: 'matched', label: 'Match found' },
-  { id: 'negotiating', label: 'SDP / ICE' },
-  { id: 'video', label: 'Video live' },
-];
-
-/** Simple searching / connecting UI — no technical step checklist. */
+/** Searching animation — spinner + pulsing dots (no technical checklist). */
 export function VideoSearchingOverlay({
   label = 'Searching…',
   sublabel = 'Finding someone for you',
   compact = false,
   fill = false,
+  panel = false,
 }) {
   if (compact) {
     return (
@@ -445,8 +456,10 @@ export function VideoSearchingOverlay({
 
   const inner = (
     <>
-      <div className="mm-omegle-search__spinner" aria-hidden />
-      <p className="text-sm font-semibold text-white mb-1">{label}</p>
+      <div className="mm-omegle-search__rings" aria-hidden>
+        <span className="mm-omegle-search__spinner" />
+      </div>
+      <p className="text-sm font-semibold text-white mb-1 tracking-wide">{label}</p>
       {sublabel ? (
         <p className="text-xs text-white/45 text-center max-w-[16rem]">{sublabel}</p>
       ) : null}
@@ -464,48 +477,17 @@ export function VideoSearchingOverlay({
     );
   }
 
-  return (
-    <div className="flex flex-col items-center justify-center text-center py-2" aria-live="polite">
-      {inner}
-    </div>
-  );
-}
-
-/** @deprecated UI removed from video chat — kept for reference */
-export function VideoConnectPipeline({ phase = 'boot', compact = false }) {
-  const idx = Math.max(0, VIDEO_CONNECT_STEPS.findIndex((s) => s.id === phase));
-  const current = VIDEO_CONNECT_STEPS[idx] || VIDEO_CONNECT_STEPS[0];
-
-  if (compact) {
+  if (panel) {
     return (
-      <div className="mm-connect-pipeline mm-connect-pipeline--compact" aria-live="polite">
-        <span className="mm-connect-pipeline__pulse" aria-hidden />
-        <span className="mm-connect-pipeline__label">{current.label}</span>
-        {phase === 'matched' && <span className="mm-connect-pipeline__flash">⚡</span>}
+      <div className="mm-mobile-search-panel" aria-live="polite">
+        {inner}
       </div>
     );
   }
 
   return (
-    <div className="mm-connect-pipeline" aria-live="polite">
-      <p className="mm-connect-pipeline__title">Connecting</p>
-      <ol className="mm-connect-pipeline__steps">
-        {VIDEO_CONNECT_STEPS.map((step, i) => {
-          const done = i < idx;
-          const active = i === idx;
-          return (
-            <li
-              key={step.id}
-              className={`mm-connect-pipeline__step ${done ? 'mm-connect-pipeline__step--done' : ''} ${active ? 'mm-connect-pipeline__step--active' : ''}`}
-            >
-              <span className="mm-connect-pipeline__dot" aria-hidden>
-                {done ? '✓' : active && step.id === 'matched' ? '⚡' : i + 1}
-              </span>
-              <span className="mm-connect-pipeline__text">{step.label}</span>
-            </li>
-          );
-        })}
-      </ol>
+    <div className="flex flex-col items-center justify-center text-center py-2" aria-live="polite">
+      {inner}
     </div>
   );
 }

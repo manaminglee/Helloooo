@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Room, RoomEvent, Track, createLocalTracks } from 'livekit-client';
+import { Room, RoomEvent, Track, createLocalTracks, LocalVideoTrack } from 'livekit-client';
 import { API_BASE } from '../config/apiBase';
 import { mmDebug } from '../utils/mmDebug';
 
@@ -159,6 +159,23 @@ export function useLiveKitGroup({
     await room.localParticipant.setCameraEnabled(enabledCam);
   }, []);
 
+  const replacePublishedVideo = useCallback(async (mediaStreamTrack) => {
+    const room = roomRef.current;
+    if (!room || !mediaStreamTrack) return;
+    const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
+    if (pub?.track) {
+      try { await room.localParticipant.unpublishTrack(pub.track, true); } catch { /* ignore */ }
+    }
+    localTracksRef.current = localTracksRef.current.filter((t) => t.kind !== Track.Kind.Video);
+    const nextVideo = new LocalVideoTrack(mediaStreamTrack);
+    localTracksRef.current.push(nextVideo);
+    await room.localParticipant.publishTrack(nextVideo);
+    const audioTracks = localTracksRef.current
+      .filter((t) => t.kind === Track.Kind.Audio)
+      .map((t) => t.mediaStreamTrack);
+    setLocalStream(new MediaStream([...audioTracks, mediaStreamTrack]));
+  }, []);
+
   return {
     connected,
     error,
@@ -167,6 +184,7 @@ export function useLiveKitGroup({
     remotes,
     setMicEnabled,
     setCameraEnabled,
+    replacePublishedVideo,
     disconnect,
   };
 }

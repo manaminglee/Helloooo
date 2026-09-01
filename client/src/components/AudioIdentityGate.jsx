@@ -6,7 +6,7 @@ const DEFAULT_COLORS = [
   '#fb7185', '#22d3ee', '#e879f9', '#4ade80', '#f97316',
 ];
 
-export function AudioIdentityGate({ onSignedIn, onCancel, identityHook }) {
+export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant = 'fullscreen' }) {
   const { register, login, loading, error, setError } = identityHook;
   const [mode, setMode] = useState('login'); // login | register
   const [username, setUsername] = useState('');
@@ -40,17 +40,16 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook }) {
     if (ok) onSignedIn?.();
   };
 
-  return (
-    <div className="min-h-[100dvh] flex items-center justify-center p-4 bg-[#08090f] mm-audio-id-gate">
-      <div className="mm-audio-id-card w-full max-w-md">
-        <div className="mm-audio-id-card__glow" aria-hidden />
-        <span className="mm-audio-id-card__icon">🎙️</span>
-        <h1 className="mm-audio-id-card__title">Voice Room Identity</h1>
-        <p className="mm-audio-id-card__sub">
-          Your username &amp; PIN are only for audio rooms. Text &amp; video stay anonymous.
-        </p>
+  const card = (
+    <div className="mm-audio-id-card w-full max-w-md" role="dialog" aria-modal="true" aria-label="Voice room sign in">
+      <div className="mm-audio-id-card__glow" aria-hidden />
+      <span className="mm-audio-id-card__icon">🎙️</span>
+      <h1 className="mm-audio-id-card__title">Voice Room Identity</h1>
+      <p className="mm-audio-id-card__sub">
+        Sign in to browse live rooms and join the stage. Text &amp; video stay anonymous.
+      </p>
 
-        {mode === 'login' ? (
+      {mode === 'login' ? (
           <form onSubmit={submitLogin} className="space-y-3 mt-5">
             <label className="mm-audio-id-label">
               Username
@@ -156,6 +155,20 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook }) {
           </button>
         )}
       </div>
+  );
+
+  if (variant === 'popup') {
+    return (
+      <div className="mm-audio-id-popup-overlay">
+        <div className="mm-audio-id-popup-backdrop" aria-hidden />
+        {card}
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-[100dvh] flex items-center justify-center p-4 bg-[#08090f] mm-audio-id-gate">
+      {card}
     </div>
   );
 }

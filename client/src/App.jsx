@@ -14,7 +14,6 @@ import { API_BASE } from './config/apiBase';
 import { lazyRetry, clearChunkReloadFlag } from './utils/lazyRetry';
 import { applyPageSeo, applyPrivateSessionSeo } from './utils/seo';
 import { useAudioIdentity } from './hooks/useAudioIdentity';
-import { AudioIdentityGate } from './components/AudioIdentityGate';
 // Lazy load off-screen and secondary modules for extreme performance
 const AdminDashboard = lazyRetry(() => import('./components/AdminDashboard'));
 const TextChat = lazyRetry(() => import('./components/TextChat'));
@@ -485,15 +484,6 @@ function AppShell() {
     }
     if (mode === MODES.GROUP_TEXT) {
       if (!import.meta.env?.VITE_LEGACY_GROUP_TEXT) {
-        if (!audioIdentityHook.isSignedIn) {
-          return (
-            <AudioIdentityGate
-              identityHook={audioIdentityHook}
-              onSignedIn={() => audioIdentityHook.refresh()}
-              onCancel={handleBack}
-            />
-          );
-        }
         return (
           <div className="mm-page-enter">
             <GroupAudioRoom
@@ -501,6 +491,7 @@ function AppShell() {
               coins={audioIdentityHook.identity?.coins ?? 0}
               nickname={audioIdentityHook.identity?.username || 'Anonymous'}
               audioIdentity={audioIdentityHook.identity}
+              audioIdentityHook={audioIdentityHook}
               onIdentityUpdate={audioIdentityHook.refresh}
               isCreator={isCreator}
               initialChannelId={roomId}
