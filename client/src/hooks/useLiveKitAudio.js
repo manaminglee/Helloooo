@@ -75,7 +75,7 @@ export function useLiveKitAudio({
       try {
         setError('');
         const tokenRes = await new Promise((resolve, reject) => {
-          const t = setTimeout(() => reject(new Error('LiveKit audio token timeout')), 12000);
+          const t = setTimeout(() => reject(new Error('LiveKit audio token timeout')), 5000);
           const onToken = (payload) => {
             clearTimeout(t);
             socket.off('livekit-token', onToken);

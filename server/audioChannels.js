@@ -51,7 +51,8 @@ const HOST_BONUS_COINS = 15;
 const ALLOWED_ENTRY_FEES = [0, 5, 10, 25, 50];
 
 const livekitRooms = require('./livekitRooms');
-const LIVEKIT_AUDIO_THRESHOLD = Number(process.env.LIVEKIT_AUDIO_THRESHOLD) || 4;
+// Mesh handles small/medium rooms fine — only switch to LiveKit SFU for large rooms.
+const LIVEKIT_AUDIO_THRESHOLD = Number(process.env.LIVEKIT_AUDIO_THRESHOLD) || 12;
 
 const ROOM_THEMES = {
   default: null,
@@ -693,10 +694,6 @@ function registerAudioChannels(app, io, deps) {
       const channel = getChannel(data.channelId);
       const target = String(data.targetSocketId || '');
       if (!channel || !channel.members.has(socket.id) || !channel.members.has(target)) return;
-
-      const me = channel.members.get(socket.id);
-      // Listeners may receive but never publish: drop offers from muted listeners.
-      if (ROLE_RANK[me.role] < ROLE_RANK.speaker && data.signal?.type === 'offer') return;
 
       io.to(target).emit('audio:signal', {
         channelId: channel.id,

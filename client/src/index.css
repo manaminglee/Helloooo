@@ -5529,6 +5529,62 @@ h1, h2, h3, .font-display {
   box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.45);
 }
 
+.mm-audio-unlock-btn {
+  padding: 0.65rem 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.12);
+  color: #a7f3d0;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.mm-audio-mod-alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem 0.5rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.1);
+  color: #fde68a;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.mm-audio-mod-alert__cta {
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 700;
+}
+
+.mm-audio-admin-badge {
+  position: absolute;
+  top: -0.35rem;
+  right: -0.35rem;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: #f43f5e;
+  color: #fff;
+  font-size: 0.625rem;
+  font-weight: 800;
+  line-height: 1.1rem;
+  text-align: center;
+}
+
+.mm-audio-admin-badge--sm {
+  top: -0.2rem;
+  right: -0.2rem;
+  min-width: 0.95rem;
+  height: 0.95rem;
+  font-size: 0.5625rem;
+  line-height: 0.95rem;
+}
+
 .mm-voice-lobby__list-head {
   display: flex;
   align-items: baseline;

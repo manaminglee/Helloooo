@@ -125,6 +125,9 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   const initialFindEmittedRef = useRef(false);
   const handleSkipRef = useRef(null);
   const onJoinedRef = useRef(onJoined);
+  const socketRef = useRef(socket);
+  const connectedRef = useRef(connected);
+  const hadSocketConnectRef = useRef(false);
   const [toast, setToast] = useState(null);
   const toastTimerRef = useRef(null);
   const prefs = usePrefs();
@@ -132,6 +135,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   statusRef.current = status;
   messagesRef.current = messages;
   onJoinedRef.current = onJoined;
+  socketRef.current = socket;
+  connectedRef.current = connected;
 
   // Small local toast (matches other chat surfaces)
   useEffect(() => {
@@ -196,26 +201,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   }, []);
 
   // Auto-start matchmaking on mount (once, when socket is connected) — mirrors VideoChat's pattern
-  useEffect(() => {
-    if (!socket || !connected || initialFindEmittedRef.current || roomIdRef.current) return;
-    initialFindEmittedRef.current = true;
-    emitFind();
-  }, [socket, connected, emitFind]);
-
-  // Re-queue after socket reconnect while still searching (new socket.id = new queue identity)
-  useEffect(() => {
-    if (!socket) return undefined;
-    const onReconnect = () => {
-      if (roomIdRef.current) return;
-      if (statusRef.current !== 'searching' && statusRef.current !== 'idle') return;
-      initialFindEmittedRef.current = true;
-      emitFind();
-    };
-    socket.on('connect', onReconnect);
-    return () => socket.off('connect', onReconnect);
-  }, [socket, emitFind]);
-
-  // ---- socket events ----
+  // Registered after socket listeners below so partner-found is never missed.
   useEffect(() => {
     if (!socket) return;
 
@@ -264,10 +250,15 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
     const onServerError = (data) => {
       setToast(data?.message || 'Something went wrong.');
+      if (!roomIdRef.current && statusRef.current === 'searching') {
+        setTimeout(() => {
+          if (!roomIdRef.current && connectedRef.current && socketRef.current) emitFind();
+        }, 1500);
+      }
     };
 
     const onDisconnect = (reason) => {
-      if (reason === 'io server disconnect' || reason === 'transport close' || reason === 'ping timeout') {
+      if (reason === 'io server disconnect') {
         clearTimeout(userLeftTimerRef.current);
         handleSkipRef.current?.();
       }
@@ -298,7 +289,36 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       socket.off('disconnect', onDisconnect);
     };
   // Handlers read latest values through refs — register once per socket
-  }, [socket]);
+  }, [socket, emitFind]);
+
+  useEffect(() => {
+    if (!socket || !connected || initialFindEmittedRef.current || roomIdRef.current) return;
+    initialFindEmittedRef.current = true;
+    setStatus('searching');
+    emitFind();
+  }, [socket, connected, emitFind]);
+
+  useEffect(() => {
+    if (!socket) return undefined;
+    const onReconnect = () => {
+      if (!hadSocketConnectRef.current) {
+        hadSocketConnectRef.current = true;
+        return;
+      }
+      if (roomIdRef.current) {
+        socket.emit('leave-room', { roomId: roomIdRef.current });
+        clearRoom();
+      }
+      if (statusRef.current === 'connected' || statusRef.current === 'searching' || statusRef.current === 'idle') {
+        setStatus('searching');
+        initialFindEmittedRef.current = true;
+        emitFind();
+      }
+    };
+    if (socket.connected) hadSocketConnectRef.current = true;
+    socket.on('connect', onReconnect);
+    return () => socket.off('connect', onReconnect);
+  }, [socket, emitFind, clearRoom]);
 
   // Rotating searching status
   useEffect(() => {
@@ -420,7 +440,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   // Leave matchmaking when leaving text chat (history back / unmount)
   useEffect(() => () => {
     try {
-      const s = window.socket;
+      const s = socketRef.current;
       if (roomIdRef.current) s?.emit('leave-room', { roomId: roomIdRef.current });
       s?.emit('cancel-find-partner');
     } catch { /* ignore */ }

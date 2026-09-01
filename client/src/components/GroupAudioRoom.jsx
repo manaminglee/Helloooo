@@ -439,7 +439,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
   const {
     channel, members, micMuted, speakingIds, error, connecting, chatMessages,
     lockRequired, paInvite, helloEvent, stickerBurst, giftStreak, hostBonus, giftBonus,
-    scheduledEvents, useSfu, knockStatus, livekitConnected,
+    scheduledEvents, useSfu, knockStatus, audioBlocked, livekitConnected,
     join, create, createPaRoom, leave, toggleMic, moderate, grantSpeak, claimSlot,
     approveJoin, denyJoin, renameRoom, setWallpaper, setGamesEnabled, sendChat,
     sendSticker, sendHello, invitePa, respondPa, setRoomLock, makePublic,
@@ -546,6 +546,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
   const raisedHands = listeners.filter((m) => m.handRaised).length;
   const pendingJoins = channel?.pendingJoins || [];
   const pendingKnocks = channel?.pendingKnocks || [];
+  const modQueueCount = (canModerate ? pendingKnocks.length + pendingJoins.length : 0);
   const themeOverlay = THEME_STYLES[channel?.themeId] || null;
   const frameClass = THEME_FRAMES[channel?.themeId] || '';
   const maxSlots = channel?.maxSpeakers || STAGE_SLOTS;
@@ -1037,8 +1038,11 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
             </button>
           )}
           {canModerate && (
-            <button type="button" onClick={() => setAdminOpen(true)} className={`mm-audio-role-pill ${isHost ? 'mm-audio-role-pill--host' : 'mm-audio-role-pill--mod'}`}>
+            <button type="button" onClick={() => setAdminOpen(true)} className={`mm-audio-role-pill ${isHost ? 'mm-audio-role-pill--host' : 'mm-audio-role-pill--mod'} relative`}>
               {isHost ? '👑 Admin' : '🛡️ Co-taker'}
+              {modQueueCount > 0 && (
+                <span className="mm-audio-admin-badge">{modQueueCount}</span>
+              )}
             </button>
           )}
           <span className="text-xs font-bold text-amber-300 tabular-nums">🪙 {coins}</span>
@@ -1058,6 +1062,33 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
         </div>
       )}
 
+      {(audioBlocked || (me?.role === 'listener' || me?.role === 'cohost')) && (
+        <div className="mx-4 mb-2">
+          <button
+            type="button"
+            className="mm-audio-unlock-btn w-full"
+            onClick={() => resumeRemoteAudio?.()}
+          >
+            🔊 Tap to enable audio
+          </button>
+        </div>
+      )}
+
+      {modQueueCount > 0 && canModerate && !adminOpen && (
+        <div className="mx-4 mb-2">
+          <button
+            type="button"
+            className="mm-audio-mod-alert w-full"
+            onClick={() => setAdminOpen(true)}
+          >
+            🚪 {pendingKnocks.length > 0 && `${pendingKnocks.length} knocking`}
+            {pendingKnocks.length > 0 && pendingJoins.length > 0 && ' · '}
+            {pendingJoins.length > 0 && `${pendingJoins.length} seat request${pendingJoins.length > 1 ? 's' : ''}`}
+            <span className="mm-audio-mod-alert__cta">Review in Admin →</span>
+          </button>
+        </div>
+      )}
+
       {showRoomTips && (
         <div className="mx-4 mb-2 mm-audio-room-tips">
           <div className="mm-audio-room-tips__inner">
@@ -1072,34 +1103,6 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
             >
               ×
             </button>
-          </div>
-        </div>
-      )}
-
-      {pendingKnocks.length > 0 && canModerate && (
-        <div className="mx-4 mb-2 rounded-xl border border-amber-400/30 bg-amber-500/10 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-amber-200 mb-2">Knocking at door</p>
-          {pendingKnocks.map((k) => (
-            <div key={k.socketId} className="flex items-center gap-2 text-xs mb-1">
-              <span className="flex-1 truncate">{k.nickname}</span>
-              <button type="button" className="px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-200" onClick={() => approveKnock(k.socketId)}>Let in</button>
-              <button type="button" className="px-2 py-1 rounded-lg bg-white/5 text-white/50" onClick={() => denyKnock(k.socketId)}>Deny</button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {pendingJoins.length > 0 && canModerate && (
-        <div className="mx-4 mb-2 rounded-xl border border-violet-400/30 bg-violet-500/10 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-violet-200 mb-2">Join requests</p>
-          <div className="flex flex-col gap-2">
-            {pendingJoins.map((p) => (
-              <div key={p.socketId} className="flex items-center gap-2 text-xs">
-                <span className="flex-1 truncate text-white/80">{p.nickname} → seat {(p.slot ?? 0) + 1}</span>
-                <button type="button" className="px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-200" onClick={() => approveJoin(p.socketId, p.slot)}>Approve</button>
-                <button type="button" className="px-2 py-1 rounded-lg bg-white/5 text-white/50" onClick={() => denyJoin(p.socketId)}>Deny</button>
-              </div>
-            ))}
           </div>
         </div>
       )}
@@ -1224,11 +1227,12 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
             <button
               type="button"
               onClick={() => setAdminOpen(true)}
-              className={`mm-btn !px-3 ${isHost ? '!bg-amber-500/15 !text-amber-200 !border-amber-400/30' : '!bg-sky-500/15 !text-sky-200 !border-sky-400/30'}`}
+              className={`mm-btn !px-3 relative ${isHost ? '!bg-amber-500/15 !text-amber-200 !border-amber-400/30' : '!bg-sky-500/15 !text-sky-200 !border-sky-400/30'}`}
               aria-label={isHost ? 'Room admin' : 'Co-taker tools'}
               title={isHost ? 'Room admin' : 'Co-taker tools'}
             >
               {isHost ? '👑' : '🛡️'}
+              {modQueueCount > 0 && <span className="mm-audio-admin-badge mm-audio-admin-badge--sm">{modQueueCount}</span>}
             </button>
           )}
           {isCreator && (
@@ -1264,6 +1268,39 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
               <h3 className="text-sm font-bold">{isHost ? 'Room admin' : 'Co-taker tools'}</h3>
               <button type="button" onClick={() => setAdminOpen(false)} className="w-8 h-8 rounded-lg bg-white/5">✕</button>
             </div>
+
+            {canModerate && (pendingKnocks.length > 0 || pendingJoins.length > 0) && (
+              <div className="mb-4 p-3 rounded-xl border border-amber-400/25 bg-amber-500/8">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-amber-200 mb-2">Pending requests</p>
+                {pendingKnocks.map((k) => (
+                  <div key={k.socketId} className="flex items-center gap-2 text-xs mb-2">
+                    <span className="flex-1 truncate">🚪 {k.nickname}</span>
+                    <button type="button" className="px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-200" onClick={() => approveKnock(k.socketId)}>Let in</button>
+                    <button type="button" className="px-2 py-1 rounded-lg bg-white/5 text-white/50" onClick={() => denyKnock(k.socketId)}>Deny</button>
+                  </div>
+                ))}
+                {pendingJoins.map((p) => (
+                  <div key={p.socketId} className="flex items-center gap-2 text-xs mb-2">
+                    <span className="flex-1 truncate text-white/80">✋ {p.nickname} → seat {(p.slot ?? 0) + 1}</span>
+                    <button type="button" className="px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-200" onClick={() => approveJoin(p.socketId, p.slot)}>Approve</button>
+                    <button type="button" className="px-2 py-1 rounded-lg bg-white/5 text-white/50" onClick={() => denyJoin(p.socketId)}>Deny</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {isHost && isPaRoom && (
+              <div className="mb-4 p-3 rounded-xl border border-violet-400/25 bg-violet-500/8">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-violet-200 mb-2">Private Audio</p>
+                <button type="button" className="mm-btn mm-btn--primary w-full mb-2 !text-xs" onClick={() => shareRoom(false)}>🔗 Copy PA partner link</button>
+                {channel?.paInviteToken && !channel?.cohostJoined && (
+                  <button type="button" className="mm-btn mm-btn--ghost w-full mb-2 !text-xs" onClick={shareCohostLink}>🎧 Copy co-host link (listen-only)</button>
+                )}
+                <button type="button" className="mm-btn mm-btn--ghost w-full !text-xs" onClick={() => { makePublic(); setUiMsg('🌐 Room is now public'); setAdminOpen(false); }}>
+                  🌐 Make room public
+                </button>
+              </div>
+            )}
 
             {isHost && (
               <>
@@ -1364,17 +1401,18 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
               </>
             )}
 
-            {isHost && isPaRoom && (
-              <>
-                <p className="text-[10px] text-violet-300/80 mb-2">PA room — only you two can join until opened</p>
-                <button type="button" className="mm-btn mm-btn--primary w-full mb-4" onClick={() => { makePublic(); setUiMsg('🌐 Room is now public'); setAdminOpen(false); }}>
-                  🌐 Make room public
-                </button>
-              </>
-            )}
-
             {!isPaRoom && (
             <>
+            {isHost && members.filter((m) => m.socketId !== socket?.id).length > 0 && (
+              <div className="mb-4 p-3 rounded-xl border border-violet-400/20 bg-violet-500/5">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-violet-200 mb-2">Private Audio invites</p>
+                {members.filter((m) => m.socketId !== socket?.id).map((m) => (
+                  <button key={m.socketId} type="button" className="w-full text-left text-xs px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 mb-1" onClick={() => { handlePaInvite(m); setAdminOpen(false); }}>
+                    🎙 Invite {m.nickname} to PA
+                  </button>
+                ))}
+              </div>
+            )}
             <p className="text-[10px] text-white/40 mb-2">Invite viewers to stage</p>
             <div className="flex flex-col gap-1 mb-3">
               {listeners.map((m) => (

@@ -4,6 +4,16 @@ import { playInviteSound, playKnockSound, playStickerSound, playStreakSound, pla
 import { ensureNotifyPermission, notifyUser } from '../utils/browserNotify';
 import { useLiveKitAudio } from './useLiveKitAudio';
 
+const ROLE_RANK = { cohost: 0, listener: 0, speaker: 1, moderator: 2, host: 3 };
+
+/** Higher role (speaker/host) initiates WebRTC offers so listeners can receive audio. */
+function shouldInitiateOffer(myRole, peerRole, myId, peerId) {
+  const a = ROLE_RANK[myRole] ?? 0;
+  const b = ROLE_RANK[peerRole] ?? 0;
+  if (a !== b) return a > b;
+  return String(myId) > String(peerId);
+}
+
 /**
  * Group audio channel client — WebRTC audio mesh driven by server signalling.
  * Falls back to LiveKit SFU when the room hits the server threshold (large rooms).
@@ -26,7 +36,10 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
   const [scheduledEvents, setScheduledEvents] = useState([]);
   const [useSfu, setUseSfu] = useState(false);
   const [knockStatus, setKnockStatus] = useState(null); // { channelId, waiting } | null
+  const [audioBlocked, setAudioBlocked] = useState(false);
   const channelIdRef = useRef(null);
+  const membersRef = useRef([]);
+  const youRef = useRef(null);
 
   const livekit = useLiveKitAudio({
     enabled: useSfu,
@@ -90,18 +103,22 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
 
   /** Resume remote playback after a user gesture (mobile autoplay policies). */
   const resumeRemoteAudio = useCallback(() => {
+    let blocked = false;
     audioElsRef.current.forEach((el) => {
       try {
         el.muted = false;
         el.volume = 1;
-        void el.play();
+        const p = el.play();
+        if (p?.catch) p.catch(() => { blocked = true; });
       } catch {
-        /* ignore */
+        blocked = true;
       }
     });
     analysersRef.current.forEach(({ ctx }) => {
       if (ctx?.state === 'suspended') ctx.resume?.().catch?.(() => {});
     });
+    livekitRef.current?.resumeRemoteAudio?.();
+    setAudioBlocked(blocked);
   }, []);
 
   const attachRemote = useCallback((socketId, stream) => {
@@ -120,7 +137,9 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     if (el.srcObject !== stream) el.srcObject = stream;
     el.muted = false;
     el.volume = 1;
-    const play = () => { void el.play().catch(() => {}); };
+    const play = () => {
+      void el.play().catch(() => setAudioBlocked(true));
+    };
     play();
     el.onloadedmetadata = play;
 
@@ -261,6 +280,8 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
       });
       setUseSfu(!!sfu);
       setMembers([you, ...(peers || [])].filter(Boolean));
+      youRef.current = you;
+      membersRef.current = [you, ...(peers || [])].filter(Boolean);
       setMicMuted(you?.micMuted !== false);
       setConnecting(false);
       setError(null);
@@ -275,16 +296,24 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
       }
       // Mesh WebRTC only when SFU is off — large rooms switch to LiveKit.
       if (!sfu) {
-        peers.forEach((p) => createPeer(p.socketId, String(you.socketId) > String(p.socketId)));
+        peers.forEach((p) => createPeer(
+          p.socketId,
+          shouldInitiateOffer(you.role, p.role, you.socketId, p.socketId)
+        ));
       }
       resumeRemoteAudio();
     };
 
     const onPeerJoined = ({ member }) => {
       if (useSfuRef.current) return;
-      const me = channelIdRef.current && member?.socketId;
+      if (!member?.socketId || member.socketId === socket.id) return;
+      const me = youRef.current || membersRef.current.find((m) => m.socketId === socket.id);
       if (!me) return;
-      createPeer(member.socketId, String(socket.id) > String(member.socketId));
+      membersRef.current = [...membersRef.current.filter((m) => m.socketId !== member.socketId), member];
+      createPeer(
+        member.socketId,
+        shouldInitiateOffer(me.role, member.role, socket.id, member.socketId)
+      );
     };
 
     const onPeerLeft = ({ socketId }) => {
@@ -328,7 +357,10 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     };
 
     const onState = (state) => {
-      setMembers(state.members || []);
+      const nextMembers = state.members || [];
+      setMembers(nextMembers);
+      membersRef.current = nextMembers;
+      youRef.current = nextMembers.find((m) => m.socketId === socket?.id) || youRef.current;
       setChannel((prev) => prev ? {
         ...prev,
         topic: state.topic ?? prev.topic,
@@ -534,9 +566,13 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     if (!useSfu || !livekit.error || !socket || !channelIdRef.current) return;
     setUseSfu(false);
     const myId = socket.id;
-    members.forEach((p) => {
+    const me = youRef.current || membersRef.current.find((m) => m.socketId === myId);
+    membersRef.current.forEach((p) => {
       if (p.socketId && p.socketId !== myId && !pcsRef.current.has(p.socketId)) {
-        createPeer(p.socketId, String(myId) > String(p.socketId));
+        createPeer(
+          p.socketId,
+          shouldInitiateOffer(me?.role, p.role, myId, p.socketId)
+        );
       }
     });
     resumeRemoteAudio();
@@ -871,6 +907,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     scheduledEvents,
     useSfu,
     knockStatus,
+    audioBlocked,
     livekitConnected: livekit.connected,
     join,
     create,
