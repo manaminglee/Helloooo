@@ -13,6 +13,8 @@ import { loadReconnectSession, clearReconnectSession, saveReconnectSession } fro
 import { API_BASE } from './config/apiBase';
 import { lazyRetry, clearChunkReloadFlag } from './utils/lazyRetry';
 import { applyPageSeo, applyPrivateSessionSeo } from './utils/seo';
+import { useAudioIdentity } from './hooks/useAudioIdentity';
+import { AudioIdentityGate } from './components/AudioIdentityGate';
 // Lazy load off-screen and secondary modules for extreme performance
 const AdminDashboard = lazyRetry(() => import('./components/AdminDashboard'));
 const TextChat = lazyRetry(() => import('./components/TextChat'));
@@ -77,6 +79,7 @@ function AppShell() {
   const [roomJoinNotice, setRoomJoinNotice] = useState('');
   const { socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds, isPro, subscription } = useSocket();
   const coinState = useCoins();
+  const audioIdentityHook = useAudioIdentity(socket);
   const coinStateWithAds = useMemo(
     () => ({ ...coinState, adsEnabled, adScripts }),
     [coinState, adsEnabled, adScripts]
@@ -303,6 +306,9 @@ function AppShell() {
       socket.emit('cancel-group-queue');
     }
     if (mode === MODES.TEXT || mode === MODES.VIDEO) socket?.emit('cancel-find-partner');
+    if (mode === MODES.GROUP_TEXT) {
+      void audioIdentityHook.logout();
+    }
     setRoomId(null);
     setAppState(STATES.LANDING);
     setMode(null);
@@ -478,15 +484,24 @@ function AppShell() {
       );
     }
     if (mode === MODES.GROUP_TEXT) {
-      // Group text rooms are now live voice channels. Set
-      // VITE_LEGACY_GROUP_TEXT=1 to fall back to the old text room.
       if (!import.meta.env?.VITE_LEGACY_GROUP_TEXT) {
+        if (!audioIdentityHook.isSignedIn) {
+          return (
+            <AudioIdentityGate
+              identityHook={audioIdentityHook}
+              onSignedIn={() => audioIdentityHook.refresh()}
+              onCancel={handleBack}
+            />
+          );
+        }
         return (
           <div className="mm-page-enter">
             <GroupAudioRoom
               socket={socket}
-              coins={coinState?.balance ?? 0}
-              nickname={isCreator ? nickname : (joinMeta.displayNickname || nickname)}
+              coins={audioIdentityHook.identity?.coins ?? 0}
+              nickname={audioIdentityHook.identity?.username || 'Anonymous'}
+              audioIdentity={audioIdentityHook.identity}
+              onIdentityUpdate={audioIdentityHook.refresh}
               isCreator={isCreator}
               initialChannelId={roomId}
               initialPaToken={joinLinkOpts.paToken}

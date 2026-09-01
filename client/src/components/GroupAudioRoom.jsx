@@ -8,17 +8,27 @@ import { GiftDrawer } from './GiftDrawer';
 import { CreatorLiveModal } from './CreatorLiveModal';
 import { playLockSound, playUnlockSound } from '../utils/sounds';
 import { countryToFlag } from '../utils/countryFlag';
+import { AudioName, AudioCoinShop } from './AudioIdentityGate';
 
 const LOBBY_FEATURES = [
-  { icon: '👤', label: 'Tap avatars', hint: 'Hello · PA · gift · report' },
-  { icon: '🎙', label: 'Private Audio', hint: 'Invite or share PA link' },
+  { icon: '👤', label: 'Tap any speaker', hint: 'PA invite · gift · hello' },
+  { icon: '🎙', label: 'Private Audio (PA)', hint: '2 people — invite from avatar menu' },
   { icon: '🚪', label: 'Knock to join', hint: 'Locked rooms · admin approves' },
-  { icon: '🎨', label: 'Room themes', hint: 'Admin panel · gold · neon' },
+  { icon: '💜', label: 'PA themes', hint: 'Hearts · neon · galaxy in PA' },
   { icon: '🪙', label: 'Entry fee', hint: 'Paid rooms in admin' },
   { icon: '📅', label: 'Events', hint: 'Schedule + reminders' },
 ];
+
+const PA_THEMES = [
+  { id: 'hearts', label: '💕 Hearts' },
+  { id: 'couple', label: '💜 Couple' },
+  { id: 'neon', label: '✨ Neon' },
+  { id: 'galaxy', label: '🌌 Galaxy' },
+  { id: 'sunset', label: '🌅 Sunset' },
+  { id: 'gold', label: '👑 Gold' },
+];
 const STAGE_SLOTS = 6;
-const ROLE_LABEL = { host: 'Admin', moderator: 'Co-taker', speaker: 'Speaker', listener: 'Viewer', cohost: 'Co-host' };
+const ROLE_LABEL = { host: 'Admin', moderator: 'Co-taker', speaker: 'Speaker', listener: 'Guest', cohost: 'Guest', pa_waiting: 'Waiting' };
 const PA_STICKERS = ['👋', '✨', '💜', '🔥', '😂', '💎', '🎉', '❤️', '🌟', '🎵'];
 
 const ROOM_THEMES_CLIENT = [
@@ -83,22 +93,23 @@ function ProfileMiniCard({ member, frameClass = '' }) {
   const roleLabel = ROLE_LABEL[member.role] || member.role;
   return (
     <div className="mm-profile-mini-card">
-      <div className={`mm-profile-mini-card__avatar ${frameClass}`}>
-        <span>{(member.nickname || '?').slice(0, 1).toUpperCase()}</span>
+      <div className={`mm-profile-mini-card__avatar ${frameClass}`} style={member.nameColor ? { boxShadow: `0 0 0 2px ${member.nameColor}55` } : undefined}>
+        <span>{(member.audioUsername || member.nickname || '?').slice(0, 1).toUpperCase()}</span>
         {member.isCreator && <span className="mm-profile-mini-card__badge mm-profile-mini-card__badge--creator" title="Creator">✓</span>}
         {member.verified && <span className="mm-profile-mini-card__badge mm-profile-mini-card__badge--verified" title="Verified">★</span>}
       </div>
       <div className="mm-profile-mini-card__body">
-        <p className="mm-profile-mini-card__name">{member.nickname}</p>
+        <p className="mm-profile-mini-card__name"><AudioName member={member} /></p>
         <p className="mm-profile-mini-card__meta">
           {member.country ? `${countryToFlag(member.country)} ${member.country} · ` : ''}{roleLabel}
+          {member.displayLevel > 0 && <span className="text-white/40"> · Lv {member.displayLevel}</span>}
         </p>
       </div>
     </div>
   );
 }
 
-function UserActionMenu({ member, frameClass, onHello, onPa, onGift, onReport, onBlock, onClose }) {
+function UserActionMenu({ member, frameClass, onHello, onPa, onGift, onReport, onBlock, onClose, showPa = true }) {
   if (!member) return null;
   const helloTypes = [
     { id: 'wave', label: '👋 Wave' },
@@ -117,9 +128,11 @@ function UserActionMenu({ member, frameClass, onHello, onPa, onGift, onReport, o
             </button>
           ))}
         </div>
-        <button type="button" className="mm-audio-user-menu__item mm-audio-user-menu__item--pa" onClick={() => { onPa?.(member); onClose(); }}>
-          🎙 PA <span className="mm-audio-user-menu__hint">Private audio room</span>
-        </button>
+        {showPa && (
+          <button type="button" className="mm-audio-user-menu__item mm-audio-user-menu__item--pa" onClick={() => { onPa?.(member); onClose(); }}>
+            🎙 Invite to PA <span className="mm-audio-user-menu__hint">Private audio for 2</span>
+          </button>
+        )}
         <button type="button" className="mm-audio-user-menu__item" onClick={() => { onGift?.(member); onClose(); }}>
           🎁 Send gift
         </button>
@@ -230,20 +243,52 @@ function HostBonusToast({ bonus, onDone }) {
   );
 }
 
+function PaThemeBackground({ themeId = 'hearts' }) {
+  const particles = themeId === 'hearts' || themeId === 'couple'
+    ? ['💕', '💖', '💗', '💜', '❤️']
+    : themeId === 'galaxy'
+      ? ['✨', '⭐', '🌟', '💫']
+      : themeId === 'neon'
+        ? ['⚡', '✨', '💎', '🔮']
+        : ['✨', '🌸', '💫'];
+  return (
+    <div className={`mm-pa-theme-bg mm-pa-theme-bg--${themeId}`} aria-hidden>
+      {particles.map((p, i) => (
+        <span key={`${p}-${i}`} className="mm-pa-theme-bg__particle" style={{ '--i': i, '--delay': `${(i * 0.7) % 5}s` }}>{p}</span>
+      ))}
+    </div>
+  );
+}
+
 function PaInviteModal({ invite, onAccept, onReject }) {
   if (!invite) return null;
   return (
-    <div className="fixed inset-0 z-[650] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
-      <div className="mm-audio-pa-invite" role="dialog" aria-label="PA invite">
-        <span className="mm-audio-pa-invite__icon">🎙</span>
+    <div className="fixed inset-0 z-[700] flex items-center justify-center p-4 mm-pa-invite-overlay">
+      <div className="mm-audio-pa-invite mm-audio-pa-invite--animated" role="dialog" aria-label="PA invite">
+        <div className="mm-audio-pa-invite__glow" aria-hidden />
+        <span className="mm-audio-pa-invite__icon mm-audio-pa-invite__icon--pulse">🎙</span>
         <h3 className="mm-audio-pa-invite__title">Private Audio invite</h3>
         <p className="mm-audio-pa-invite__text">
-          <strong>{invite.fromNickname}</strong> is inviting you to join a PA room together
+          <strong>{invite.fromNickname}</strong> is inviting you to a PA room together
         </p>
+        <p className="mm-audio-pa-invite__sub">Just you two — guests can join later with your link</p>
         <div className="flex gap-2 mt-5">
           <button type="button" className="mm-btn mm-btn--ghost flex-1" onClick={onReject}>Decline</button>
-          <button type="button" className="mm-btn mm-btn--primary flex-1" onClick={onAccept}>Accept</button>
+          <button type="button" className="mm-btn mm-btn--primary flex-1 mm-audio-pa-invite__accept" onClick={onAccept}>Accept PA</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function PaWaitingOverlay() {
+  return (
+    <div className="mm-pa-waiting-overlay">
+      <div className="mm-pa-waiting-card">
+        <span className="mm-pa-waiting-card__icon">⏳</span>
+        <h3>Waiting for PA hosts</h3>
+        <p>They&apos;ll let you in when ready — stay on this screen</p>
+        <div className="mm-pa-waiting-dots"><span /><span /><span /></div>
       </div>
     </div>
   );
@@ -295,16 +340,45 @@ function compressWallpaper(file, maxBytes = 380_000) {
 function AudioChatBubble({ m, isMe }) {
   const timeLeft = useMessageTtl(m);
   const isGift = m.kind === 'gift';
-  if (!m.system && !isGift && timeLeft <= 0) return null;
+  const isJoin = m.kind === 'join';
+  if (!m.system && !isGift && !isJoin && timeLeft <= 0) return null;
   return (
-    <div className={`mm-audio-chat-bubble ${isMe ? 'mm-audio-chat-bubble--me' : ''} ${isGift ? 'mm-audio-chat-bubble--gift' : ''}`}>
-      <span className="mm-audio-chat-bubble__name">{isMe ? 'You' : m.nickname}</span>
-      <p className="mm-audio-chat-bubble__text">{m.text || (m.gift ? `${m.gift.icon} ${m.gift.name}` : '')}</p>
-      {!m.system && !isGift && (
+    <div className={`mm-audio-chat-bubble ${isMe ? 'mm-audio-chat-bubble--me' : ''} ${isGift ? 'mm-audio-chat-bubble--gift' : ''} ${isJoin ? 'mm-audio-chat-bubble--join' : ''}`}>
+      {!isJoin && (
+        <span className="mm-audio-chat-bubble__name">{isMe ? 'You' : <AudioName member={m} />}</span>
+      )}
+      {isJoin ? (
+        <p className="mm-audio-chat-bubble__join-text">
+          <AudioName member={m} /> <span className="text-white/50">joined the room</span>
+        </p>
+      ) : (
+        <p className="mm-audio-chat-bubble__text">{m.text || (m.gift ? `${m.gift.icon} ${m.gift.name}` : '')}</p>
+      )}
+      {!m.system && !isGift && !isJoin && (
         <span className={`mm-desk-bubble__ttl text-[9px] ${timeLeft <= 10 ? 'mm-desk-bubble__ttl--warn' : ''}`}>
           {formatTtl(timeLeft)}
         </span>
       )}
+    </div>
+  );
+}
+
+function EntryAnimation({ event, onDone }) {
+  useEffect(() => {
+    if (!event) return undefined;
+    const t = setTimeout(onDone, 3200);
+    return () => clearTimeout(t);
+  }, [event, onDone]);
+  if (!event) return null;
+  return (
+    <div className={`mm-audio-entry-overlay mm-audio-entry-overlay--${event.tier || 'grand'}`} aria-live="polite">
+      <div className="mm-audio-entry-banner">
+        <span className="mm-audio-entry-banner__spark">✨</span>
+        <p className="mm-audio-entry-banner__title" style={{ color: event.nameColor || '#f472b6' }}>
+          @{event.username}
+        </p>
+        <p className="mm-audio-entry-banner__sub">Level {event.level} has entered</p>
+      </div>
     </div>
   );
 }
@@ -390,7 +464,7 @@ function StageSlot({
           onClick={() => canModerate && !isSelf && setMenuOpen((o) => !o)}
           className="flex flex-col items-center focus:outline-none"
         >
-          <span className="text-[10px] text-white/75 truncate max-w-full">{isSelf ? 'You' : occupant.nickname}</span>
+          <span className="text-[10px] truncate max-w-full">{isSelf ? 'You' : <AudioName member={occupant} className="!text-[10px]" />}</span>
           <span className={`text-[9px] ${occupant.role === 'host' ? 'text-amber-300 font-bold' : occupant.role === 'moderator' ? 'text-sky-300 font-bold' : 'text-white/35'}`}>
             {ROLE_LABEL[occupant.role]}
           </span>
@@ -433,17 +507,22 @@ function StageSlot({
   );
 }
 
-export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, nickname = 'Anonymous', initialChannelId = null, initialPaToken = null, initialAsCohost = false, isCreator = false, onExit }) {
+export function GroupAudioRoom({
+  socket, iceServers: iceServersProp, coins = 0, nickname = 'Anonymous',
+  audioIdentity = null, onIdentityUpdate,
+  initialChannelId = null, initialPaToken = null, initialAsCohost = false, isCreator = false, onExit,
+}) {
   const { iceServers: iceFromHook } = useIceServers();
   const iceServers = iceServersProp?.length ? iceServersProp : iceFromHook;
   const {
     channel, members, micMuted, speakingIds, error, connecting, chatMessages,
     lockRequired, paInvite, helloEvent, stickerBurst, giftStreak, hostBonus, giftBonus,
     scheduledEvents, useSfu, knockStatus, audioBlocked, livekitConnected,
-    join, create, createPaRoom, leave, toggleMic, moderate, grantSpeak, claimSlot,
+    join, create, leave, toggleMic, moderate, grantSpeak, claimSlot,
     approveJoin, denyJoin, renameRoom, setWallpaper, setGamesEnabled, sendChat,
     sendSticker, sendHello, invitePa, respondPa, setRoomLock, makePublic,
-    knockRoom, approveKnock, denyKnock, setTheme, setEntryFee, scheduleEvent,
+    knockRoom, approveKnock, denyKnock, setTheme, setPaTheme, setEntryFee, scheduleEvent,
+    approvePaGuest, denyPaGuest,
     resumeRemoteAudio, clearError, dismissLockRequired, dismissHello, dismissSticker, dismissPaInvite,
     dismissGiftStreak, dismissHostBonus, dismissGiftBonus, clearKnockStatus,
   } = useAudioChannel(socket, iceServers, nickname);
@@ -472,6 +551,37 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
   const [showLiveModal, setShowLiveModal] = useState(false);
   const [liveCamBusy, setLiveCamBusy] = useState(false);
   const [lobbyScheduled, setLobbyScheduled] = useState([]);
+  const [coinBalance, setCoinBalance] = useState(coins);
+  const [coinShopOpen, setCoinShopOpen] = useState(false);
+  const [entryAnim, setEntryAnim] = useState(null);
+  const [localIdentity, setLocalIdentity] = useState(audioIdentity);
+
+  useEffect(() => { setCoinBalance(coins); }, [coins]);
+  useEffect(() => { setLocalIdentity(audioIdentity); }, [audioIdentity]);
+
+  useEffect(() => {
+    if (!socket) return undefined;
+    const onIdentity = (payload) => {
+      setLocalIdentity(payload);
+      if (payload?.coins != null) setCoinBalance(payload.coins);
+      onIdentityUpdate?.();
+    };
+    const onCoins = (p) => {
+      if (p?.audio) setCoinBalance(p.coins);
+    };
+    const onEntry = (payload) => {
+      if (payload?.channelId && channel?.channelId && payload.channelId !== channel.channelId) return;
+      setEntryAnim({ ...payload, id: `${payload.socketId}-${Date.now()}` });
+    };
+    socket.on('audio-identity:ready', onIdentity);
+    socket.on('coins-updated', onCoins);
+    socket.on('audio:entry-animation', onEntry);
+    return () => {
+      socket.off('audio-identity:ready', onIdentity);
+      socket.off('coins-updated', onCoins);
+      socket.off('audio:entry-animation', onEntry);
+    };
+  }, [socket, channel?.channelId, onIdentityUpdate]);
 
   const youtubeLive = useYoutubeLive({
     socket,
@@ -546,7 +656,12 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
   const raisedHands = listeners.filter((m) => m.handRaised).length;
   const pendingJoins = channel?.pendingJoins || [];
   const pendingKnocks = channel?.pendingKnocks || [];
-  const modQueueCount = (canModerate ? pendingKnocks.length + pendingJoins.length : 0);
+  const pendingPaGuests = channel?.pendingPaGuests || [];
+  const isPaCore = !!(channel?.paMembers?.includes(socket?.id));
+  const modQueueCount = canModerate ? pendingKnocks.length + pendingJoins.length : 0;
+  const paGuestQueueCount = isPaCore ? pendingPaGuests.length : 0;
+  const isPaWaiting = me?.role === 'pa_waiting';
+  const paThemeId = channel?.paThemeId || 'hearts';
   const themeOverlay = THEME_STYLES[channel?.themeId] || null;
   const frameClass = THEME_FRAMES[channel?.themeId] || '';
   const maxSlots = channel?.maxSpeakers || STAGE_SLOTS;
@@ -618,14 +733,6 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
     return () => clearTimeout(t);
   }, [uiMsg]);
 
-  const paSharePromptRef = useRef(false);
-  useEffect(() => {
-    if (!channel?.isPa || !channel?.paInviteToken || members.length > 1) return;
-    if (paSharePromptRef.current) return;
-    paSharePromptRef.current = true;
-    setUiMsg('🎙 PA room ready — tap 🔗 PA link to invite your partner');
-  }, [channel?.isPa, channel?.paInviteToken, members.length]);
-
   // Keyboard shortcuts for the live room:
   //   M / Space  toggle mic (speakers only)      Esc  leave the room
   const micRef = useRef(null);
@@ -666,7 +773,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
       try {
         await navigator.share({
           title: channel.topic || 'Live voice room',
-          text: cohostLink ? 'Join as co-host (listen-only) 🎧' : (token ? 'Join my private PA room 🎙️' : 'Join my live voice room 🎙️'),
+          text: isPaRoom && isPaCore ? 'Join our PA room as a guest (hosts approve) 🎙️' : (token ? 'Join my private PA room 🎙️' : 'Join my live voice room 🎙️'),
           url,
         });
         setUiMsg(cohostLink ? 'Co-host link shared' : (token ? 'PA link shared' : 'Invite link shared'));
@@ -677,14 +784,11 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
     }
     try {
       await navigator.clipboard.writeText(url);
-      setUiMsg(cohostLink ? 'Co-host link copied' : (token ? 'PA link copied — send to your partner' : 'Invite link copied'));
+      setUiMsg(isPaRoom && isPaCore ? 'Guest link copied — they wait until you approve' : (token ? 'PA link copied' : 'Invite link copied'));
     } catch {
       setUiMsg(url);
     }
   };
-
-  const shareCohostLink = () => shareRoom(true);
-
   const handleSendChat = () => {
     if (!chatInput.trim()) return;
     sendChat(chatInput);
@@ -864,18 +968,6 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
           </button>
         </div>
 
-        <div className="mm-voice-lobby__actions">
-          <button
-            type="button"
-            disabled={connecting}
-            onClick={() => createPaRoom(nickname)}
-            className="mm-btn mm-btn--ghost mm-voice-lobby__pa-btn"
-          >
-            🎙 Start PA room
-          </button>
-          <span className="mm-voice-lobby__actions-hint">Creates a private room + shareable link for your partner</span>
-        </div>
-
         <div className="mm-voice-lobby__features">
           <p className="mm-voice-lobby__features-title">In-room features</p>
           <div className="mm-voice-lobby__features-grid">
@@ -957,7 +1049,6 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
               <p className="text-xs text-white/40 mt-1 mb-3">Start a public room or a PA room and share the link</p>
               <div className="flex flex-wrap gap-2 justify-center">
                 <button type="button" className="mm-btn mm-btn--primary !text-xs" onClick={() => create(topic || 'Open voice room 🎙️', false, nickname)}>Start room</button>
-                <button type="button" className="mm-btn mm-btn--ghost !text-xs" onClick={() => createPaRoom(nickname)}>Start PA</button>
               </div>
             </div>
           )}
@@ -976,7 +1067,6 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
             <p className="text-sm text-white/70 mb-2">Few rooms live — join one, tap someone&apos;s avatar, then invite to PA</p>
             <div className="flex flex-wrap gap-2 justify-center">
               <button type="button" className="mm-btn mm-btn--primary !text-xs" onClick={() => create(topic || 'Open voice room 🎙️', false, nickname)}>Start a room</button>
-              <button type="button" className="mm-btn mm-btn--ghost !text-xs" onClick={() => createPaRoom(nickname)}>Start PA + link</button>
             </div>
           </div>
         )}
@@ -996,9 +1086,11 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
 
   return (
     <div
-      className={`h-[100dvh] max-h-[100dvh] flex flex-col bg-[#08090f] text-white overflow-hidden mm-voice-room${isPaRoom ? ' mm-voice-room--pa' : ''}`}
+      className={`h-[100dvh] max-h-[100dvh] flex flex-col bg-[#08090f] text-white overflow-hidden mm-voice-room${isPaRoom ? ` mm-voice-room--pa mm-voice-room--pa-${paThemeId}` : ''}`}
       onPointerDownCapture={() => resumeRemoteAudio?.()}
     >
+      {isPaRoom && <PaThemeBackground themeId={paThemeId} />}
+      {isPaWaiting && <PaWaitingOverlay />}
       <header className="mm-audio-room-header">
         <div className="min-w-0">
           <h2 className="text-base sm:text-lg font-bold truncate flex items-center gap-2">
@@ -1024,19 +1116,8 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
             title={isPaRoom ? 'Share PA invite link' : 'Share invite link'}
             aria-label={isPaRoom ? 'Share PA link' : 'Share invite link'}
           >
-            {isPaRoom ? '🔗 PA link' : '🔗 Invite'}
+            {isPaRoom && isPaCore ? '🔗 Guest link' : isPaRoom ? '🔗 PA' : '🔗 Invite'}
           </button>
-          {isPaRoom && isHost && channel?.paInviteToken && !channel?.cohostJoined && (
-            <button
-              type="button"
-              onClick={shareCohostLink}
-              className="mm-btn mm-btn--ghost !px-3 !py-1.5 !text-xs"
-              title="Share co-host link (listen-only)"
-              aria-label="Share co-host link"
-            >
-              🎧 Co-host
-            </button>
-          )}
           {canModerate && (
             <button type="button" onClick={() => setAdminOpen(true)} className={`mm-audio-role-pill ${isHost ? 'mm-audio-role-pill--host' : 'mm-audio-role-pill--mod'} relative`}>
               {isHost ? '👑 Admin' : '🛡️ Co-taker'}
@@ -1045,7 +1126,15 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
               )}
             </button>
           )}
-          <span className="text-xs font-bold text-amber-300 tabular-nums">🪙 {coins}</span>
+          <button
+            type="button"
+            onClick={() => setCoinShopOpen(true)}
+            className="mm-btn mm-btn--ghost !px-2.5 !py-1.5 !text-xs !border-amber-400/30 !text-amber-200"
+            title="Recharge coins"
+          >
+            🪙 {coinBalance}
+            {localIdentity?.level > 0 && <span className="ml-1 text-[10px] opacity-70">Lv{localIdentity.level}</span>}
+          </button>
         </div>
       </header>
 
@@ -1089,11 +1178,39 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
         </div>
       )}
 
+      {paGuestQueueCount > 0 && isPaCore && (
+        <div className="mx-4 mb-2 mm-pa-guest-queue">
+          <p className="mm-pa-guest-queue__title">👥 Guests waiting ({paGuestQueueCount})</p>
+          {pendingPaGuests.map((g) => (
+            <div key={g.socketId} className="mm-pa-guest-queue__row">
+              <span className="truncate">{g.nickname}</span>
+              <button type="button" className="mm-pa-guest-queue__approve" onClick={() => approvePaGuest(g.socketId)}>Let in</button>
+              <button type="button" className="mm-pa-guest-queue__deny" onClick={() => denyPaGuest(g.socketId)}>Deny</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isPaRoom && isPaCore && (
+        <div className="mx-4 mb-2 mm-pa-theme-picker">
+          {PA_THEMES.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={`mm-pa-theme-picker__btn${paThemeId === t.id ? ' mm-pa-theme-picker__btn--on' : ''}`}
+              onClick={() => setPaTheme(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {showRoomTips && (
         <div className="mx-4 mb-2 mm-audio-room-tips">
           <div className="mm-audio-room-tips__inner">
             <span className="mm-audio-room-tips__text">
-              👤 Tap any avatar · {canModerate ? '👑 Admin for themes/lock/events' : '🎁 Gift & hello in menu'} · {isPaRoom ? '⏱ PA timer above' : '🚪 Knock on locked rooms'}
+              👤 {isPaRoom ? 'PA for 2 · share guest link for +2' : 'Tap any speaker for PA · gift · hello'} · {canModerate && !isPaRoom ? '👑 Admin for lock/events' : ''}
             </span>
             <button
               type="button"
@@ -1110,7 +1227,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
       <main className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[1fr_20rem] lg:gap-4 px-3 sm:px-4 pb-2 overflow-hidden">
         <section className={`mm-audio-stage-panel flex-shrink-0 lg:flex-shrink lg:min-h-0 lg:overflow-y-auto overflow-x-hidden${isPaRoom ? ' mm-audio-stage-panel--pa' : ''}`} style={stageStyle}>
           <h3 className="mm-audio-panel-label">
-            {isPaRoom ? 'Private Audio · tap anyone for hello / gift / report' : 'Stage · tap a profile for hello / PA / gift'}
+            {isPaRoom ? 'Private Audio · 2 speakers' : 'Stage · tap a speaker for PA · gift · hello'}
           </h3>
           <div className={`mm-audio-slot-grid${isPaRoom ? ' mm-audio-slot-grid--pa' : ''}`}>
             {slots.map((occupant, i) => (
@@ -1289,20 +1406,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
               </div>
             )}
 
-            {isHost && isPaRoom && (
-              <div className="mb-4 p-3 rounded-xl border border-violet-400/25 bg-violet-500/8">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-violet-200 mb-2">Private Audio</p>
-                <button type="button" className="mm-btn mm-btn--primary w-full mb-2 !text-xs" onClick={() => shareRoom(false)}>🔗 Copy PA partner link</button>
-                {channel?.paInviteToken && !channel?.cohostJoined && (
-                  <button type="button" className="mm-btn mm-btn--ghost w-full mb-2 !text-xs" onClick={shareCohostLink}>🎧 Copy co-host link (listen-only)</button>
-                )}
-                <button type="button" className="mm-btn mm-btn--ghost w-full !text-xs" onClick={() => { makePublic(); setUiMsg('🌐 Room is now public'); setAdminOpen(false); }}>
-                  🌐 Make room public
-                </button>
-              </div>
-            )}
-
-            {isHost && (
+            {isHost && !isPaRoom && (
               <>
                 <label className="block text-[10px] font-bold uppercase text-white/40 mb-1">Room name (emoji ok)</label>
                 <div className="flex gap-2 mb-4">
@@ -1403,16 +1507,6 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
 
             {!isPaRoom && (
             <>
-            {isHost && members.filter((m) => m.socketId !== socket?.id).length > 0 && (
-              <div className="mb-4 p-3 rounded-xl border border-violet-400/20 bg-violet-500/5">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-violet-200 mb-2">Private Audio invites</p>
-                {members.filter((m) => m.socketId !== socket?.id).map((m) => (
-                  <button key={m.socketId} type="button" className="w-full text-left text-xs px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 mb-1" onClick={() => { handlePaInvite(m); setAdminOpen(false); }}>
-                    🎙 Invite {m.nickname} to PA
-                  </button>
-                ))}
-              </div>
-            )}
             <p className="text-[10px] text-white/40 mb-2">Invite viewers to stage</p>
             <div className="flex flex-col gap-1 mb-3">
               {listeners.map((m) => (
@@ -1470,7 +1564,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
               </div>
               <button type="button" onClick={() => setRaceOpen(false)} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-white/70">✕</button>
             </div>
-            <CoinRaceGame socket={socket} channelId={channel.channelId} coins={coins} />
+            <CoinRaceGame socket={socket} channelId={channel.channelId} coins={coinBalance} />
           </div>
         </div>
       )}
@@ -1479,7 +1573,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
         socket={socket}
         channelId={channel.channelId}
         members={members}
-        coins={coins}
+        coins={coinBalance}
         open={giftOpen}
         initialTarget={giftTarget}
         onClose={() => { setGiftOpen(false); setGiftTarget(null); }}
@@ -1500,6 +1594,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
           member={userMenu.member}
           frameClass={frameClass}
           onHello={handleHello}
+          showPa={!isPaRoom}
           onPa={handlePaInvite}
           onGift={openGiftFor}
           onReport={handleReportUser}
@@ -1519,6 +1614,13 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
       <GiftStreakBurst event={giftStreak} onDone={dismissGiftStreak} />
       <HostBonusToast bonus={hostBonus} onDone={dismissHostBonus} />
       <GiftBonusToast bonus={giftBonus} onDone={dismissGiftBonus} />
+      <EntryAnimation event={entryAnim} onDone={() => setEntryAnim(null)} />
+      <AudioCoinShop
+        open={coinShopOpen}
+        onClose={() => setCoinShopOpen(false)}
+        identity={localIdentity}
+        onBalanceUpdate={(id) => { setLocalIdentity(id); setCoinBalance(id?.coins ?? 0); onIdentityUpdate?.(); }}
+      />
     </div>
   );
 }

@@ -30,6 +30,7 @@ const { registerYoutubeLiveHandlers, stopAllForSocket, isFfmpegAvailable } = req
 const livekitRooms = require('./livekitRooms');
 const { registerRaceGame } = require('./raceGame');
 const { registerEconomy } = require('./economy');
+const { registerAudioIdentity } = require('./audioIdentity');
 const { registerModeration } = require('./moderation');
 const { createMatchQueue } = require('./matchQueue');
 const { createInfra } = require('./infra');
@@ -83,6 +84,7 @@ let localDb = {
   creator_password_resets: [],
   creator_notifications: [],
   consumed_payments: [],
+  audio_identities: {},
 };
 
 function loadLocalDb() {
@@ -103,6 +105,7 @@ function loadLocalDb() {
         creator_password_resets: [],
         creator_notifications: [],
         consumed_payments: [],
+        audio_identities: {},
         ...parsed,
       };
       console.log('[DB] Local storage loaded.');
@@ -3028,11 +3031,9 @@ app.post('/api/vibe/session-summary', async (req, res) => {
   res.json({ summary });
 });
 
-registerPayments(app, { persistence, blockedIps, io, users });
-
 // ---------------------------------------------------------------------------
 // Voice channels, coin race game, economy (gifts/tiers) and moderation.
-// Registered in dependency order: moderation -> economy -> audio -> game.
+// Registered in dependency order: moderation -> audio identity -> economy -> audio -> game.
 // `isAdminRequest` reuses the same timing-safe key comparison as requireAdmin.
 // ---------------------------------------------------------------------------
 function isAdminRequest(req) {
@@ -3052,6 +3053,15 @@ const moderation = registerModeration(app, io, {
   ADMIN_ROOM,
 });
 
+const audioIdentity = registerAudioIdentity(app, io, {
+  saveLocalDb,
+  localDb,
+  supabase,
+  audit: moderation.audit,
+});
+
+registerPayments(app, { persistence, blockedIps, io, users, audioIdentity });
+
 economy = registerEconomy(app, io, {
   users,
   getCoinUser,
@@ -3063,6 +3073,7 @@ economy = registerEconomy(app, io, {
   audit: moderation.audit,
   getAudioChannel: (id) => audioChannelLookup.get(id),
   rateLimit: (key, opts) => infra.rateLimit(key, opts),
+  audioIdentity,
 });
 
 // Forward declaration: the game needs the channel registry, and channels need
@@ -3179,6 +3190,7 @@ io.on('connection', (socket) => {
   uniqueFeatures.attachSocketHandlers(socket, ip);
   moderation.attachSocketHandlers(socket, ip);
   economy.attachSocketHandlers(socket, ip);
+  audioIdentity.attachSocketHandlers(socket, ip, users);
   audioChannels.attachSocketHandlers(socket, ip);
   raceGame.attachSocketHandlers(socket, ip);
 

@@ -43,9 +43,10 @@ const JOIN_MAX = 8;
 const SIGNAL_WINDOW_MS = 10000;
 const SIGNAL_MAX = 200;
 
-const ROLE_RANK = { cohost: 0, listener: 0, speaker: 1, moderator: 2, host: 3 };
-const PA_EMPTY_CLOSE_MS = Number(process.env.PA_EMPTY_CLOSE_MS) || 120000;
+const ROLE_RANK = { pa_waiting: 0, cohost: 0, listener: 0, speaker: 1, moderator: 2, host: 3 };
+const PA_EMPTY_CLOSE_MS = Number(process.env.PA_EMPTY_CLOSE_MS) || 5 * 60 * 1000;
 const PA_SESSION_MS = Number(process.env.PA_SESSION_MS) || 30 * 60 * 1000;
+const PA_MAX_GUESTS = 2;
 const HOST_BONUS_MINUTES = 30;
 const HOST_BONUS_COINS = 15;
 const ALLOWED_ENTRY_FEES = [0, 5, 10, 25, 50];
@@ -61,6 +62,15 @@ const ROOM_THEMES = {
   forest: 'linear-gradient(135deg, rgba(16,185,129,0.3), rgba(5,46,22,0.4))',
   gold: 'linear-gradient(135deg, rgba(251,191,36,0.35), rgba(120,53,15,0.35))',
   couple: 'linear-gradient(135deg, rgba(244,114,182,0.35), rgba(167,139,250,0.3))',
+};
+
+const PA_THEMES = {
+  hearts: true,
+  neon: true,
+  galaxy: true,
+  sunset: true,
+  gold: true,
+  couple: true,
 };
 
 const HELLO_EMOJI = { wave: '👋', fire: '🔥', heart: '❤️', purple: '💜', sparkle: '✨' };
@@ -90,7 +100,46 @@ function registerAudioChannels(app, io, deps) {
   const paInvites = new Map();
   const paCloseTimers = new Map();
   const paSessionTimers = new Map();
+  const paDestroyTimers = new Map();
   const hostMinuteTimers = new Map();
+
+  const isPaCoreMember = (channel, socketId) =>
+    !!channel?.isPa && Array.isArray(channel.paMembers) && channel.paMembers.includes(socketId);
+
+  const paGuestCount = (channel) =>
+    [...channel.members.values()].filter(
+      (m) => m.role === 'pa_waiting' || (m.role === 'listener' && !isPaCoreMember(channel, m.socketId))
+    ).length;
+
+  const userInPaRoom = (socketId) => {
+    for (const cid of memberships.get(socketId) || []) {
+      const c = channels.get(cid);
+      if (c?.isPa && c.members.has(socketId) && c.members.get(socketId)?.role !== 'pa_waiting') {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const schedulePaDestroy = (channelId) => {
+    if (paDestroyTimers.has(channelId)) return;
+    paDestroyTimers.set(channelId, setTimeout(() => {
+      paDestroyTimers.delete(channelId);
+      const c = channels.get(channelId);
+      if (!c?.isPa || c.members.size > 0) return;
+      channels.delete(channelId);
+      if (typeof onChannelEmpty === 'function') {
+        try { onChannelEmpty(channelId); } catch { /* ignore */ }
+      }
+      broadcastList();
+    }, PA_EMPTY_CLOSE_MS));
+  };
+
+  const cancelPaDestroy = (channelId) => {
+    const t = paDestroyTimers.get(channelId);
+    if (t) clearTimeout(t);
+    paDestroyTimers.delete(channelId);
+  };
 
   const rateOk = (map, key, windowMs, max) => {
     const now = Date.now();
@@ -128,6 +177,11 @@ function registerAudioChannels(app, io, deps) {
     socketId: m.socketId,
     userId: m.userId,
     nickname: m.nickname,
+    audioUsername: m.audioUsername || null,
+    nameColor: m.nameColor || null,
+    displayLevel: m.displayLevel ?? 0,
+    levelBadge: m.levelBadge || null,
+    profileBadge: !!m.profileBadge,
     country: m.country,
     role: m.role,
     micMuted: m.micMuted,
@@ -154,8 +208,9 @@ function registerAudioChannels(app, io, deps) {
     themeId: c.themeId || 'default',
     pendingJoins: [...(c.pendingJoins || [])],
     pendingKnocks: [...(c.pendingKnocks || [])].map((k) => ({ socketId: k.socketId, nickname: k.nickname })),
-    cohostEnabled: !!c.cohostEnabled,
-    cohostJoined: !!c.cohostJoined,
+    pendingPaGuests: (c.pendingPaGuests || []).map((g) => ({ socketId: g.socketId, nickname: g.nickname })),
+    paThemeId: c.isPa ? (c.paThemeId || 'hearts') : null,
+    paMembers: c.isPa ? [...(c.paMembers || [])] : [],
     paEndsAt: c.isPa ? (c.paEndsAt || null) : null,
     paAloneCloseAt: c.isPa ? (c.paAloneCloseAt || null) : null,
     entryFee: c.entryFee || 0,
@@ -271,7 +326,7 @@ function registerAudioChannels(app, io, deps) {
         id: generateId('achm'),
         socketId: 'system',
         nickname: 'System',
-        text: '⏱️ PA room closed — alone too long',
+        text: '⏱️ PA room closed — inactive for 5 minutes',
         system: true,
         ts: Date.now(),
       });
@@ -345,12 +400,16 @@ function registerAudioChannels(app, io, deps) {
       clearPaCloseTimer(channelId);
       clearPaSessionTimer(channelId);
       stopHostRewards(channelId);
-      channels.delete(channelId);
-      if (typeof onChannelEmpty === 'function') {
-        try {
-          onChannelEmpty(channelId);
-        } catch (_) {
-          /* game cleanup must never break teardown */
+      if (c.isPa) {
+        schedulePaDestroy(channelId);
+      } else {
+        channels.delete(channelId);
+        if (typeof onChannelEmpty === 'function') {
+          try {
+            onChannelEmpty(channelId);
+          } catch (_) {
+            /* game cleanup must never break teardown */
+          }
         }
       }
       broadcastList();
@@ -393,30 +452,27 @@ function registerAudioChannels(app, io, deps) {
     const lockCode = opts.lockCode;
     const paToken = opts.paToken;
     const knockBypass = !!opts.knockBypass;
-    const asCohost = !!opts.asCohost;
+    let paGuestWait = false;
 
-    if (asCohost && channel.isPa) {
-      if (channel.cohostJoined) {
-        socket.emit('audio:error', { message: 'Co-host slot is already taken.' });
-        return false;
-      }
+    if (channel.isPa) {
+      cancelPaDestroy(channel.id);
       const tokenOk = channel.paInviteToken && paToken && paToken === channel.paInviteToken;
-      if (!tokenOk) {
-        socket.emit('audio:error', { message: 'Invalid co-host invite link.' });
-        return false;
-      }
-    } else if (channel.isPa && Array.isArray(channel.paMembers) && channel.paMembers.length) {
-      const tokenOk = channel.paInviteToken && paToken && paToken === channel.paInviteToken;
-      if (!channel.paMembers.includes(socket.id) && !tokenOk) {
-        socket.emit('audio:error', { message: 'This private PA room is invite-only.' });
-        return false;
-      }
-      if (tokenOk && !channel.paMembers.includes(socket.id)) {
-        channel.paMembers.push(socket.id);
+      const core = isPaCoreMember(channel, socket.id);
+
+      if (!core && !channel.members.has(socket.id)) {
+        if (!tokenOk) {
+          socket.emit('audio:error', { message: 'This private PA room is invite-only. Use the guest link from a PA member.' });
+          return false;
+        }
+        if (paGuestCount(channel) >= PA_MAX_GUESTS) {
+          socket.emit('audio:error', { message: 'PA guest slots are full (max 2).' });
+          return false;
+        }
+        paGuestWait = true;
       }
     }
 
-    if (channel.lockCode && !channel.members.has(socket.id) && !knockBypass) {
+    if (channel.lockCode && !channel.members.has(socket.id) && !knockBypass && !channel.isPa) {
       const code = String(lockCode || '').replace(/\D/g, '');
       if (code !== channel.lockCode) {
         socket.emit('audio:lock-required', { channelId: channel.id, topic: channel.topic, isPa: !!channel.isPa });
@@ -442,31 +498,61 @@ function registerAudioChannels(app, io, deps) {
       }
     }
 
-    // Creator is host on stage; PA seats speakers; co-host is listen-only.
     const isFirst = channel.members.size === 0;
     let role = 'listener';
-    if (isFirst) role = 'host';
-    else if (asCohost && channel.isPa) role = 'cohost';
-    else if (channel.isPa) role = 'speaker';
+    let slot = null;
+    if (channel.isPa) {
+      if (isPaCoreMember(channel, socket.id)) {
+        role = 'speaker';
+        const idx = channel.paMembers.indexOf(socket.id);
+        slot = idx >= 0 ? idx : (isFirst ? 0 : 1);
+      } else if (paGuestWait) {
+        role = 'pa_waiting';
+      } else {
+        role = 'listener';
+      }
+    } else if (isFirst) {
+      role = 'host';
+      slot = 0;
+    }
 
     const member = {
       socketId: socket.id,
       userId: userData.id,
-      nickname: userData.nickname || 'Anonymous',
+      nickname: userData.audioIdentity?.username || userData.nickname || 'Anonymous',
+      audioUsername: userData.audioIdentity?.username || null,
+      nameColor: userData.audioIdentity?.nameColor || null,
+      displayLevel: userData.audioIdentity?.level ?? 0,
+      levelBadge: userData.audioIdentity?.levelBadge || null,
+      profileBadge: !!userData.audioIdentity?.profileBadge,
       country: userData.country,
       isCreator: !!userData.isCreator,
       verified: !!userData.verified,
       role,
       micMuted: true,
-      forceMuted: role === 'cohost',
+      forceMuted: role === 'pa_waiting' || role === 'listener',
       handRaised: false,
-      slot: role === 'cohost' ? null : isFirst ? 0 : channel.isPa && role === 'speaker' ? Math.min(channel.members.size, (channel.maxSpeakers || 2) - 1) : null,
+      slot,
       joinedAt: Date.now(),
     };
     channel.members.set(socket.id, member);
-    if (asCohost) {
-      channel.cohostJoined = true;
-      channel.cohostSocketId = socket.id;
+
+    if (paGuestWait) {
+      channel.pendingPaGuests = channel.pendingPaGuests || [];
+      if (!channel.pendingPaGuests.some((g) => g.socketId === socket.id)) {
+        channel.pendingPaGuests.push({
+          socketId: socket.id,
+          nickname: userData.nickname || 'Guest',
+          at: Date.now(),
+        });
+      }
+      for (const sid of channel.paMembers || []) {
+        io.to(sid).emit('audio:pa-guest-request', {
+          channelId: channel.id,
+          socketId: socket.id,
+          nickname: userData.nickname || 'Guest',
+        });
+      }
     }
 
     if (!memberships.has(socket.id)) memberships.set(socket.id, new Set());
@@ -475,7 +561,11 @@ function registerAudioChannels(app, io, deps) {
 
     // Only existing speakers need a peer connection (audio mesh).
     const peers = [...channel.members.values()]
-      .filter((m) => m.socketId !== socket.id)
+      .filter((m) => {
+        if (m.socketId === socket.id) return false;
+        if (member.role === 'pa_waiting' || m.role === 'pa_waiting') return false;
+        return true;
+      })
       .map(memberView);
 
     socket.emit('audio:joined', {
@@ -491,17 +581,47 @@ function registerAudioChannels(app, io, deps) {
       hasLockCode: !!channel.lockCode,
       locked: channel.locked || !!channel.lockCode || !!channel.isPa,
       themeId: channel.themeId || 'default',
+      paThemeId: channel.isPa ? (channel.paThemeId || 'hearts') : null,
       paInviteToken: channel.isPa ? channel.paInviteToken : null,
       paEndsAt: channel.isPa ? (channel.paEndsAt || null) : null,
       paAloneCloseAt: channel.isPa ? (channel.paAloneCloseAt || null) : null,
+      paMembers: channel.isPa ? [...(channel.paMembers || [])] : [],
       entryFee: channel.entryFee || 0,
       scheduledStartAt: channel.scheduledStartAt || null,
       useSfu: !!channel.useSfu,
       pendingKnocks: (channel.pendingKnocks || []).map((k) => ({ socketId: k.socketId, nickname: k.nickname })),
+      pendingPaGuests: (channel.pendingPaGuests || []).map((g) => ({ socketId: g.socketId, nickname: g.nickname })),
     });
     if (channel.isPa) startPaSessionTimer(channel);
     maybeEnableSfu(channel);
     socket.to(channel.id).emit('audio:peer-joined', { channelId: channel.id, member: memberView(member) });
+    if (member.audioUsername) {
+      const joinMsg = {
+        channelId: channel.id,
+        id: generateId('achm'),
+        socketId: socket.id,
+        nickname: member.nickname,
+        audioUsername: member.audioUsername,
+        nameColor: member.nameColor,
+        displayLevel: member.displayLevel,
+        levelBadge: member.levelBadge,
+        text: `@${member.audioUsername} joined the room`,
+        kind: 'join',
+        system: true,
+        ts: Date.now(),
+      };
+      io.to(channel.id).emit('audio:chat-message', joinMsg);
+      if (member.displayLevel >= 10) {
+        io.to(channel.id).emit('audio:entry-animation', {
+          channelId: channel.id,
+          socketId: socket.id,
+          username: member.audioUsername,
+          nameColor: member.nameColor,
+          level: member.displayLevel,
+          tier: member.displayLevel >= 40 ? 'legend' : member.displayLevel >= 30 ? 'elite' : member.displayLevel >= 20 ? 'vip' : 'grand',
+        });
+      }
+    }
     broadcastState(channel);
     broadcastList();
     if (channel.isPa) {
@@ -534,6 +654,9 @@ function registerAudioChannels(app, io, deps) {
       }
       const userData = users.get(socket.id);
       if (!userData) return;
+      if (!userData.audioIdentity?.username) {
+        return socket.emit('audio:error', { message: 'Sign in with your voice identity first.' });
+      }
       if (blockedIps.has(ip)) return socket.emit('audio:error', { message: 'Account restricted.' });
 
       const topic = sanitize(data.topic || 'Open voice room', TOPIC_MAX);
@@ -556,54 +679,13 @@ function registerAudioChannels(app, io, deps) {
         useSfu: false,
       };
       channels.set(channel.id, channel);
-      if (typeof data.nickname === 'string') userData.nickname = sanitize(data.nickname, 30);
       joinChannel(socket, channel, userData, ip);
       audit?.('audio_channel_created', { ip, channelId: channel.id, topic });
     });
 
-    /** Solo PA room — host gets a shareable invite link for their partner. */
-    on('audio:create-pa', (data) => {
-      if (!rateOk(joinRates, ip, JOIN_WINDOW_MS, JOIN_MAX)) {
-        return socket.emit('audio:error', { message: 'Slow down — too many channel actions.' });
-      }
-      const userData = users.get(socket.id);
-      if (!userData) return;
-      if (blockedIps.has(ip)) return socket.emit('audio:error', { message: 'Account restricted.' });
-
-      const nick = sanitize(userData.nickname || 'Anonymous', 30);
-      const topic = sanitize(data.topic || `🔒 PA · ${nick}`, TOPIC_MAX);
-      const paChannel = {
-        id: generateId('ach'),
-        topic,
-        isPrivate: false,
-        isPa: true,
-        locked: true,
-        lockCode: null,
-        paInviteToken: generateId('pat'),
-        paMembers: [socket.id],
-        cohostEnabled: true,
-        cohostJoined: false,
-        cohostSocketId: null,
-        maxMembers: 3,
-        maxSpeakers: 2,
-        members: new Map(),
-        bannedIps: new Set(),
-        pendingJoins: [],
-        pendingKnocks: [],
-        gamesEnabled: true,
-        wallpaper: null,
-        createdAt: Date.now(),
-        gameId: null,
-        paStartedAt: Date.now(),
-        paEndsAt: Date.now() + PA_SESSION_MS,
-        entryFee: 0,
-        scheduledStartAt: null,
-        useSfu: false,
-      };
-      channels.set(paChannel.id, paChannel);
-      if (typeof data.nickname === 'string') userData.nickname = sanitize(data.nickname, 30);
-      joinChannel(socket, paChannel, userData, ip);
-      audit?.('audio_pa_created', { ip, channelId: paChannel.id, topic });
+    /** PA only starts when two users invite each other from a public voice room. */
+    on('audio:create-pa', () => {
+      socket.emit('audio:error', { message: 'PA starts when you tap someone and invite them — not from the lobby.' });
     });
 
     on('audio:join', async (data) => {
@@ -613,7 +695,9 @@ function registerAudioChannels(app, io, deps) {
       const userData = users.get(socket.id);
       const channel = getChannel(data.channelId);
       if (!userData || !channel) return socket.emit('audio:error', { message: 'Channel not found.' });
-      if (typeof data.nickname === 'string') userData.nickname = sanitize(data.nickname, 30);
+      if (!userData.audioIdentity?.username) {
+        return socket.emit('audio:error', { message: 'Sign in with your voice identity first.' });
+      }
 
       // Re-sync if the client lost state but the server still has membership.
       if (channel.members.has(socket.id)) {
@@ -1070,6 +1154,9 @@ function registerAudioChannels(app, io, deps) {
       if (channel.isPa) {
         return socket.emit('audio:error', { message: 'Already in a PA room.' });
       }
+      if (userInPaRoom(socket.id) || userInPaRoom(targetId)) {
+        return socket.emit('audio:error', { message: 'You or they are already in a PA session.' });
+      }
       const inviteId = generateId('pinv');
       paInvites.set(inviteId, {
         fromSocketId: socket.id,
@@ -1126,10 +1213,9 @@ function registerAudioChannels(app, io, deps) {
         lockCode: null,
         paInviteToken: generateId('pat'),
         paMembers: [invite.fromSocketId, invite.toSocketId],
-        cohostEnabled: true,
-        cohostJoined: false,
-        cohostSocketId: null,
-        maxMembers: 3,
+        paThemeId: 'hearts',
+        pendingPaGuests: [],
+        maxMembers: 2 + PA_MAX_GUESTS,
         maxSpeakers: 2,
         members: new Map(),
         bannedIps: new Set(),
@@ -1169,6 +1255,58 @@ function registerAudioChannels(app, io, deps) {
         targetNickname: fromMember.nickname,
       });
       audit?.('audio_pa_created', { channelId: paChannel.id, from: fromUser.id, to: toUser.id });
+    });
+
+    on('audio:approve-pa-guest', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      const targetId = String(data.targetSocketId || '');
+      const target = channel?.members.get(targetId);
+      if (!channel?.isPa || !isPaCoreMember(channel, socket.id)) {
+        return socket.emit('audio:error', { message: 'Only PA members can approve guests.' });
+      }
+      if (!target || target.role !== 'pa_waiting') {
+        return socket.emit('audio:error', { message: 'Guest not found or already approved.' });
+      }
+      target.role = 'listener';
+      target.forceMuted = true;
+      target.micMuted = true;
+      channel.pendingPaGuests = (channel.pendingPaGuests || []).filter((g) => g.socketId !== targetId);
+      broadcastState(channel);
+      io.to(targetId).emit('audio:pa-guest-approved', { channelId: channel.id });
+      io.to(channel.id).emit('audio:chat-message', {
+        channelId: channel.id,
+        id: generateId('achm'),
+        socketId: socket.id,
+        nickname: me.nickname,
+        text: `✅ ${target.nickname} joined as a guest`,
+        system: true,
+        ts: Date.now(),
+      });
+    });
+
+    on('audio:deny-pa-guest', (data) => {
+      const channel = getChannel(data.channelId);
+      if (!channel?.isPa || !isPaCoreMember(channel, socket.id)) {
+        return socket.emit('audio:error', { message: 'Only PA members can deny guests.' });
+      }
+      const targetId = String(data.targetSocketId || '');
+      channel.pendingPaGuests = (channel.pendingPaGuests || []).filter((g) => g.socketId !== targetId);
+      if (channel.members.has(targetId)) {
+        removeMember(channel.id, targetId, 'pa_guest_denied');
+      }
+      io.to(targetId).emit('audio:error', { message: 'PA hosts declined your request.' });
+      broadcastState(channel);
+    });
+
+    on('audio:set-pa-theme', (data) => {
+      const channel = getChannel(data.channelId);
+      if (!channel?.isPa || !isPaCoreMember(channel, socket.id)) {
+        return socket.emit('audio:error', { message: 'Only PA members can change the theme.' });
+      }
+      const themeId = String(data.themeId || 'hearts');
+      channel.paThemeId = PA_THEMES[themeId] ? themeId : 'hearts';
+      broadcastState(channel);
     });
 
     on('audio:make-public', (data) => {

@@ -35,6 +35,7 @@ function registerEconomy(app, io, deps) {
     audit,
     getAudioChannel,
     rateLimit: rateLimitFn,
+    audioIdentity,
   } = deps;
 
   /** ip -> Promise chain (async mutex) */
@@ -214,6 +215,17 @@ function registerEconomy(app, io, deps) {
     return { ok: true };
   };
 
+  function pushAudioIdentity(usernameKey, identity) {
+    if (!identity) return;
+    for (const [sid, user] of users.entries()) {
+      if (String(user.audioIdentity?.username || '').toLowerCase() === usernameKey) {
+        user.audioIdentity = identity;
+        io.to(sid).emit('audio-identity:ready', identity);
+        io.to(sid).emit('coins-updated', { coins: identity.coins, reason: 'wallet_update', audio: true });
+      }
+    }
+  }
+
   /**
    * Send a gift. Atomically debits the sender, credits the recipient's share,
    * and books the creator's earnings. Returns the animation payload.
@@ -237,17 +249,52 @@ function registerEconomy(app, io, deps) {
     if (prev && now - prev.lastAt < GIFT_STREAK_WINDOW_MS) streak = prev.count + 1;
     giftStreaks.set(streakKey, { count: streak, lastAt: now });
 
-    const spend = await debit(fromIp, gift.cost, `gift_sent_${gift.id}`, { toSocketId, channelId });
-    if (!spend.ok) return spend;
+    const sender = users.get(fromSocketId);
+    const useAudioWallet = !!(
+      channelId
+      && audioIdentity
+      && sender?.audioIdentity?.username
+      && recipient?.audioIdentity?.username
+    );
 
+    let spend;
+    let recipientShare = 0;
     const recipientTier = tierFor(recipient.ip);
     const share = Math.floor(gift.cost * gift.creatorShare * recipientTier.giftBoost);
-    await credit(recipient.ip, share, `gift_received_${gift.id}`, { fromSocketId, channelId });
 
-    if (channelId && share > 0) {
+    if (useAudioWallet) {
+      const fromKey = String(sender.audioIdentity.username).toLowerCase();
+      const toKey = String(recipient.audioIdentity.username).toLowerCase();
+      spend = await audioIdentity.debit(fromKey, gift.cost, `gift_sent_${gift.id}`, { toSocketId, channelId });
+      if (!spend.ok) return spend;
+      const creditRes = await audioIdentity.credit(toKey, share, `gift_received_${gift.id}`, { fromSocketId, channelId });
+      if (creditRes.ok) {
+        recipientShare = share;
+        const xpView = await audioIdentity.giftXp(toKey, gift.cost, share);
+        if (xpView) pushAudioIdentity(toKey, xpView);
+      }
+      pushAudioIdentity(fromKey, spend.identity);
+      if (creditRes.identity) pushAudioIdentity(toKey, creditRes.identity);
+    } else {
+      spend = await debit(fromIp, gift.cost, `gift_sent_${gift.id}`, { toSocketId, channelId });
+      if (!spend.ok) return spend;
+      recipientShare = share;
+      await credit(recipient.ip, share, `gift_received_${gift.id}`, { fromSocketId, channelId });
+    }
+
+    if (channelId && recipientShare > 0) {
       try {
-        const bonus = await credit(recipient.ip, GIFT_RECEIVE_BONUS, 'audio_gift_receive_bonus', { channelId, giftId: gift.id });
-        if (bonus.ok) {
+        const bonusTarget = useAudioWallet
+          ? String(recipient.audioIdentity.username).toLowerCase()
+          : recipient.ip;
+        let bonus;
+        if (useAudioWallet) {
+          bonus = await audioIdentity.credit(bonusTarget, GIFT_RECEIVE_BONUS, 'audio_gift_receive_bonus', { channelId, giftId: gift.id });
+          if (bonus.ok && bonus.identity) pushAudioIdentity(bonusTarget, bonus.identity);
+        } else {
+          bonus = await credit(recipient.ip, GIFT_RECEIVE_BONUS, 'audio_gift_receive_bonus', { channelId, giftId: gift.id });
+        }
+        if (bonus?.ok) {
           io.to(channelId).emit('audio:gift-bonus', {
             channelId,
             toSocketId,
@@ -256,20 +303,20 @@ function registerEconomy(app, io, deps) {
             giftName: gift.name,
           });
           io.to(toSocketId).emit('coins-updated', {
-            coins: bonus.balance,
+            coins: bonus.balance ?? bonus.identity?.coins,
             reason: 'Gift receive bonus',
+            audio: !!useAudioWallet,
           });
         }
       } catch { /* bonus is best-effort */ }
     }
 
     const rStats = statsFor(recipient.ip);
-    rStats.earned += share;
+    rStats.earned += recipientShare;
     rStats.giftsReceived += 1;
     statsFor(fromIp).giftsSent += 1;
     stats.giftsSent += 1;
 
-    const sender = users.get(fromSocketId);
     const payload = {
       giftId: gift.id,
       name: gift.name,
@@ -322,16 +369,18 @@ function registerEconomy(app, io, deps) {
           to_user_id: recipient.id || null,
           from_ip: fromIp,
           to_ip: recipient.ip || null,
+          from_audio_username: sender?.audioIdentity?.username || null,
+          to_audio_username: recipient?.audioIdentity?.username || null,
           channel_id: channelId || null,
-          creator_earned: share,
+          creator_earned: recipientShare,
           blast: false,
-          meta: { icon: gift.icon, tier: gift.tier },
+          meta: { icon: gift.icon, tier: gift.tier, audioWallet: useAudioWallet },
         })
         .then(() => {})
         .catch(() => {});
     }
 
-    return { ok: true, balance: spend.balance, gift: payload, creatorEarned: share };
+    return { ok: true, balance: spend.balance ?? spend.identity?.coins, gift: payload, creatorEarned: recipientShare, audioWallet: useAudioWallet };
   }
 
   async function sendGiftToAll({ fromIp, fromSocketId, giftId, channelId, targetIds }) {
@@ -474,6 +523,18 @@ function registerEconomy(app, io, deps) {
     });
 
     socket.on('economy:me', async () => {
+      const u = users.get(socket.id);
+      if (u?.audioIdentity) {
+        return socket.emit('economy:me', {
+          coins: u.audioIdentity.coins,
+          tier: tierFor(ip),
+          stats: { giftsReceived: u.audioIdentity.giftsReceived || 0 },
+          packages: COIN_PACKAGES,
+          audio: true,
+          level: u.audioIdentity.level,
+          levelBadge: u.audioIdentity.levelBadge,
+        });
+      }
       socket.emit('economy:me', {
         coins: await getBalance(ip),
         tier: tierFor(ip),

@@ -79,10 +79,10 @@ const CATEGORIES = [
 
 /** Virtual coin packages (credited after successful checkout / test purchase). */
 const COIN_PACKAGES = [
-  { id: 'coins_100', name: 'Starter', coins: 100, priceUsd: 0.99, icon: '🪙' },
-  { id: 'coins_500', name: 'Popular', coins: 500, priceUsd: 3.99, icon: '💰', badge: 'Best' },
-  { id: 'coins_1200', name: 'Pro Bundle', coins: 1200, priceUsd: 7.99, icon: '💎' },
-  { id: 'coins_3000', name: 'Creator Pack', coins: 3000, priceUsd: 14.99, icon: '👑' },
+  { id: 'coins_100', name: 'Starter', coins: 100, priceUsd: 0.99, priceInr: 99, icon: '🪙' },
+  { id: 'coins_500', name: 'Popular', coins: 500, priceUsd: 3.99, priceInr: 349, icon: '💰', badge: 'Best' },
+  { id: 'coins_1200', name: 'Pro Bundle', coins: 1200, priceUsd: 7.99, priceInr: 699, icon: '💎' },
+  { id: 'coins_3000', name: 'Creator Pack', coins: 3000, priceUsd: 14.99, priceInr: 1299, icon: '👑' },
 ];
 
 module.exports = { GIFTS, CATEGORIES, COIN_PACKAGES };

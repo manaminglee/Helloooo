@@ -26,10 +26,13 @@ function paymentProvider() {
   const stripeKey = (process.env.STRIPE_SECRET_KEY || '').trim();
   const razorpayId = (process.env.RAZORPAY_KEY_ID || '').trim();
   const razorpaySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
-  // Test mode must be EXPLICIT: PAYMENT_TEST_MODE=true. Never auto-enable from
-  // NODE_ENV — a misconfigured deploy must fail closed, not silently fake charges.
+  const cashfreeId = (process.env.CASHFREE_APP_ID || '').trim();
+  const cashfreeSecret = (process.env.CASHFREE_SECRET_KEY || '').trim();
   const testMode = process.env.PAYMENT_TEST_MODE === 'true';
 
+  if (forced === 'cashfree' && cashfreeId && cashfreeSecret) {
+    return { provider: 'cashfree', testMode: process.env.CASHFREE_ENV !== 'production' };
+  }
   if (forced === 'stripe' && stripeKey) return { provider: 'stripe', testMode: stripeKey.startsWith('sk_test_') };
   if (forced === 'razorpay' && razorpayId && razorpaySecret) {
     return { provider: 'razorpay', testMode: razorpayId.startsWith('rzp_test_') };
@@ -37,6 +40,7 @@ function paymentProvider() {
   if (forced === 'test' || (testMode && !stripeKey && !razorpayId)) return { provider: 'test', testMode: true };
   if (stripeKey) return { provider: 'stripe', testMode: stripeKey.startsWith('sk_test_') };
   if (razorpayId && razorpaySecret) return { provider: 'razorpay', testMode: razorpayId.startsWith('rzp_test_') };
+  if (cashfreeId && cashfreeSecret) return { provider: 'cashfree', testMode: process.env.CASHFREE_ENV !== 'production' };
   if (process.env.STRIPE_PRO_URL || process.env.STRIPE_UNBLOCK_URL) return { provider: 'link', testMode: true };
   return { provider: 'none', testMode };
 }
@@ -118,9 +122,106 @@ async function stripeVerifySession(sessionId) {
   return { product: data.metadata?.product, ip: data.metadata?.ip };
 }
 
+const { COIN_PACKAGES } = require('./giftCatalog');
+
+async function cashfreeCreateOrder({ packageId, ip, audioUsername, returnUrl }) {
+  const appId = process.env.CASHFREE_APP_ID;
+  const secret = process.env.CASHFREE_SECRET_KEY;
+  const pack = COIN_PACKAGES.find((p) => p.id === packageId);
+  if (!appId || !secret || !pack) throw new Error('Cashfree or package not configured');
+  const base = process.env.CASHFREE_ENV === 'production'
+    ? 'https://api.cashfree.com/pg'
+    : 'https://sandbox.cashfree.com/pg';
+  const orderId = `mm_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+  const res = await fetch(`${base}/orders`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-version': '2023-08-01',
+      'x-client-id': appId,
+      'x-client-secret': secret,
+    },
+    body: JSON.stringify({
+      order_id: orderId,
+      order_amount: pack.priceInr,
+      order_currency: 'INR',
+      customer_details: {
+        customer_id: String(audioUsername || ip).slice(0, 48),
+        customer_email: 'voice@manamingle.local',
+      },
+      order_meta: {
+        return_url: returnUrl,
+        notify_url: returnUrl,
+      },
+      order_note: JSON.stringify({ packageId: pack.id, audioUsername: audioUsername || null, ip }),
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.message || data?.error?.message || 'Cashfree order failed');
+  return {
+    orderId: data.order_id || orderId,
+    paymentSessionId: data.payment_session_id,
+    checkoutUrl: `https://${process.env.CASHFREE_ENV === 'production' ? 'payments' : 'sandbox.cashfree.com'}/pg/view/${data.payment_session_id}`,
+    amount: pack.priceInr,
+    packageId: pack.id,
+    coins: pack.coins,
+  };
+}
+
+async function cashfreeVerifyOrder(orderId) {
+  const appId = process.env.CASHFREE_APP_ID;
+  const secret = process.env.CASHFREE_SECRET_KEY;
+  if (!appId || !secret || !orderId) return null;
+  const base = process.env.CASHFREE_ENV === 'production'
+    ? 'https://api.cashfree.com/pg'
+    : 'https://sandbox.cashfree.com/pg';
+  const res = await fetch(`${base}/orders/${orderId}`, {
+    headers: {
+      'x-api-version': '2023-08-01',
+      'x-client-id': appId,
+      'x-client-secret': secret,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok || data.order_status !== 'PAID') return null;
+  let note = {};
+  try { note = JSON.parse(data.order_note || '{}'); } catch { /* ignore */ }
+  return { packageId: note.packageId, audioUsername: note.audioUsername, ip: note.ip };
+}
+
 function registerPayments(app, deps) {
-  const { persistence, blockedIps, io, users } = deps;
+  const { persistence, blockedIps, io, users, audioIdentity } = deps;
   const frontend = (process.env.FRONTEND_ORIGIN || 'http://localhost:5173').replace(/\/$/, '');
+
+  async function fulfillCoinPackage(packageId, audioUsername, paymentMeta = {}) {
+    const pack = COIN_PACKAGES.find((p) => p.id === packageId);
+    if (!pack || !audioIdentity) return { ok: false, error: 'Invalid package' };
+    const key = String(audioUsername || '').toLowerCase();
+    if (!key) return { ok: false, error: 'Audio identity required' };
+    const res = await audioIdentity.credit(key, pack.coins, `coin_pack_${pack.id}`, { packageId: pack.id, recharge: true });
+    if (!res.ok) return res;
+    if (paymentMeta.paymentRef) {
+      await audioIdentity.recordPayment({
+        paymentRef: paymentMeta.paymentRef,
+        usernameKey: key,
+        packageId: pack.id,
+        coins: pack.coins,
+        amountInr: pack.priceInr,
+        provider: paymentMeta.provider || 'test',
+        orderId: paymentMeta.orderId || null,
+        meta: paymentMeta,
+      });
+    }
+    for (const [sid, user] of users.entries()) {
+      if (String(user.audioIdentity?.username || '').toLowerCase() === key) {
+        user.audioIdentity = res.identity;
+        io.to(sid).emit('audio-identity:ready', res.identity);
+        io.to(sid).emit('coins-updated', { coins: res.balance, reason: `Recharged ${pack.name}`, audio: true });
+        io.to(sid).emit('gift:pack-bought', { packageId: pack.id, coins: pack.coins, balance: res.balance });
+      }
+    }
+    return { ok: true, coins: pack.coins, balance: res.balance, identity: res.identity };
+  }
 
   async function fulfillPayment(product, ip) {
     if (product === 'pro') {
@@ -152,7 +253,9 @@ function registerPayments(app, deps) {
       products: PRODUCTS,
       stripePublishableKey: (process.env.STRIPE_PUBLISHABLE_KEY || '').trim() || null,
       razorpayKeyId: (process.env.RAZORPAY_KEY_ID || '').trim() || null,
-      currency: provider === 'razorpay' ? 'INR' : 'USD',
+      cashfreeAppId: (process.env.CASHFREE_APP_ID || '').trim() || null,
+      coinPackages: COIN_PACKAGES,
+      currency: provider === 'razorpay' || provider === 'cashfree' ? 'INR' : 'USD',
     });
   });
 
@@ -204,10 +307,82 @@ function registerPayments(app, deps) {
 
       return res.status(503).json({
         error: 'Payments not configured',
-        message: 'Set STRIPE_SECRET_KEY or RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET, or PAYMENT_TEST_MODE=true',
+        message: 'Set STRIPE_SECRET_KEY, RAZORPAY_KEY_ID, CASHFREE_APP_ID, or PAYMENT_TEST_MODE=true',
       });
     } catch (e) {
       res.status(500).json({ error: e.message || 'Payment setup failed' });
+    }
+  });
+
+  app.post('/api/payment/coins/create-order', async (req, res) => {
+    const packageId = String(req.body?.packageId || '');
+    const audioUsername = String(req.body?.audioUsername || '').trim();
+    const pack = COIN_PACKAGES.find((p) => p.id === packageId);
+    if (!pack) return res.status(400).json({ error: 'Invalid coin package' });
+    if (!audioUsername) return res.status(400).json({ error: 'Sign in to your voice identity first' });
+    const ip = clientIp(req);
+    const { provider, testMode } = paymentProvider();
+    const returnUrl = `${frontend}/?payment=coins&package=${packageId}&audio=${encodeURIComponent(audioUsername)}`;
+
+    try {
+      if (provider === 'test' || process.env.PAYMENT_TEST_MODE === 'true') {
+        return res.json({
+          provider: 'test',
+          testMode: true,
+          packageId,
+          coins: pack.coins,
+          amountLabel: `₹${pack.priceInr} (simulated)`,
+          message: 'Test mode — confirm to credit coins instantly.',
+        });
+      }
+      if (provider === 'cashfree') {
+        const order = await cashfreeCreateOrder({ packageId, ip, audioUsername, returnUrl });
+        return res.json({ provider: 'cashfree', testMode, ...order });
+      }
+      return res.status(503).json({ error: 'Coin checkout not configured — set CASHFREE_APP_ID or PAYMENT_TEST_MODE=true' });
+    } catch (e) {
+      res.status(500).json({ error: e.message || 'Order failed' });
+    }
+  });
+
+  app.post('/api/payment/coins/verify', async (req, res) => {
+    const orderId = String(req.body?.orderId || '');
+    const packageId = String(req.body?.packageId || '');
+    const audioUsername = String(req.body?.audioUsername || '');
+    const ref = `cashfree:${orderId || packageId}:${audioUsername}`;
+    if (persistence.hasConsumedPayment?.(ref)) {
+      return res.json({ ok: true, alreadyProcessed: true });
+    }
+    try {
+      if (process.env.PAYMENT_TEST_MODE === 'true' && req.body?.testConfirm) {
+        const result = await fulfillCoinPackage(packageId, audioUsername, {
+          paymentRef: ref,
+          provider: 'test',
+          orderId: null,
+        });
+        if (result.ok) {
+          await persistence.markPaymentConsumed?.(ref, { provider: 'test', packageId, usernameKey: String(audioUsername).toLowerCase() });
+        }
+        return res.json(result);
+      }
+      const meta = await cashfreeVerifyOrder(orderId);
+      if (!meta?.packageId) return res.status(400).json({ ok: false, error: 'Payment not completed' });
+      const payRef = `cashfree:${orderId}`;
+      const result = await fulfillCoinPackage(meta.packageId, meta.audioUsername || audioUsername, {
+        paymentRef: payRef,
+        provider: 'cashfree',
+        orderId,
+      });
+      if (result.ok) {
+        await persistence.markPaymentConsumed?.(payRef, {
+          provider: 'cashfree',
+          packageId: meta.packageId,
+          usernameKey: String(meta.audioUsername || audioUsername).toLowerCase(),
+        });
+      }
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
     }
   });
 

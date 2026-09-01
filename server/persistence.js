@@ -41,7 +41,29 @@ function createPersistence({ supabase, localDb, saveLocalDb, adminKey }) {
       localDb.consumed_payments = localDb.consumed_payments.slice(-5000);
     }
     saveLocalDb?.();
+    if (supabase) {
+      await supabase.from('mm_consumed_payments').upsert({
+        ref: key,
+        provider: meta.provider || null,
+        product: meta.product || null,
+        package_id: meta.packageId || null,
+        username_key: meta.usernameKey || null,
+        meta,
+        consumed_at: new Date().toISOString(),
+      }).catch(() => {});
+    }
   }
+
+  async function hydrateConsumedPayments() {
+    if (!supabase) return;
+    try {
+      const { data } = await supabase.from('mm_consumed_payments').select('ref').order('consumed_at', { ascending: false }).limit(5000);
+      for (const row of data || []) {
+        if (row?.ref) consumedPayments.add(String(row.ref));
+      }
+    } catch { /* ignore */ }
+  }
+  void hydrateConsumedPayments();
 
   async function loadTrust(ip) {
     const h = hashIp(ip, salt);

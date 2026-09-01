@@ -4,7 +4,7 @@ import { playInviteSound, playKnockSound, playStickerSound, playStreakSound, pla
 import { ensureNotifyPermission, notifyUser } from '../utils/browserNotify';
 import { useLiveKitAudio } from './useLiveKitAudio';
 
-const ROLE_RANK = { cohost: 0, listener: 0, speaker: 1, moderator: 2, host: 3 };
+const ROLE_RANK = { pa_waiting: 0, cohost: 0, listener: 0, speaker: 1, moderator: 2, host: 3 };
 
 /** Higher role (speaker/host) initiates WebRTC offers so listeners can receive audio. */
 function shouldInitiateOffer(myRole, peerRole, myId, peerId) {
@@ -246,7 +246,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
   useEffect(() => {
     if (!socket) return undefined;
 
-    const onJoined = async ({ channelId, topic, you, peers, maxSpeakers, wallpaper, gamesEnabled, pendingJoins, pendingKnocks, isPa, hasLockCode, locked, themeId, paInviteToken, paEndsAt, paAloneCloseAt, useSfu: sfu, entryFee, scheduledStartAt }) => {
+    const onJoined = async ({ channelId, topic, you, peers, maxSpeakers, wallpaper, gamesEnabled, pendingJoins, pendingKnocks, pendingPaGuests, isPa, hasLockCode, locked, themeId, paThemeId, paMembers, paInviteToken, paEndsAt, paAloneCloseAt, useSfu: sfu, entryFee, scheduledStartAt }) => {
       setKnockStatus(null);
       if (channelIdRef.current && channelIdRef.current !== channelId) {
         pcsRef.current.forEach((pc) => pc.close());
@@ -270,6 +270,8 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
         hasLockCode: !!hasLockCode,
         locked: !!locked,
         themeId: themeId || 'default',
+        paThemeId: paThemeId || 'hearts',
+        paMembers: paMembers || [],
         paInviteToken: paInviteToken || null,
         paEndsAt: paEndsAt || null,
         paAloneCloseAt: paAloneCloseAt || null,
@@ -277,6 +279,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
         scheduledStartAt: scheduledStartAt || null,
         useSfu: !!sfu,
         pendingKnocks: pendingKnocks || [],
+        pendingPaGuests: pendingPaGuests || [],
       });
       setUseSfu(!!sfu);
       setMembers([you, ...(peers || [])].filter(Boolean));
@@ -287,7 +290,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
       setError(null);
       setLockRequired(null);
 
-      if (you.role !== 'listener' && you.role !== 'cohost') {
+      if (you.role !== 'listener' && you.role !== 'cohost' && you.role !== 'pa_waiting') {
         try {
           await ensureMic();
         } catch (_) {
@@ -307,8 +310,9 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     const onPeerJoined = ({ member }) => {
       if (useSfuRef.current) return;
       if (!member?.socketId || member.socketId === socket.id) return;
+      if (member.role === 'pa_waiting') return;
       const me = youRef.current || membersRef.current.find((m) => m.socketId === socket.id);
-      if (!me) return;
+      if (!me || me.role === 'pa_waiting') return;
       membersRef.current = [...membersRef.current.filter((m) => m.socketId !== member.socketId), member];
       createPeer(
         member.socketId,
@@ -372,9 +376,10 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
         hasLockCode: !!state.hasLockCode,
         locked: !!state.locked,
         themeId: state.themeId || 'default',
+        paThemeId: state.paThemeId ?? prev?.paThemeId ?? 'hearts',
+        paMembers: state.paMembers ?? prev?.paMembers ?? [],
         pendingKnocks: state.pendingKnocks || [],
-        cohostEnabled: !!state.cohostEnabled,
-        cohostJoined: !!state.cohostJoined,
+        pendingPaGuests: state.pendingPaGuests || [],
         paEndsAt: state.paEndsAt ?? prev?.paEndsAt ?? null,
         paAloneCloseAt: state.paAloneCloseAt ?? prev?.paAloneCloseAt ?? null,
         entryFee: state.entryFee ?? prev?.entryFee ?? 0,
@@ -494,6 +499,36 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
       });
     };
 
+    const onPaGuestApproved = ({ channelId }) => {
+      if (channelId && channelIdRef.current && channelId !== channelIdRef.current) return;
+      const me = youRef.current || membersRef.current.find((m) => m.socketId === socket?.id);
+      if (!me || useSfuRef.current) return;
+      membersRef.current
+        .filter((p) => p.socketId !== socket.id && p.role === 'speaker')
+        .forEach((p) => {
+          if (!pcsRef.current.has(p.socketId)) {
+            createPeer(p.socketId, shouldInitiateOffer(me.role, p.role, socket.id, p.socketId));
+          }
+        });
+      resumeRemoteAudio();
+    };
+
+    const onPaGuestRequest = (payload) => {
+      if (payload?.channelId && channelIdRef.current && payload.channelId !== channelIdRef.current) return;
+      hapticNotify();
+      playInviteSound();
+      notifyUser('PA guest waiting', `${payload.nickname || 'Someone'} wants to join your PA room`);
+      setChannel((prev) => {
+        if (!prev) return prev;
+        const existing = prev.pendingPaGuests || [];
+        if (existing.some((g) => g.socketId === payload.socketId)) return prev;
+        return {
+          ...prev,
+          pendingPaGuests: [...existing, { socketId: payload.socketId, nickname: payload.nickname || 'Guest' }],
+        };
+      });
+    };
+
     const onKnockSent = (payload) => {
       setKnockStatus({ channelId: payload.channelId, waiting: true });
     };
@@ -526,6 +561,8 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     socket.on('audio:event-reminder', onEventReminder);
     socket.on('audio:knock-request', onKnockRequest);
     socket.on('audio:knock-sent', onKnockSent);
+    socket.on('audio:pa-guest-request', onPaGuestRequest);
+    socket.on('audio:pa-guest-approved', onPaGuestApproved);
     socket.on('audio:entry-fee-earned', onEntryFeeEarned);
 
     ensureNotifyPermission().catch(() => {});
@@ -553,6 +590,8 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
       socket.off('audio:event-reminder', onEventReminder);
       socket.off('audio:knock-request', onKnockRequest);
       socket.off('audio:knock-sent', onKnockSent);
+      socket.off('audio:pa-guest-request', onPaGuestRequest);
+      socket.off('audio:pa-guest-approved', onPaGuestApproved);
       socket.off('audio:entry-fee-earned', onEntryFeeEarned);
     };
   }, [socket, createPeer, ensureMic, teardown, closeMeshPeers, resumeRemoteAudio]);
@@ -854,6 +893,27 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     [socket]
   );
 
+  const setPaTheme = useCallback(
+    (themeId) => {
+      socket?.emit('audio:set-pa-theme', { channelId: channelIdRef.current, themeId });
+    },
+    [socket]
+  );
+
+  const approvePaGuest = useCallback(
+    (targetSocketId) => {
+      socket?.emit('audio:approve-pa-guest', { channelId: channelIdRef.current, targetSocketId });
+    },
+    [socket]
+  );
+
+  const denyPaGuest = useCallback(
+    (targetSocketId) => {
+      socket?.emit('audio:deny-pa-guest', { channelId: channelIdRef.current, targetSocketId });
+    },
+    [socket]
+  );
+
   const invitePa = useCallback(
     (targetSocketId) => {
       if (!channelIdRef.current) return;
@@ -930,8 +990,11 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     approveKnock,
     denyKnock,
     setTheme,
+    setPaTheme,
     setEntryFee,
     scheduleEvent,
+    approvePaGuest,
+    denyPaGuest,
     invitePa,
     respondPa,
     setRoomLock,
