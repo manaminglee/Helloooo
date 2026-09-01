@@ -56,8 +56,8 @@ import {
 import { MiniChatGamePanel } from './MiniChatGamePanel';
 import {
   AudioOnlyFallback,
+  ChatMatchStatus,
   ConnectionQualityBadge,
-  ConversationRatingModal,
   DevicePickerSheet,
   FloatingVideoReactions,
   StrangerRevealOverlay,
@@ -68,6 +68,8 @@ import {
   VideoSessionBanners,
   VideoSearchingOverlay,
 } from './VideoSessionUI';
+import { SkipProSheet } from './SkipProSheet';
+import { loadProMatchPrefs } from '../utils/proMatchPrefs';
 
 function MessageSpark({ x, y }) {
   const [active, setActive] = useState(true);
@@ -464,12 +466,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [showInterestCard, setShowInterestCard] = useState(false);
   const [goodVibesSent, setGoodVibesSent] = useState(false);
   const [goodVibesMatch, setGoodVibesMatch] = useState(false);
-  const [showRating, setShowRating] = useState(false);
-  const [ratingDone, setRatingDone] = useState(false);
   const [aiSummary, setAiSummary] = useState(null);
   const [showSummary, setShowSummary] = useState(false);
   const [strangerTyping, setStrangerTyping] = useState(false);
-  const [countryBanner, setCountryBanner] = useState(null);
   const [showChat, setShowChat] = useState(true);
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const [activeFilter, setActiveFilter] = useState('none');
@@ -529,6 +528,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   // that would otherwise sit on a black "connecting" screen forever.
   const iceRetryCountRef = useRef(0);
   const findPartnerEmittedRef = useRef(false);
+  const proMatchOptsRef = useRef({});
+  const [showSkipSheet, setShowSkipSheet] = useState(false);
   const warmPcRef = useRef(null);
   /** Outbound trickle ICE buffered until roomId is known */
   const pendingOutIceRef = useRef(new Map()); // remoteId -> RTCIceCandidateInit[]
@@ -693,16 +694,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     }
   };
 
-  const maybeShowRating = useCallback(() => {
-    const hadChat = messages.filter((m) => !m.system).length > 0;
-    if ((hadChat || connectedSecsRef.current > 15) && !ratingDone) setShowRating(true);
-  }, [messages, ratingDone]);
-
-  const handleRateConversation = (rating) => {
-    socket?.emit('rate-conversation', { rating, roomId: roomIdRef.current });
-    submitRating(rating);
-  };
-
   const generateAiSpark = async (presetText, sendNow) => {
     if (isAiGenerating) return;
     setIsAiGenerating(true);
@@ -817,7 +808,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     conversationMode,
     topicContract,
     calmMode,
-    autoConsent: true,
+    autoConsent: false,
   });
 
   useEffect(() => {
@@ -962,12 +953,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       setGoodVibesSent(true);
       setToast('🤝 Good Vibes sent! Waiting for the other person...');
     }
-  };
-
-  const submitRating = (stars) => {
-    setRatingDone(true);
-    setShowRating(false);
-    setToast(`Thanks for rating! ${'⭐'.repeat(stars)} — Your feedback helps improve Helloooo 👋.`);
   };
 
   const generateAiSummary = async (msgs) => {
@@ -1315,14 +1300,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     } catch { /* offline */ }
   }, [selectedInterests]);
 
-  const handleSkip = useCallback(() => {
+  const executeSkip = useCallback((opts = {}) => {
+    proMatchOptsRef.current = opts;
     if (statusRef.current === 'connected') saveSessionVibe();
-    maybeShowRating();
-    if (statusRef.current === 'connected' && connectedSecsRef.current >= 3 && selectedInterests.length > 0) {
-      setToast(`Anonymous session ended (~${connectedSecsRef.current}s). Topics: ${selectedInterests.join(', ')} — not stored on our servers.`);
-    }
     const rid = roomIdRef.current;
-    // Tear down local media path first so the UI unhooks instantly.
     clearRoom();
     findPartnerEmittedRef.current = false;
     setConnectPhase(connected ? 'signaling' : 'webrtc');
@@ -1333,14 +1314,20 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       if (rid) socket.emit('leave-room', { roomId: rid });
       else socket.emit('cancel-find-partner');
     }
-  }, [socket, clearRoom, selectedInterests, maybeShowRating, saveSessionVibe]);
+  }, [socket, clearRoom, saveSessionVibe, connected]);
+
+  const requestSkip = useCallback(() => {
+    if (statusRef.current === 'connected') {
+      setShowSkipSheet(true);
+      return;
+    }
+    executeSkip({});
+  }, [executeSkip]);
+
+  const handleSkip = executeSkip;
 
   const handleStop = useCallback(() => {
     if (statusRef.current === 'connected') saveSessionVibe();
-    maybeShowRating();
-    if (statusRef.current === 'connected' && connectedSecsRef.current >= 3 && selectedInterests.length > 0) {
-      setToast(`Anonymous session ended (~${connectedSecsRef.current}s). Topics: ${selectedInterests.join(', ')} — not stored on our servers.`);
-    }
     const rid = roomIdRef.current;
     releaseAllMedia();
     clearRoom();
@@ -1351,7 +1338,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     setStrangerFilter('none'); setStrangerBlur(false);
     if (rid && socket) socket.emit('leave-room', { roomId: rid });
     socket?.emit('cancel-find-partner');
-  }, [socket, clearRoom, selectedInterests, maybeShowRating, saveSessionVibe, releaseAllMedia, disposeWarmPc]);
+  }, [socket, clearRoom, saveSessionVibe, releaseAllMedia, disposeWarmPc]);
 
   const handleBack = () => { handleStop(); onBack?.(); };
 
@@ -1544,8 +1531,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       clearTimeout(escTimerRef.current);
       escArmedRef.current = false;
       if (status === 'connected') {
-        handleSkip();
-        setToast('Skipping — finding a new stranger…');
+        requestSkip();
+        setToast('Choose your next match…');
       } else if (status === 'idle' || status === 'disconnected') {
         handleStart();
         setToast('Searching for someone new…');
@@ -1572,10 +1559,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       if (e.key === 'ArrowRight') {
         e.preventDefault();
         if (status === 'connected') {
-          handleSkip();
-          setToast('Skipping — finding a new stranger…');
+          requestSkip();
         } else if (status === 'searching') {
-          handleSkip();
+          executeSkip({});
           setToast('Finding a new match…');
         }
         return;
@@ -1694,7 +1680,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   useEffect(() => {
     if (status === 'connected') {
       setTimeout(() => inputRef.current?.focus(), 500);
-      setToast('✅ Connected with a stranger!');
       setMessages(prev => [...prev, { id: nextMsgId('sys'), system: true, text: `Connected to a stranger from ${peer?.country || 'the network'}` }]);
       playConnectSound();
       setIsModerating(true);
@@ -1707,14 +1692,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       setIsModerating(false);
     }
   }, [status]);
-
-  useEffect(() => {
-    if (!peer) return;
-    if (peer.country || country) {
-      setCountryBanner({ myCountry: country, peerCountry: peer.country });
-      setTimeout(() => setCountryBanner(null), 4000);
-    }
-  }, [peer]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1931,6 +1908,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     try {
       creatorToken = window.localStorage.getItem('mm_creatorId') || '';
     } catch { /* ignore */ }
+    const prefs = loadProMatchPrefs();
+    const proOpts = proMatchOptsRef.current || {};
     socket.emit('find-partner', {
       mode: 'video',
       interest: interest || 'general',
@@ -1938,7 +1917,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       conversationMode,
       topicContract,
       creatorToken: isCreator || creatorToken ? creatorToken : undefined,
+      matchCountryOnly: proOpts.matchCountryOnly ?? prefs.matchCountryOnly,
+      matchRegionOnly: proOpts.matchRegionOnly ?? prefs.matchRegionOnly,
+      reconnectToUserId: proOpts.reconnectToUserId || undefined,
     });
+    proMatchOptsRef.current = {};
   }, [socket, connected, status, localStream, interest, nickname, conversationMode, topicContract, isCreator]);
 
   // If we stall on Signaling with a live camera, re-queue (covers dropped emit / reconnect races).
@@ -1955,6 +1938,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         creatorToken = window.localStorage.getItem('mm_creatorId') || '';
       } catch { /* ignore */ }
       findPartnerEmittedRef.current = true;
+      const prefs = loadProMatchPrefs();
+      const proOpts = proMatchOptsRef.current || {};
       socket.emit('find-partner', {
         mode: 'video',
         interest: interest || 'general',
@@ -1962,7 +1947,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         conversationMode,
         topicContract,
         creatorToken: isCreator || creatorToken ? creatorToken : undefined,
+        matchCountryOnly: proOpts.matchCountryOnly ?? prefs.matchCountryOnly,
+        matchRegionOnly: proOpts.matchRegionOnly ?? prefs.matchRegionOnly,
+        reconnectToUserId: proOpts.reconnectToUserId || undefined,
       });
+      proMatchOptsRef.current = {};
     }, 2500);
     return () => clearTimeout(t);
   }, [socket, connected, status, connectPhase, localStream, interest, nickname, conversationMode, topicContract, isCreator]);
@@ -2034,7 +2023,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       playMatch();
       if (p?.socketId) {
         peerInfoRef.current.set(p.socketId, { nickname: p.nickname, country: p.country, isCreator: p.isCreator });
-        setPeer({ socketId: p.socketId, nickname: p.nickname, country: p.country, isCreator: p.isCreator, stream: null });
+        setPeer({ socketId: p.socketId, userId: p.userId, nickname: p.nickname, country: p.country, isCreator: p.isCreator, stream: null });
         createPeerConnection(p.socketId);
         flushPendingOutIce(p.socketId);
         if (socket.id < p.socketId) {
@@ -2076,7 +2065,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
     const onUserLeft = (data) => {
       const leftId = data?.socketId || [...peerConnectionsRef.current.keys()][0];
-      // Drop the peer connection immediately so audio/video stop with no lag.
       hardClosePeer(leftId);
       setPeer((prev) => {
         if (prev?.stream) {
@@ -2086,18 +2074,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         }
         return null;
       });
-      setStatus('disconnected');
-      setPartnerLeft(true);
       playDisconnectSound();
-
       clearTimeout(userLeftTimerRef.current);
-      userLeftTimerRef.current = setTimeout(() => {
-        if (!isMounted.current || statusRef.current === 'idle' || statusRef.current === 'searching') return;
-        handleSkip();
-      }, 80);
-
       clearTimeout(partnerLeftTimerRef.current);
-      partnerLeftTimerRef.current = setTimeout(() => setPartnerLeft(false), 2500);
+      setPartnerLeft(false);
+      handleSkip();
     };
 
     const onRoomEndedByAdmin = (data) => {
@@ -2578,7 +2559,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           Chat
         </button>
       )}
-      <button type="button" onClick={handleSkip} className="mm-desk-tool mm-desk-tool--next">
+      <button type="button" onClick={status === 'connected' ? requestSkip : executeSkip} className="mm-desk-tool mm-desk-tool--next">
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
         Next
       </button>
@@ -2592,12 +2573,23 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   const renderDeskChatPanel = (sidebar = false) => {
     const chatReady = status === 'connected';
+    const chatStatus = chatReady ? 'connected' : status === 'searching' ? 'searching' : null;
+    const chatPlaceholder = chatReady
+      ? 'Type a message...'
+      : status === 'searching'
+        ? 'Searching for a next user…'
+        : 'Chat unlocks when matched';
     return (
     <div ref={chatPanelRef} className={`mm-desk-chat${sidebar ? ' mm-desk-chat--sidebar' : ''}`} id="video-chat-messages-wrap">
-      <div className="mm-desk-chat__banner">
-        <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-        {chatReady ? "You're chatting anonymously" : status === 'searching' ? 'Matching… chat unlocks when connected' : 'Chat ready when you match'}
-      </div>
+      {chatStatus && (
+        <ChatMatchStatus
+          className="mm-chat-match-status--desk"
+          status={chatStatus}
+          peerCountry={peer?.country}
+          peerName={peer?.nickname}
+          matchedInterests={chatReady ? [interest, ...selectedInterests].filter(Boolean) : []}
+        />
+      )}
       <div className="mm-desk-chat__messages custom-scrollbar" id="video-chat-messages">
         {messages.filter((m) => !m.system || m.isIntro).map((m, i) => (
           <DeskChatBubble key={m.id || i} m={m} isMe={m.socketId === socket?.id} myCountry={chatMyCountry} peerCountry={chatPeerCountry} onViewCreator={setShowProfileHandle} />
@@ -2606,7 +2598,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           <div className="mm-desk-chat__empty">
             <span className="mm-desk-chat__empty-icon" aria-hidden>💬</span>
             <p className="mm-desk-chat__empty-title">
-              {status === 'searching' ? 'Looking for someone…' : status === 'idle' ? 'Start a video chat' : 'Waiting to connect'}
+              {status === 'searching' ? 'Looking for a next user…' : status === 'idle' ? 'Start a video chat' : 'Waiting to connect'}
             </p>
             <p className="mm-desk-chat__empty-hint">Messages with your match will appear here</p>
           </div>
@@ -2626,7 +2618,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           value={input}
           onChange={(e) => handleInputChange(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (chatReady) sendMsg(); } }}
-          placeholder={chatReady ? 'Type a message...' : 'Chat unlocks when matched'}
+          placeholder={chatPlaceholder}
           className="mm-desk-chat__input"
           disabled={!chatReady}
           aria-disabled={!chatReady}
@@ -3037,11 +3029,20 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                     </div>
                   )}
                   <div className="mm-mobile-chat__input-row">
+                    {(status === 'connected' || status === 'searching') && (
+                      <ChatMatchStatus
+                        className="mm-chat-match-status--mobile w-full mb-1"
+                        status={status === 'connected' ? 'connected' : 'searching'}
+                        peerCountry={peer?.country}
+                        peerName={peer?.nickname}
+                      />
+                    )}
                     <ChatInputWithEmoji
                       value={input}
                       onChange={handleInputChange}
                       onSend={sendMsg}
-                      placeholder="Type a message..."
+                      placeholder={status === 'connected' ? 'Type a message...' : 'Searching for a next user…'}
+                      disabled={status !== 'connected'}
                       showVoice={PHASE_2.voiceMessages}
                       onVoiceMessage={handleVoiceMessage}
                       className="mm-mobile-chat__input-comp"
@@ -3094,7 +3095,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         </button>
         <button
           type="button"
-          onClick={status === 'idle' ? handleStart : status === 'searching' ? handleStop : handleSkip}
+          onClick={status === 'idle' ? handleStart : status === 'searching' ? handleStop : requestSkip}
           disabled={status === 'idle' && !connected}
           className="mm-mobile-bar__item mm-mobile-bar__item--next"
         >
@@ -3238,7 +3239,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           {PHASE_4_UNIQUE.calmMode && <CalmModeToggle enabled={calmMode} onToggle={() => setCalmMode((c) => !c)} />}
         </div>
       )}
-      <ConversationRatingModal open={showRating} onClose={() => setShowRating(false)} onRate={handleRateConversation} />
       <VideoMoreSheet
         open={showMoreMenu}
         onClose={() => setShowMoreMenu(false)}
@@ -3278,6 +3278,16 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         />
       )}
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+      <SkipProSheet
+        open={showSkipSheet}
+        onClose={() => setShowSkipSheet(false)}
+        onSkip={executeSkip}
+        isPro={isPro || subscription === 'pro'}
+        partnerName={peer?.nickname || 'stranger'}
+        partnerUserId={peer?.userId}
+        userCountry={country}
+        onActivated={() => window.location.reload()}
+      />
     </div>
   );
 }

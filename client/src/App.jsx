@@ -72,6 +72,7 @@ function AppShell() {
   const [paymentNotice, setPaymentNotice] = useState('');
   const [creatorHandle, setCreatorHandle] = useState(null);
   const [pendingJoinRoomId, setPendingJoinRoomId] = useState(null);
+  const [joinLinkOpts, setJoinLinkOpts] = useState({ paToken: null, asCohost: false });
   const [isJoining, setIsJoining] = useState(false);
   const [roomJoinNotice, setRoomJoinNotice] = useState('');
   const { socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds, isPro, subscription } = useSocket();
@@ -115,7 +116,14 @@ function AppShell() {
       setAppState(STATES.CREATOR_PROFILE);
     }
     const joinMatch = path.match(/^\/join\/([^/]+)/i);
-    if (joinMatch) setPendingJoinRoomId(decodeURIComponent(joinMatch[1]));
+    if (joinMatch) {
+      setPendingJoinRoomId(decodeURIComponent(joinMatch[1]));
+      const params = new URLSearchParams(window.location.search);
+      setJoinLinkOpts({
+        paToken: params.get('pa') || null,
+        asCohost: params.get('cohost') === '1',
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -481,6 +489,8 @@ function AppShell() {
               nickname={isCreator ? nickname : (joinMeta.displayNickname || nickname)}
               isCreator={isCreator}
               initialChannelId={roomId}
+              initialPaToken={joinLinkOpts.paToken}
+              initialAsCohost={joinLinkOpts.asCohost}
               onExit={roomId ? handleLeaveRoom : handleCancelQueue}
             />
           </div>

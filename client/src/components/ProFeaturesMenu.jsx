@@ -9,13 +9,17 @@ import { startPayment } from '../utils/paymentCheckout';
 
 const PRO_FEATURE_LABELS = {
   aiMoodDetection: 'AI Mood Detection',
-  reconnectToken: 'Reconnect Token',
+  reconnectToken: 'Reconnect Same Partner',
+  countryMatch: 'Country-Only Matching',
+  regionMatch: 'Region-Only Matching',
   miniChatGames: 'Mini Chat Games',
 };
 
 const PRO_FEATURE_DESC = {
   aiMoodDetection: 'Detect conversation vibe in real-time',
-  reconnectToken: 'Reconnect with the same stranger',
+  reconnectToken: 'Skip sheet → reconnect with the same stranger',
+  countryMatch: 'Only match people from your country',
+  regionMatch: 'Only match people from your region',
   miniChatGames: 'Play quick games while chatting',
 };
 

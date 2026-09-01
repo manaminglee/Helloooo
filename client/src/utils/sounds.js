@@ -81,6 +81,24 @@ export const playWaveSound = () => play((ac, dest) => {
   tone(ac, dest, { freq: 300, endFreq: 700, peak: 0.8, attack: 0.005, decay: 0.3 });
 });
 
+/** PA / invite ping — bright double chime. */
+export const playInviteSound = () => play((ac, dest) => {
+  tone(ac, dest, { freq: 784, at: 0, peak: 1.0, attack: 0.01, decay: 0.35 });
+  tone(ac, dest, { freq: 988, at: 0.12, peak: 1.0, attack: 0.01, decay: 0.4 });
+});
+
+/** Gift streak fanfare. */
+export const playStreakSound = () => play((ac, dest) => {
+  tone(ac, dest, { freq: 523, at: 0, peak: 1.0, attack: 0.02, decay: 0.25 });
+  tone(ac, dest, { freq: 659, at: 0.1, peak: 1.0, attack: 0.02, decay: 0.25 });
+  tone(ac, dest, { freq: 784, at: 0.2, peak: 1.0, attack: 0.02, decay: 0.35 });
+});
+
+/** Sticker pop. */
+export const playStickerSound = () => play((ac, dest) => {
+  tone(ac, dest, { freq: 520, endFreq: 880, peak: 0.7, attack: 0.005, decay: 0.12, type: 'triangle' });
+});
+
 // ---------------------------------------------------------------------------
 // Backwards-compatible aliases (existing call sites use these names)
 // ---------------------------------------------------------------------------

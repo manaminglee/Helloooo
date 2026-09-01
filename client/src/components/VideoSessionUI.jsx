@@ -3,9 +3,45 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { MiniChatGamePanel } from './MiniChatGamePanel';
+import { CountryFlag } from './CountryFlag';
 import { PHASE_3_PRO } from '../constants/features';
 
 const REACTION_EMOJIS = ['😂', '🔥', '👏', '❤️', '😮', '🎉'];
+
+/** Small status strip above chat inputs — connected peer + flag, or searching copy. */
+export function ChatMatchStatus({ status, peerCountry, peerName, matchedInterests = [], className = '' }) {
+  if (status === 'connected') {
+    const label = peerName && peerName !== 'Anonymous' ? peerName : 'a stranger';
+    const tags = (matchedInterests || []).filter(Boolean).slice(0, 3);
+    return (
+      <div className={`mm-chat-match-status mm-chat-match-status--connected ${className}`.trim()} aria-live="polite">
+        {peerCountry && (
+          <CountryFlag country={peerCountry} className="mm-chat-match-status__flag" size={12} />
+        )}
+        <span className="mm-chat-match-status__text">
+          You&apos;re connected with {label}
+          {peerCountry ? <span className="mm-chat-match-status__country"> · {peerCountry}</span> : null}
+          {tags.length > 0 && (
+            <span className="mm-chat-match-status__tags">
+              {tags.map((t) => (
+                <span key={t} className="mm-chat-match-status__tag">{t}</span>
+              ))}
+            </span>
+          )}
+        </span>
+      </div>
+    );
+  }
+  if (status === 'searching') {
+    return (
+      <div className={`mm-chat-match-status mm-chat-match-status--searching ${className}`.trim()} aria-live="polite">
+        <span className="mm-chat-match-status__dot" aria-hidden />
+        <span className="mm-chat-match-status__text">Searching for a next user…</span>
+      </div>
+    );
+  }
+  return null;
+}
 
 export function ConversationRatingModal({ open, onClose, onRate, title = 'How was your chat?' }) {
   if (!open) return null;

@@ -28,3 +28,15 @@ export function notifyIfBackground(title, body, opts = {}) {
     /* ignore */
   }
 }
+
+/** Always try notification (e.g. PA invite) — still respects permission + pref. */
+export function notifyUser(title, body, opts = {}) {
+  if (typeof window === 'undefined' || !('Notification' in window)) return;
+  if (!getPrefs().notifyBrowser) return;
+  if (Notification.permission !== 'granted') return;
+  try {
+    new Notification(title, { body, icon: '/apple-touch-icon.png', ...opts });
+  } catch {
+    /* ignore */
+  }
+}

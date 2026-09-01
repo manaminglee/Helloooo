@@ -23,6 +23,9 @@ import {
   NvidiaCopilotToast,
   TrustScoreChip,
 } from './unique/UniqueSessionUI';
+import { ChatMatchStatus } from './VideoSessionUI';
+import { SkipProSheet } from './SkipProSheet';
+import { loadProMatchPrefs } from '../utils/proMatchPrefs';
 
 const AI_ICEBREAKERS = {
   general: [
@@ -66,10 +69,10 @@ const EMOJIS_3D = [
   { char: '👑', label: 'Crown', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/1f451/512.webp' },
 ];
 
-const QUICK_REACTIONS = ['❤️', '😂', '👍', '🔥'];
+const QUICK_ICEBREAKERS = ['Hey! 👋', 'Where are you from?', 'What are you up to?'];
 
 const SEARCHING_STATUSES = [
-  'Searching nearby users',
+  'Searching for a next user…',
   'Matching interests',
   'Checking availability',
   'Connecting secure channel',
@@ -201,10 +204,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   const [input, setInput] = useState('');
   const [roomId, setRoomId] = useState(null);
   const [peer, setPeer] = useState(null);
-  // status: idle | searching | connected | disconnected
+  // status: idle | searching | connected
   const [status, setStatus] = useState('searching');
-  const [showRating, setShowRating] = useState(false);
-  const [lastRoomId, setLastRoomId] = useState(null);
   const latency = useLatency();
   const [isAiGenerating, setIsAiGenerating] = useState(false);
   const [isTranslatorActive, setIsTranslatorActive] = useState(false);
@@ -214,7 +215,6 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   const [strangerTyping, setStrangerTyping] = useState(false);
   const [searchStatusIndex, setSearchStatusIndex] = useState(0);
   const [connectedSecs, setConnectedSecs] = useState(0);
-  const [showSkipSuggestion, setShowSkipSuggestion] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null);
   const [calmMode, setCalmMode] = useState(calmModeProp);
@@ -235,7 +235,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   const [toast, setToast] = useState(null);
   const toastTimerRef = useRef(null);
   const prefs = usePrefs();
-  const [showSettings, setShowSettings] = useState(false);
+  const [showSkipSheet, setShowSkipSheet] = useState(false);
+  const proMatchOptsRef = useRef({});
   statusRef.current = status;
   messagesRef.current = messages;
   onJoinedRef.current = onJoined;
@@ -273,6 +274,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
   const emitFind = useCallback(() => {
     if (!socket || !connected) return;
+    const prefs = loadProMatchPrefs();
+    const proOpts = proMatchOptsRef.current || {};
     socket.emit('find-partner', {
       mode: 'text',
       interest: interest || 'general',
@@ -281,7 +284,11 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       region: region || country,
       conversationMode,
       topicContract,
+      matchCountryOnly: proOpts.matchCountryOnly ?? prefs.matchCountryOnly,
+      matchRegionOnly: proOpts.matchRegionOnly ?? prefs.matchRegionOnly,
+      reconnectToUserId: proOpts.reconnectToUserId || undefined,
     });
+    proMatchOptsRef.current = {};
   }, [socket, connected, interest, nickname, language, region, country, conversationMode, topicContract]);
 
   const clearRoom = useCallback(() => {
@@ -318,7 +325,6 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     const onPartnerFound = (data) => {
       mmDebug('chat.match', data.roomId);
       roomIdRef.current = data.roomId;
-      setLastRoomId(data.roomId);
       setRoomId(data.roomId);
       setPeer(data.peer);
       setStatus('connected');
@@ -346,15 +352,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     };
 
     const onUserLeft = () => {
-      setStatus('disconnected');
-      setPeer(null);
-      // Fix #7: Capture room ID at time of event to avoid race condition
-      const currentRoom = roomIdRef.current;
       clearTimeout(userLeftTimerRef.current);
-      userLeftTimerRef.current = setTimeout(() => {
-        if (roomIdRef.current !== currentRoom) return; // new room joined, don't skip
-        handleSkipRef.current?.();
-      }, 800);
+      handleSkipRef.current?.();
     };
 
     const onStrangerTyping = (data) => {
@@ -390,9 +389,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
     const onDisconnect = (reason) => {
       if (reason === 'io server disconnect' || reason === 'transport close' || reason === 'ping timeout') {
-        setStatus('disconnected');
         clearTimeout(userLeftTimerRef.current);
-        userLeftTimerRef.current = setTimeout(() => handleSkipRef.current?.(), 2000);
+        handleSkipRef.current?.();
       }
     };
 
@@ -536,17 +534,6 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     return () => clearInterval(t);
   }, [isConnected, peer?.socketId]);
 
-  // Smart skip suggestion after 30s no messages
-  useEffect(() => {
-    if (!isConnected || messages.length === 0) {
-      setShowSkipSuggestion(false);
-      return;
-    }
-    setShowSkipSuggestion(false);
-    const t = setTimeout(() => setShowSkipSuggestion(true), 30000);
-    return () => clearTimeout(t);
-  }, [isConnected, messages]);
-
   // Keyboard shortcuts — same map as video chat so muscle memory carries over:
   //   →  / Esc  skip to the next stranger      ←  back out of the mode
   //   Enter / S start searching when idle
@@ -559,7 +546,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
       if (e.key === 'ArrowRight') {
         e.preventDefault();
-        if (s === 'connected' || s === 'searching') skipRef.current?.();
+        if (s === 'connected') skipRef.current?.();
         else startRef.current?.();
         return;
       }
@@ -568,7 +555,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
         backRef.current?.();
         return;
       }
-      if ((e.key === 'Enter' || e.key.toLowerCase() === 's') && (s === 'idle' || s === 'disconnected')) {
+      if ((e.key === 'Enter' || e.key.toLowerCase() === 's') && s === 'idle') {
         e.preventDefault();
         startRef.current?.();
         return;
@@ -596,7 +583,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       });
       if (block && targetId) socket.emit('block-user', { targetSocketId: targetId });
     }
-    setTimeout(() => handleSkip(), 800);
+    handleSkipRef.current?.();
   };
 
   const handleStart = () => {
@@ -609,24 +596,28 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
   startRef.current = handleStart;
 
-  const handleSkip = useCallback(() => {
+  const executeSkip = useCallback((opts = {}) => {
+    proMatchOptsRef.current = opts;
     if (roomIdRef.current && socket) {
       socket.emit('leave-room', { roomId: roomIdRef.current });
     } else {
       socket?.emit('cancel-find-partner');
     }
-    const hadMessages = (messagesRef.current || []).filter((m) => !m.system).length >= 2;
-    if (hadMessages) setShowRating(true);
     clearRoom();
     setStatus('searching');
-    setTimeout(() => {
-      // Single find-partner emit for the skip/abort path (component-side only)
-      socket?.emit('find-partner', { mode: 'text', interest: interest || 'general', nickname: nickname || 'Anonymous', language, region: region || country, conversationMode, topicContract });
-    }, 50);
-  }, [socket, interest, nickname, language, region, country, conversationMode, topicContract]);
+    emitFind();
+  }, [socket, clearRoom, emitFind]);
 
-  skipRef.current = handleSkip;
-  handleSkipRef.current = handleSkip;
+  const requestSkip = useCallback(() => {
+    if (statusRef.current === 'connected') {
+      setShowSkipSheet(true);
+      return;
+    }
+    executeSkip({});
+  }, [executeSkip]);
+
+  skipRef.current = requestSkip;
+  handleSkipRef.current = executeSkip;
 
   const handleStop = () => {
     if (roomIdRef.current && socket) socket.emit('leave-room', { roomId: roomIdRef.current });
@@ -857,7 +848,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleSkip()}
+                  onClick={() => requestSkip()}
                   className="px-6 py-2.5 rounded-xl bg-rose-500/5 border border-rose-500/20 text-rose-400 text-[10px] font-black uppercase tracking-widest hover:bg-rose-500/10 transition-all active:scale-95"
                 >
                   End Chat
@@ -897,20 +888,6 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
             </div>
           )}
 
-          {/* DISCONNECTED STATE (Auto-seek will trigger) */}
-          {status === 'disconnected' && (
-            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center gap-6">
-              <div className="w-20 h-20 rounded-3xl bg-rose-500/5 border border-rose-500/20 flex items-center justify-center text-4xl animate-pulse">👋</div>
-              <div className="space-y-3">
-                <h2 className="text-lg font-black italic uppercase text-rose-400 tracking-tighter">Chat Ended</h2>
-                <p className="text-[10px] font-bold text-white/20 uppercase tracking-widest leading-relaxed">
-                   The other person has left.<br />
-                   <span className="text-violet-400 animate-pulse">Finding a new friend in 2s...</span>
-                </p>
-              </div>
-            </div>
-          )}
-
           {/* CHAT MESSAGES DISPLAY */}
           {status === 'connected' && (
             <div
@@ -946,19 +923,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
         </div>
 
         {/* INPUT & CONTROLS */}
-        <div className="flex flex-col gap-4 relative z-10">
-           {status === 'connected' && showSkipSuggestion && (
-              <div className="absolute top-[-60px] left-1/2 -translate-x-1/2 animate-in-zoom">
-                <button
-                  type="button"
-                  onClick={() => handleSkip()}
-                  className="px-6 py-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-black uppercase tracking-widest shadow-2xl backdrop-blur-xl"
-                >
-                  Low Activity? Skip to next person →
-                </button>
-              </div>
-           )}
-
+        <div className="flex flex-col gap-3 relative z-10">
            {replyingTo && (
               <div className="absolute -top-12 left-4 right-4 bg-black/60 backdrop-blur-md border border-white/10 rounded-xl px-4 py-2 flex justify-between items-center z-[100] animate-in-zoom">
                 <div className="flex items-center gap-2 overflow-hidden">
@@ -970,6 +935,42 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
               </div>
            )}
 
+           {(status === 'connected' || status === 'searching') && (
+             <ChatMatchStatus
+               className="mm-chat-match-status--text"
+               status={status === 'connected' ? 'connected' : 'searching'}
+               peerCountry={peer?.country}
+               peerName={peer?.nickname}
+               matchedInterests={status === 'connected' ? [interest].filter(Boolean) : []}
+             />
+           )}
+
+           {status === 'connected' && (
+             <div className="flex flex-wrap gap-1.5 mb-1">
+               {QUICK_ICEBREAKERS.map((q) => (
+                 <button
+                   key={q}
+                   type="button"
+                   onClick={() => setInput(q)}
+                   className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-white/[0.04] border border-white/10 text-white/55 hover:border-violet-500/35 hover:text-violet-200 transition-colors"
+                 >
+                   {q}
+                 </button>
+               ))}
+             </div>
+           )}
+
+           <SkipProSheet
+             open={showSkipSheet}
+             onClose={() => setShowSkipSheet(false)}
+             onSkip={executeSkip}
+             isPro={isPro || subscription === 'pro'}
+             partnerName={peer?.nickname || 'stranger'}
+             partnerUserId={peer?.userId}
+             userCountry={country}
+             onActivated={() => window.location.reload()}
+           />
+
            <div className="flex items-end gap-2 sm:gap-3">
               {(status === 'idle') ? (
                 <button
@@ -980,20 +981,24 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
                 </button>
               ) : (
                 <button
-                  onClick={handleSkip}
+                  onClick={requestSkip}
                   className="shrink-0 px-4 sm:w-28 min-h-[52px] sm:min-h-[56px] rounded-2xl bg-white/[0.04] border border-white/10 hover:border-violet-500/40 text-white/60 hover:text-violet-300 font-semibold text-xs transition-all hover:bg-violet-500/5"
                 >
                   {status === 'searching' ? 'Abort' : 'Skip'}
                 </button>
               )}
 
-              {status === 'connected' && (
+              {(status === 'connected' || status === 'searching') && (
                 <ChatInputWithEmoji
                   value={input}
                   onChange={handleInputChange}
                   onSend={sendMsg}
-                  placeholder={isAiGenerating ? 'AI is thinking…' : 'Type a message…'}
-                  disabled={isAiGenerating}
+                  placeholder={
+                    status === 'connected'
+                      ? (isAiGenerating ? 'AI is thinking…' : 'Type a message…')
+                      : 'Searching for a next user…'
+                  }
+                  disabled={status !== 'connected' || isAiGenerating}
                   showVoice={PHASE_2.voiceMessages}
                   onVoiceMessage={handleVoiceMessage}
                   enterToSend={prefs.enterToSend}
@@ -1094,37 +1099,6 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
         onClose={() => setShowReportModal(false)}
         onSubmit={submitSafetyReport}
       />
-
-      {/* RATING MODAL */}
-      {showRating && (
-        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-8 bg-black/90 backdrop-blur-3xl animate-in-zoom" onClick={() => setShowRating(false)}>
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Rate your chat"
-            className="bg-black border border-white/10 rounded-[40px] p-10 max-w-sm w-full text-center shadow-2xl relative"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="text-4xl mb-6 scale-125 animate-bounce">⭐</div>
-            <h3 className="text-xl font-black italic uppercase italic tracking-tighter text-white mb-4">How was your chat?</h3>
-            <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-10 leading-relaxed">Help us improve your experience by rating this conversation.</p>
-            <div className="flex gap-2">
-              {['Poor', 'Neutral', 'Elite'].map((label, idx) => (
-                <button 
-                  key={label}
-                  onClick={() => {
-                    socket?.emit('rate-conversation', { rating: idx + 1, roomId: lastRoomId || roomIdRef.current });
-                    setShowRating(false);
-                  }} 
-                  className={`flex-1 py-4 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all ${idx === 2 ? 'bg-violet-500 text-black hover:bg-white' : 'bg-white/5 border border-white/5 hover:border-white/20'}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
 
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </div>

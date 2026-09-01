@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { hapticNotify, hapticSuccess, hapticTap } from '../utils/haptics';
+import { playInviteSound, playStickerSound, playStreakSound } from '../utils/sounds';
+import { ensureNotifyPermission, notifyUser } from '../utils/browserNotify';
 
 /**
  * Group audio channel client — WebRTC audio mesh driven by server signalling.
@@ -19,6 +22,12 @@ export function useAudioChannel(socket, iceServers) {
   const [error, setError] = useState(null);
   const [connecting, setConnecting] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
+  const [lockRequired, setLockRequired] = useState(null); // { channelId, topic, isPa }
+  const [paInvite, setPaInvite] = useState(null);
+  const [helloEvent, setHelloEvent] = useState(null);
+  const [stickerBurst, setStickerBurst] = useState(null);
+  const [giftStreak, setGiftStreak] = useState(null);
+  const [hostBonus, setHostBonus] = useState(null);
 
   const pcsRef = useRef(new Map());        // socketId -> RTCPeerConnection
   const localStreamRef = useRef(null);
@@ -172,7 +181,16 @@ export function useAudioChannel(socket, iceServers) {
   useEffect(() => {
     if (!socket) return undefined;
 
-    const onJoined = async ({ channelId, topic, you, peers, maxSpeakers, wallpaper, gamesEnabled, pendingJoins }) => {
+    const onJoined = async ({ channelId, topic, you, peers, maxSpeakers, wallpaper, gamesEnabled, pendingJoins, pendingKnocks, isPa, hasLockCode, locked, themeId, paInviteToken }) => {
+      if (channelIdRef.current && channelIdRef.current !== channelId) {
+        pcsRef.current.forEach((pc) => pc.close());
+        pcsRef.current.clear();
+        audioElsRef.current.forEach((el) => { el.srcObject = null; });
+        audioElsRef.current.clear();
+        analysersRef.current.forEach(({ ctx }) => ctx.close?.().catch?.(() => {}));
+        analysersRef.current.clear();
+        setChatMessages([]);
+      }
       channelIdRef.current = channelId;
       setChannel({
         channelId,
@@ -182,13 +200,20 @@ export function useAudioChannel(socket, iceServers) {
         gamesEnabled: gamesEnabled !== false,
         pendingJoins: pendingJoins || [],
         maxSpeakers: maxSpeakers || 6,
+        isPa: !!isPa,
+        hasLockCode: !!hasLockCode,
+        locked: !!locked,
+        themeId: themeId || 'default',
+        paInviteToken: paInviteToken || null,
+        pendingKnocks: pendingKnocks || [],
       });
       setMembers([you, ...(peers || [])].filter(Boolean));
       setMicMuted(you?.micMuted !== false);
       setConnecting(false);
       setError(null);
+      setLockRequired(null);
 
-      if (you.role !== 'listener') {
+      if (you.role !== 'listener' && you.role !== 'cohost') {
         try {
           await ensureMic();
         } catch (_) {
@@ -253,6 +278,13 @@ export function useAudioChannel(socket, iceServers) {
         gamesEnabled: state.gamesEnabled !== false,
         pendingJoins: state.pendingJoins || [],
         maxSpeakers: state.maxSpeakers || 6,
+        isPa: !!state.isPa,
+        hasLockCode: !!state.hasLockCode,
+        locked: !!state.locked,
+        themeId: state.themeId || 'default',
+        pendingKnocks: state.pendingKnocks || [],
+        cohostEnabled: !!state.cohostEnabled,
+        cohostJoined: !!state.cohostJoined,
       } : prev);
     };
     const onSpeaking = ({ socketId, micMuted: muted }) => {
@@ -280,6 +312,53 @@ export function useAudioChannel(socket, iceServers) {
       setConnecting(false);
     };
 
+    const onLockRequired = (payload) => {
+      setLockRequired(payload);
+      setConnecting(false);
+    };
+
+    const onHello = (payload) => {
+      hapticTap();
+      setHelloEvent({ ...payload, id: `${payload.fromSocketId}-${Date.now()}` });
+    };
+
+    const onPaInvite = (payload) => {
+      hapticNotify();
+      playInviteSound();
+      if (payload?.notify) {
+        notifyUser('Private Audio invite', `${payload.fromNickname || 'Someone'} invited you to a PA room`);
+      }
+      setPaInvite(payload);
+    };
+
+    const onPaInviteResult = (payload) => {
+      if (!payload.accepted) {
+        setError(payload.reason === 'left'
+          ? 'PA invite failed — they left the room.'
+          : `${payload.targetNickname || 'User'} declined your PA invite.`);
+        return;
+      }
+      setPaInvite(null);
+    };
+
+    const onSticker = (payload) => {
+      hapticTap(8);
+      playStickerSound();
+      setStickerBurst({ ...payload, id: `${payload.fromSocketId}-${Date.now()}` });
+    };
+
+    const onGiftStreak = (payload) => {
+      hapticSuccess();
+      playStreakSound();
+      setGiftStreak({ ...payload, id: `${payload.fromSocketId}-${payload.streak}-${Date.now()}` });
+    };
+
+    const onHostBonus = (payload) => {
+      if (payload?.channelId && channelIdRef.current && payload.channelId !== channelIdRef.current) return;
+      hapticSuccess();
+      setHostBonus(payload);
+    };
+
     const onChatMessage = (msg) => {
       if (msg?.channelId && channelIdRef.current && msg.channelId !== channelIdRef.current) return;
       if (!msg?.text && msg?.kind !== 'gift') return;
@@ -295,6 +374,13 @@ export function useAudioChannel(socket, iceServers) {
     socket.on('audio:kicked', onKicked);
     socket.on('audio:error', onError);
     socket.on('audio:chat-message', onChatMessage);
+    socket.on('audio:lock-required', onLockRequired);
+    socket.on('audio:hello', onHello);
+    socket.on('audio:pa-invite', onPaInvite);
+    socket.on('audio:pa-invite-result', onPaInviteResult);
+    socket.on('audio:sticker', onSticker);
+    socket.on('gift:streak', onGiftStreak);
+    socket.on('audio:host-bonus', onHostBonus);
 
     return () => {
       socket.off('audio:joined', onJoined);
@@ -306,8 +392,19 @@ export function useAudioChannel(socket, iceServers) {
       socket.off('audio:kicked', onKicked);
       socket.off('audio:error', onError);
       socket.off('audio:chat-message', onChatMessage);
+      socket.off('audio:lock-required', onLockRequired);
+      socket.off('audio:hello', onHello);
+      socket.off('audio:pa-invite', onPaInvite);
+      socket.off('audio:pa-invite-result', onPaInviteResult);
+      socket.off('audio:sticker', onSticker);
+      socket.off('gift:streak', onGiftStreak);
+      socket.off('audio:host-bonus', onHostBonus);
     };
   }, [socket, createPeer, ensureMic, teardown]);
+
+  useEffect(() => {
+    ensureNotifyPermission().catch(() => {});
+  }, []);
 
   /**
    * Publish mic to every peer and renegotiate. Required when we started as
@@ -365,10 +462,10 @@ export function useAudioChannel(socket, iceServers) {
     const role = me?.role || null;
     const wasListener = !roleRef.current || roleRef.current === 'listener';
     roleRef.current = role;
-    if (me && me.role !== 'listener') {
+    if (me && me.role !== 'listener' && me.role !== 'cohost') {
       ensureMic()
         .then(() => {
-          if (wasListener && role !== 'listener') return publishAudioToAllPeers();
+          if (wasListener && role !== 'listener' && role !== 'cohost') return publishAudioToAllPeers();
           return undefined;
         })
         .catch(() => {});
@@ -381,9 +478,10 @@ export function useAudioChannel(socket, iceServers) {
 
   // ---- actions ----
   const join = useCallback(
-    (channelId, nickname) => {
+    (channelId, nickname, lockCode, paToken, asCohost = false) => {
       setConnecting(true);
-      socket?.emit('audio:join', { channelId, nickname });
+      setLockRequired(null);
+      socket?.emit('audio:join', { channelId, nickname, lockCode, paToken, asCohost: !!asCohost });
     },
     [socket]
   );
@@ -501,6 +599,84 @@ export function useAudioChannel(socket, iceServers) {
     [socket]
   );
 
+  const sendSticker = useCallback(
+    (sticker) => {
+      if (!channelIdRef.current) return;
+      socket?.emit('audio:sticker', { channelId: channelIdRef.current, sticker });
+    },
+    [socket]
+  );
+
+  const sendHello = useCallback(
+    (targetSocketId, helloType = 'wave') => {
+      if (!channelIdRef.current) return;
+      socket?.emit('audio:hello', { channelId: channelIdRef.current, targetSocketId, helloType });
+    },
+    [socket]
+  );
+
+  const knockRoom = useCallback(
+    (channelId) => {
+      socket?.emit('audio:knock', { channelId });
+    },
+    [socket]
+  );
+
+  const approveKnock = useCallback(
+    (targetSocketId) => {
+      socket?.emit('audio:approve-knock', { channelId: channelIdRef.current, targetSocketId });
+    },
+    [socket]
+  );
+
+  const denyKnock = useCallback(
+    (targetSocketId) => {
+      socket?.emit('audio:deny-knock', { channelId: channelIdRef.current, targetSocketId });
+    },
+    [socket]
+  );
+
+  const setTheme = useCallback(
+    (themeId) => {
+      socket?.emit('audio:set-theme', { channelId: channelIdRef.current, themeId });
+    },
+    [socket]
+  );
+
+  const invitePa = useCallback(
+    (targetSocketId) => {
+      if (!channelIdRef.current) return;
+      socket?.emit('audio:pa-invite', { channelId: channelIdRef.current, targetSocketId });
+    },
+    [socket]
+  );
+
+  const respondPa = useCallback(
+    (inviteId, accept) => {
+      socket?.emit('audio:pa-respond', { inviteId, accept });
+      setPaInvite(null);
+    },
+    [socket]
+  );
+
+  const setRoomLock = useCallback(
+    (code) => {
+      socket?.emit('audio:lock', { channelId: channelIdRef.current, code });
+    },
+    [socket]
+  );
+
+  const makePublic = useCallback(() => {
+    socket?.emit('audio:make-public', { channelId: channelIdRef.current });
+  }, [socket]);
+
+  const dismissLockRequired = useCallback(() => setLockRequired(null), []);
+  const dismissHello = useCallback(() => setHelloEvent(null), []);
+  const dismissSticker = useCallback(() => setStickerBurst(null), []);
+  const dismissPaInvite = useCallback(() => setPaInvite(null), []);
+  const dismissGiftStreak = useCallback(() => setGiftStreak(null), []);
+  const dismissHostBonus = useCallback(() => setHostBonus(null), []);
+
   return {
     channel,
     members,
@@ -509,6 +685,12 @@ export function useAudioChannel(socket, iceServers) {
     error,
     connecting,
     chatMessages,
+    lockRequired,
+    paInvite,
+    helloEvent,
+    stickerBurst,
+    giftStreak,
+    hostBonus,
     join,
     create,
     leave,
@@ -523,8 +705,24 @@ export function useAudioChannel(socket, iceServers) {
     setWallpaper,
     setGamesEnabled,
     sendChat,
+    sendSticker,
+    sendHello,
+    knockRoom,
+    approveKnock,
+    denyKnock,
+    setTheme,
+    invitePa,
+    respondPa,
+    setRoomLock,
+    makePublic,
     resumeRemoteAudio,
     clearError: () => setError(null),
+    dismissLockRequired,
+    dismissHello,
+    dismissSticker,
+    dismissPaInvite,
+    dismissGiftStreak,
+    dismissHostBonus,
   };
 }
 

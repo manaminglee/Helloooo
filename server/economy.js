@@ -185,8 +185,11 @@ function registerEconomy(app, io, deps) {
 
   /** ip -> gift rate bucket */
   const giftRates = new Map();
+  /** `${from}:${to}` -> { count, lastAt } */
+  const giftStreaks = new Map();
   const GIFT_WINDOW_MS = 8000;
   const GIFT_MAX = 6;
+  const GIFT_STREAK_WINDOW_MS = 90000;
 
   const giftRateOk = (key) => {
     const now = Date.now();
@@ -226,6 +229,13 @@ function registerEconomy(app, io, deps) {
     const membership = assertChannelGift(channelId, fromSocketId, toSocketId);
     if (!membership.ok) return membership;
 
+    const streakKey = `${fromSocketId}:${toSocketId}`;
+    const now = Date.now();
+    const prev = giftStreaks.get(streakKey);
+    let streak = 1;
+    if (prev && now - prev.lastAt < GIFT_STREAK_WINDOW_MS) streak = prev.count + 1;
+    giftStreaks.set(streakKey, { count: streak, lastAt: now });
+
     const spend = await debit(fromIp, gift.cost, `gift_sent_${gift.id}`, { toSocketId, channelId });
     if (!spend.ok) return spend;
 
@@ -251,12 +261,16 @@ function registerEconomy(app, io, deps) {
       toSocketId,
       toNickname: recipient.nickname || 'Someone',
       channelId: channelId || null,
+      streak,
       at: Date.now(),
     };
 
     // Broadcast to the room (or just the pair) so everyone sees the animation.
     if (channelId) {
       io.to(channelId).emit('gift:received', payload);
+      if (streak >= 2) {
+        io.to(channelId).emit('gift:streak', { ...payload, streak });
+      }
       io.to(channelId).emit('audio:chat-message', {
         channelId,
         id: `gift_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,

@@ -20,7 +20,10 @@ function metaKey(socketId) {
 }
 
 function packEntry(entry) {
-  const { socketId, userData, interest, region, language, conversationMode, topicContract } = entry;
+  const {
+    socketId, userData, interest, region, language, conversationMode, topicContract,
+    matchCountryOnly, matchRegionOnly, reconnectToUserId,
+  } = entry;
   return {
     socketId,
     interest,
@@ -28,6 +31,9 @@ function packEntry(entry) {
     language,
     conversationMode,
     topicContract,
+    matchCountryOnly: !!matchCountryOnly,
+    matchRegionOnly: !!matchRegionOnly,
+    reconnectToUserId: reconnectToUserId || null,
     userData: userData
       ? {
           id: userData.id,
@@ -49,6 +55,9 @@ function unpackEntry(raw) {
     language: raw.language,
     conversationMode: raw.conversationMode,
     topicContract: raw.topicContract,
+    matchCountryOnly: !!raw.matchCountryOnly,
+    matchRegionOnly: !!raw.matchRegionOnly,
+    reconnectToUserId: raw.reconnectToUserId || null,
     userData: raw.userData || {},
   };
 }

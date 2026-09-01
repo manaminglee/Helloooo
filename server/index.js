@@ -3054,6 +3054,8 @@ const audioChannels = registerAudioChannels(app, io, {
   userBlocks,
   isAdminRequest,
   audit: moderation.audit,
+  economy,
+  screenText: moderation.screenText,
   onChannelEmpty: (channelId) => {
     raceGame?.destroyForChannel(channelId);
     void infra.clearRoomPresence(channelId);
@@ -3327,6 +3329,17 @@ io.on('connection', (socket) => {
     userData.region = region;
     userData.language = language;
 
+    const proStatus = await persistence.getProStatus(ip);
+    const wantsPro = !!(data?.matchCountryOnly || data?.matchRegionOnly || data?.reconnectToUserId);
+    if (wantsPro && !proStatus.isPro) {
+      socket.emit('pro-required', { message: 'Pro required for reconnect and region matching.' });
+    }
+    const matchCountryOnly = !!(proStatus.isPro && data?.matchCountryOnly);
+    const matchRegionOnly = !!(proStatus.isPro && data?.matchRegionOnly);
+    const reconnectToUserId = proStatus.isPro && data?.reconnectToUserId
+      ? sanitize(String(data.reconnectToUserId), 64)
+      : null;
+
     if (userData.rooms && userData.rooms.size > 0) {
       for (const rid of [...userData.rooms]) {
         const room = rooms.get(rid);
@@ -3339,12 +3352,27 @@ io.on('connection', (socket) => {
     }
 
     const myBlocks = userBlocks.get(ip);
-    const canMatch = (e) => {
+    const baseCanMatch = (e) => {
       if (e.socketId === socket.id) return false;
       const otherIp = users.get(e.socketId)?.ip || e.userData?.ip;
       if (!otherIp || blockedIps.has(otherIp)) return false;
       if (myBlocks && myBlocks.has(otherIp)) return false;
       if (userBlocks.get(otherIp)?.has(ip)) return false;
+      return true;
+    };
+
+    const canMatch = (e) => {
+      if (!baseCanMatch(e)) return false;
+      const otherUser = users.get(e.socketId);
+      const otherCountry = otherUser?.country || e.userData?.country;
+      const otherRegion = otherUser?.region || e.region || e.userData?.country;
+      if (matchCountryOnly && otherCountry !== userData.country) return false;
+      if (matchRegionOnly && otherRegion !== region) return false;
+      if (reconnectToUserId) {
+        const otherId = e.userData?.id || otherUser?.id;
+        if (otherId !== reconnectToUserId) return false;
+      }
+      if (e.reconnectToUserId && e.reconnectToUserId !== userData.id) return false;
       return true;
     };
 
@@ -3356,7 +3384,18 @@ io.on('connection', (socket) => {
     };
 
     const repFn = (otherIp) => persistence.getReputationBoost(otherIp);
-    const entry = { socketId: socket.id, userData, interest, region, language, conversationMode, topicContract };
+    const entry = {
+      socketId: socket.id,
+      userData,
+      interest,
+      region,
+      language,
+      conversationMode,
+      topicContract,
+      matchCountryOnly,
+      matchRegionOnly,
+      reconnectToUserId,
+    };
 
     const result = await matchQueue.findOrEnqueue({
       mode,
@@ -3402,6 +3441,9 @@ io.on('connection', (socket) => {
 
       const myPeer = { socketId: socket.id, userId: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator };
       const otherPeer = { socketId: match.socketId, userId: otherData.id, nickname: otherData.nickname, country: otherData.country, isCreator: otherData.isCreator };
+
+      userData.lastPartnerUserId = otherData.id;
+      otherData.lastPartnerUserId = userData.id;
 
       const sessionConfig = uniqueFeatures.emitSessionConfig(room.id);
       socket.emit('partner-found', { roomId: room.id, peer: otherPeer, country: userData.country, sessionConfig });

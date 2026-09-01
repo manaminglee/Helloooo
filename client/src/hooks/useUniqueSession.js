@@ -68,6 +68,14 @@ export function useUniqueSession({
   }, [messages.length]);
 
   useEffect(() => {
+    if (!roomId) {
+      setConsentComplete(false);
+      setPartnerReady(0);
+      setAudioIntroComplete(false);
+    }
+  }, [roomId]);
+
+  useEffect(() => {
     if (!autoConsent || status !== 'connected' || !socket || !roomId) return;
     setConsentComplete(true);
     socket.emit('session-consent-ready', { roomId });

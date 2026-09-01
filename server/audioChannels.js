@@ -19,11 +19,18 @@
  *   audio:grant-speak {channelId, targetSocketId, grant}
  *   audio:moderate {channelId, targetSocketId, action} (mute|kick|promote|demote)
  *   audio:chat {channelId, text}
+ *   audio:lock {channelId, code}              — host sets/clears 4-digit join PIN
+ *   audio:hello {channelId, targetSocketId}   — wave hello animation to a user
+ *   audio:pa-invite {channelId, targetSocketId}
+ *   audio:pa-respond {inviteId, accept}
+ *   audio:make-public {channelId}             — PA host opens room to everyone
+ *   audio:sticker {channelId, sticker}        — PA sticker burst
  *
  * Server -> client
  *   audio:channels, audio:joined, audio:state, audio:peer-joined,
  *   audio:peer-left, audio:signal, audio:speaking, audio:kicked, audio:error,
- *   audio:chat-message
+ *   audio:chat-message, audio:lock-required, audio:hello, audio:pa-invite,
+ *   audio:pa-invite-result, audio:pa-invite-sent, audio:sticker
  */
 
 const MAX_MEMBERS = Number(process.env.AUDIO_MAX_MEMBERS) || 24;
@@ -36,7 +43,20 @@ const JOIN_MAX = 8;
 const SIGNAL_WINDOW_MS = 10000;
 const SIGNAL_MAX = 200;
 
-const ROLE_RANK = { listener: 0, speaker: 1, moderator: 2, host: 3 };
+const ROLE_RANK = { cohost: 0, listener: 0, speaker: 1, moderator: 2, host: 3 };
+const PA_EMPTY_CLOSE_MS = Number(process.env.PA_EMPTY_CLOSE_MS) || 120000;
+const HOST_BONUS_MINUTES = 30;
+const HOST_BONUS_COINS = 15;
+
+const ROOM_THEMES = {
+  default: null,
+  neon: 'linear-gradient(135deg, rgba(139,92,246,0.35), rgba(6,182,212,0.2))',
+  sunset: 'linear-gradient(135deg, rgba(251,146,60,0.35), rgba(244,63,94,0.25))',
+  forest: 'linear-gradient(135deg, rgba(16,185,129,0.3), rgba(5,46,22,0.4))',
+  gold: 'linear-gradient(135deg, rgba(251,191,36,0.35), rgba(120,53,15,0.35))',
+};
+
+const HELLO_EMOJI = { wave: '👋', fire: '🔥', heart: '❤️', sparkle: '✨' };
 
 function registerAudioChannels(app, io, deps) {
   const {
@@ -49,6 +69,8 @@ function registerAudioChannels(app, io, deps) {
     audit,
     onChannelEmpty,
     onChannelChange,
+    economy,
+    screenText,
   } = deps;
 
   /** channelId -> channel */
@@ -57,6 +79,10 @@ function registerAudioChannels(app, io, deps) {
   const memberships = new Map();
   const joinRates = new Map();
   const signalRates = new Map();
+  /** inviteId -> { fromSocketId, toSocketId, sourceChannelId, fromNickname, at } */
+  const paInvites = new Map();
+  const paCloseTimers = new Map();
+  const hostMinuteTimers = new Map();
 
   const rateOk = (map, key, windowMs, max) => {
     const now = Date.now();
@@ -73,13 +99,16 @@ function registerAudioChannels(app, io, deps) {
     id: c.id,
     topic: c.topic,
     isPrivate: c.isPrivate,
-    locked: c.locked,
+    isPa: !!c.isPa,
+    locked: c.locked || !!c.lockCode || !!c.isPa,
+    hasLockCode: !!c.lockCode,
     memberCount: c.members.size,
     speakerCount: [...c.members.values()].filter((m) => ROLE_RANK[m.role] >= ROLE_RANK.speaker).length,
     maxMembers: c.maxMembers,
     maxSpeakers: c.maxSpeakers,
     gamesEnabled: !!c.gamesEnabled,
     wallpaper: c.wallpaper || null,
+    themeId: c.themeId || 'default',
     createdAt: c.createdAt,
     hasActiveGame: !!c.gameId,
   });
@@ -97,18 +126,25 @@ function registerAudioChannels(app, io, deps) {
     handRaised: m.handRaised,
     joinedAt: m.joinedAt,
     slot: m.slot ?? null,
+    isCohost: m.role === 'cohost',
   });
 
   const channelState = (c) => ({
     channelId: c.id,
     topic: c.topic,
-    locked: c.locked,
+    locked: c.locked || !!c.lockCode || !!c.isPa,
+    hasLockCode: !!c.lockCode,
     isPrivate: c.isPrivate,
+    isPa: !!c.isPa,
     maxMembers: c.maxMembers,
     maxSpeakers: c.maxSpeakers || MAX_SPEAKERS,
     gamesEnabled: c.gamesEnabled !== false,
     wallpaper: c.wallpaper || null,
+    themeId: c.themeId || 'default',
     pendingJoins: [...(c.pendingJoins || [])],
+    pendingKnocks: [...(c.pendingKnocks || [])].map((k) => ({ socketId: k.socketId, nickname: k.nickname })),
+    cohostEnabled: !!c.cohostEnabled,
+    cohostJoined: !!c.cohostJoined,
     members: [...c.members.values()].map(memberView),
   });
 
@@ -125,7 +161,7 @@ function registerAudioChannels(app, io, deps) {
 
   const listChannels = () =>
     [...channels.values()]
-      .filter((c) => !c.isPrivate)
+      .filter((c) => !c.isPrivate || c.isPa)
       .sort((a, b) => b.members.size - a.members.size || b.createdAt - a.createdAt)
       .slice(0, 60)
       .map(publicChannel);
@@ -139,12 +175,84 @@ function registerAudioChannels(app, io, deps) {
   const speakerCount = (c) =>
     [...c.members.values()].filter((m) => ROLE_RANK[m.role] >= ROLE_RANK.speaker).length;
 
+  const clearPaCloseTimer = (channelId) => {
+    const t = paCloseTimers.get(channelId);
+    if (t) clearTimeout(t);
+    paCloseTimers.delete(channelId);
+  };
+
+  const schedulePaClose = (channel) => {
+    if (!channel?.isPa) return;
+    clearPaCloseTimer(channel.id);
+    if (channel.members.size > 1) return;
+    paCloseTimers.set(channel.id, setTimeout(() => {
+      const c = channels.get(channel.id);
+      if (!c?.isPa || c.members.size > 1) return;
+      io.to(c.id).emit('audio:chat-message', {
+        channelId: c.id,
+        id: generateId('achm'),
+        socketId: 'system',
+        nickname: 'System',
+        text: '⏱️ PA room closed — alone too long',
+        system: true,
+        ts: Date.now(),
+      });
+      for (const sid of [...c.members.keys()]) removeMember(c.id, sid, 'pa_timeout');
+    }, PA_EMPTY_CLOSE_MS));
+  };
+
+  const stopHostRewards = (channelId) => {
+    const iv = hostMinuteTimers.get(channelId);
+    if (iv) clearInterval(iv);
+    hostMinuteTimers.delete(channelId);
+  };
+
+  const startHostRewards = (channel) => {
+    if (!channel || hostMinuteTimers.has(channel.id) || !economy?.credit) return;
+    channel.hostMinutes = channel.hostMinutes || 0;
+    const iv = setInterval(async () => {
+      const c = channels.get(channel.id);
+      if (!c || c.members.size === 0) {
+        stopHostRewards(channel.id);
+        return;
+      }
+      const host = [...c.members.values()].find((m) => m.role === 'host');
+      if (!host) return;
+      const hostUser = users.get(host.socketId);
+      if (!hostUser?.ip) return;
+      c.hostMinutes += 1;
+      if (c.hostMinutes > 0 && c.hostMinutes % HOST_BONUS_MINUTES === 0) {
+        try {
+          const res = await economy.credit(hostUser.ip, HOST_BONUS_COINS, 'audio_host_bonus', { channelId: c.id });
+          if (res.ok) {
+            io.to(c.id).emit('audio:host-bonus', { channelId: c.id, coins: HOST_BONUS_COINS, minutes: c.hostMinutes });
+            io.to(c.id).emit('audio:chat-message', {
+              channelId: c.id,
+              id: generateId('achm'),
+              socketId: host.socketId,
+              nickname: host.nickname,
+              text: `🪙 Host bonus +${HOST_BONUS_COINS} coins (${c.hostMinutes} min live)`,
+              system: true,
+              ts: Date.now(),
+            });
+          }
+        } catch { /* ignore */ }
+      }
+    }, 60000);
+    hostMinuteTimers.set(channel.id, iv);
+  };
+
   /** Remove a member; promotes a new host and destroys empty channels. */
   function removeMember(channelId, socketId, reason = 'left') {
     const c = channels.get(channelId);
     if (!c) return;
     const member = c.members.get(socketId);
     if (!member) return;
+
+    if (member.role === 'cohost') {
+      c.cohostJoined = false;
+      c.cohostSocketId = null;
+    }
 
     c.members.delete(socketId);
     memberships.get(socketId)?.delete(channelId);
@@ -155,6 +263,8 @@ function registerAudioChannels(app, io, deps) {
     io.to(channelId).emit('audio:peer-left', { channelId, socketId, reason });
 
     if (c.members.size === 0) {
+      clearPaCloseTimer(channelId);
+      stopHostRewards(channelId);
       channels.delete(channelId);
       if (typeof onChannelEmpty === 'function') {
         try {
@@ -188,6 +298,7 @@ function registerAudioChannels(app, io, deps) {
     }
     broadcastState(c);
     broadcastList();
+    if (c.isPa) schedulePaClose(c);
   }
 
   /** Mutual-block check so blocked users never share a voice channel. */
@@ -198,8 +309,40 @@ function registerAudioChannels(app, io, deps) {
     return false;
   };
 
-  function joinChannel(socket, channel, userData, ip) {
-    if (channel.locked && !channel.members.has(socket.id)) {
+  function joinChannel(socket, channel, userData, ip, opts = {}) {
+    const lockCode = opts.lockCode;
+    const paToken = opts.paToken;
+    const knockBypass = !!opts.knockBypass;
+    const asCohost = !!opts.asCohost;
+
+    if (asCohost && channel.isPa) {
+      if (channel.cohostJoined) {
+        socket.emit('audio:error', { message: 'Co-host slot is already taken.' });
+        return false;
+      }
+      const tokenOk = channel.paInviteToken && paToken && paToken === channel.paInviteToken;
+      if (!tokenOk) {
+        socket.emit('audio:error', { message: 'Invalid co-host invite link.' });
+        return false;
+      }
+    } else if (channel.isPa && Array.isArray(channel.paMembers) && channel.paMembers.length) {
+      const tokenOk = channel.paInviteToken && paToken && paToken === channel.paInviteToken;
+      if (!channel.paMembers.includes(socket.id) && !tokenOk) {
+        socket.emit('audio:error', { message: 'This private PA room is invite-only.' });
+        return false;
+      }
+      if (tokenOk && !channel.paMembers.includes(socket.id)) {
+        channel.paMembers.push(socket.id);
+      }
+    }
+
+    if (channel.lockCode && !channel.members.has(socket.id) && !knockBypass) {
+      const code = String(lockCode || '').replace(/\D/g, '');
+      if (code !== channel.lockCode) {
+        socket.emit('audio:lock-required', { channelId: channel.id, topic: channel.topic, isPa: !!channel.isPa });
+        return false;
+      }
+    } else if (channel.locked && !channel.lockCode && !channel.isPa && !channel.members.has(socket.id)) {
       socket.emit('audio:error', { message: 'This channel is locked.' });
       return false;
     }
@@ -219,9 +362,12 @@ function registerAudioChannels(app, io, deps) {
       }
     }
 
-    // Creator is host on stage; everyone else starts as listener until approved onto a slot.
+    // Creator is host on stage; PA seats speakers; co-host is listen-only.
     const isFirst = channel.members.size === 0;
-    const role = isFirst ? 'host' : 'listener';
+    let role = 'listener';
+    if (isFirst) role = 'host';
+    else if (asCohost && channel.isPa) role = 'cohost';
+    else if (channel.isPa) role = 'speaker';
 
     const member = {
       socketId: socket.id,
@@ -231,13 +377,17 @@ function registerAudioChannels(app, io, deps) {
       isCreator: !!userData.isCreator,
       verified: !!userData.verified,
       role,
-      micMuted: true, // always join muted — never surprise-broadcast a mic
-      forceMuted: false,
+      micMuted: true,
+      forceMuted: role === 'cohost',
       handRaised: false,
-      slot: isFirst ? 0 : null,
+      slot: role === 'cohost' ? null : isFirst ? 0 : channel.isPa && role === 'speaker' ? Math.min(channel.members.size, (channel.maxSpeakers || 2) - 1) : null,
       joinedAt: Date.now(),
     };
     channel.members.set(socket.id, member);
+    if (asCohost) {
+      channel.cohostJoined = true;
+      channel.cohostSocketId = socket.id;
+    }
 
     if (!memberships.has(socket.id)) memberships.set(socket.id, new Set());
     memberships.get(socket.id).add(channel.id);
@@ -257,10 +407,21 @@ function registerAudioChannels(app, io, deps) {
       wallpaper: channel.wallpaper || null,
       gamesEnabled: channel.gamesEnabled !== false,
       pendingJoins: [...(channel.pendingJoins || [])],
+      isPa: !!channel.isPa,
+      hasLockCode: !!channel.lockCode,
+      locked: channel.locked || !!channel.lockCode || !!channel.isPa,
+      themeId: channel.themeId || 'default',
+      paInviteToken: channel.isPa ? channel.paInviteToken : null,
+      pendingKnocks: (channel.pendingKnocks || []).map((k) => ({ socketId: k.socketId, nickname: k.nickname })),
     });
     socket.to(channel.id).emit('audio:peer-joined', { channelId: channel.id, member: memberView(member) });
     broadcastState(channel);
     broadcastList();
+    if (channel.isPa) {
+      if (channel.members.size >= 2) clearPaCloseTimer(channel.id);
+      else schedulePaClose(channel);
+    }
+    if (isFirst || !hostMinuteTimers.has(channel.id)) startHostRewards(channel);
     return true;
   }
 
@@ -337,12 +498,19 @@ function registerAudioChannels(app, io, deps) {
           wallpaper: channel.wallpaper || null,
           gamesEnabled: channel.gamesEnabled !== false,
           pendingJoins: [...(channel.pendingJoins || [])],
+          isPa: !!channel.isPa,
+          hasLockCode: !!channel.lockCode,
+          locked: channel.locked || !!channel.lockCode || !!channel.isPa,
         });
         broadcastState(channel);
         return;
       }
 
-      joinChannel(socket, channel, userData, ip);
+      joinChannel(socket, channel, userData, ip, {
+        lockCode: data.lockCode,
+        paToken: data.paToken,
+        asCohost: !!data.asCohost,
+      });
     });
 
     on('audio:leave', (data) => {
@@ -391,13 +559,21 @@ function registerAudioChannels(app, io, deps) {
       broadcastState(channel);
     });
 
-    on('audio:chat', (data) => {
+    on('audio:chat', async (data) => {
       if (!rateOk(signalRates, `${socket.id}:chat`, SIGNAL_WINDOW_MS, 40)) return;
       const channel = getChannel(data.channelId);
       const me = channel?.members.get(socket.id);
       if (!me) return;
       const text = sanitize(String(data.text || ''), CHAT_MAX).trim();
       if (!text) return;
+      if (typeof screenText === 'function') {
+        try {
+          const verdict = await screenText(ip, text, 'audio_chat');
+          if (verdict && verdict.allow === false) {
+            return socket.emit('audio:error', { message: 'Message blocked by moderation.' });
+          }
+        } catch { /* fail open */ }
+      }
       io.to(channel.id).emit('audio:chat-message', {
         channelId: channel.id,
         id: generateId('achm'),
@@ -542,6 +718,277 @@ function registerAudioChannels(app, io, deps) {
       }
       channel.gamesEnabled = !!data.enabled;
       broadcastState(channel);
+    });
+
+    on('audio:lock', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      if (!me || me.role !== 'host') {
+        return socket.emit('audio:error', { message: 'Only the room admin can lock the room.' });
+      }
+      if (channel.isPa) {
+        return socket.emit('audio:error', { message: 'PA rooms are always private — use Make Public to open.' });
+      }
+      let code = data.code;
+      if (code == null || code === '') {
+        channel.lockCode = null;
+        channel.locked = false;
+      } else {
+        code = String(code).replace(/\D/g, '').slice(0, 4);
+        if (code.length !== 4) {
+          return socket.emit('audio:error', { message: 'Lock code must be exactly 4 digits.' });
+        }
+        channel.lockCode = code;
+        channel.locked = true;
+      }
+      broadcastState(channel);
+      broadcastList();
+      io.to(channel.id).emit('audio:chat-message', {
+        channelId: channel.id,
+        id: generateId('achm'),
+        socketId: socket.id,
+        nickname: me.nickname,
+        text: channel.lockCode ? '🔒 Room locked with a 4-digit code' : '🔓 Room lock removed',
+        system: true,
+        ts: Date.now(),
+      });
+      audit?.('audio_lock', { by: me.userId, channelId: channel.id, locked: !!channel.lockCode });
+    });
+
+    on('audio:hello', (data) => {
+      if (!rateOk(signalRates, `${socket.id}:hello`, SIGNAL_WINDOW_MS, 20)) return;
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      const targetId = String(data.targetSocketId || '');
+      const target = channel?.members.get(targetId);
+      if (!me || !target || targetId === socket.id) return;
+      const helloType = String(data.helloType || 'wave').slice(0, 12);
+      const emoji = HELLO_EMOJI[helloType] || HELLO_EMOJI.wave;
+      io.to(channel.id).emit('audio:hello', {
+        channelId: channel.id,
+        fromSocketId: socket.id,
+        fromNickname: me.nickname,
+        toSocketId: targetId,
+        toNickname: target.nickname,
+        helloType,
+        emoji,
+      });
+    });
+
+    on('audio:knock', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      const userData = users.get(socket.id);
+      if (!userData || channel.members.has(socket.id)) return;
+      if (!channel?.lockCode && !channel?.locked) {
+        return socket.emit('audio:error', { message: 'This room is not locked.' });
+      }
+      channel.pendingKnocks = channel.pendingKnocks || [];
+      if (channel.pendingKnocks.some((k) => k.socketId === socket.id)) {
+        return socket.emit('audio:error', { message: 'Already knocking — wait for admin.' });
+      }
+      channel.pendingKnocks.push({ socketId: socket.id, nickname: userData.nickname || 'Guest', at: Date.now() });
+      broadcastState(channel);
+      for (const m of channel.members.values()) {
+        if (ROLE_RANK[m.role] >= ROLE_RANK.moderator) {
+          io.to(m.socketId).emit('audio:knock-request', {
+            channelId: channel.id,
+            socketId: socket.id,
+            nickname: userData.nickname || 'Guest',
+          });
+        }
+      }
+      socket.emit('audio:knock-sent', { channelId: channel.id });
+    });
+
+    on('audio:approve-knock', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      const targetId = String(data.targetSocketId || data.socketId || '');
+      if (!me || ROLE_RANK[me.role] < ROLE_RANK.moderator) return;
+      channel.pendingKnocks = (channel.pendingKnocks || []).filter((k) => k.socketId !== targetId);
+      broadcastState(channel);
+      const targetSock = io.sockets.sockets.get(targetId);
+      const targetUser = users.get(targetId);
+      if (targetSock && targetUser) {
+        joinChannel(targetSock, channel, targetUser, targetUser.ip, { knockBypass: true });
+      }
+    });
+
+    on('audio:deny-knock', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      const targetId = String(data.targetSocketId || data.socketId || '');
+      if (!me || ROLE_RANK[me.role] < ROLE_RANK.moderator) return;
+      channel.pendingKnocks = (channel.pendingKnocks || []).filter((k) => k.socketId !== targetId);
+      broadcastState(channel);
+      io.to(targetId).emit('audio:error', { message: 'Knock declined.' });
+    });
+
+    on('audio:set-theme', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      if (!me || me.role !== 'host') {
+        return socket.emit('audio:error', { message: 'Only the room admin can set theme.' });
+      }
+      const themeId = String(data.themeId || 'default');
+      channel.themeId = ROOM_THEMES[themeId] != null ? themeId : 'default';
+      broadcastState(channel);
+    });
+
+    on('audio:sticker', (data) => {
+      if (!rateOk(signalRates, `${socket.id}:sticker`, SIGNAL_WINDOW_MS, 24)) return;
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      if (!me) return;
+      const sticker = sanitize(String(data.sticker || ''), 8).trim();
+      if (!sticker) return;
+      io.to(channel.id).emit('audio:sticker', {
+        channelId: channel.id,
+        fromSocketId: socket.id,
+        fromNickname: me.nickname,
+        sticker,
+        ts: Date.now(),
+      });
+    });
+
+    on('audio:pa-invite', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      const targetId = String(data.targetSocketId || '');
+      const target = channel?.members.get(targetId);
+      if (!me || !target || targetId === socket.id) {
+        return socket.emit('audio:error', { message: 'Cannot invite that user.' });
+      }
+      if (channel.isPa) {
+        return socket.emit('audio:error', { message: 'Already in a PA room.' });
+      }
+      const inviteId = generateId('pinv');
+      paInvites.set(inviteId, {
+        fromSocketId: socket.id,
+        toSocketId: targetId,
+        sourceChannelId: channel.id,
+        fromNickname: me.nickname,
+        at: Date.now(),
+      });
+      io.to(targetId).emit('audio:pa-invite', {
+        inviteId,
+        fromSocketId: socket.id,
+        fromNickname: me.nickname,
+        channelId: channel.id,
+        notify: true,
+      });
+      socket.emit('audio:pa-invite-sent', { inviteId, targetNickname: target.nickname });
+    });
+
+    on('audio:pa-respond', (data) => {
+      const inviteId = String(data.inviteId || '');
+      const invite = paInvites.get(inviteId);
+      if (!invite || invite.toSocketId !== socket.id) {
+        return socket.emit('audio:error', { message: 'Invite expired or invalid.' });
+      }
+      paInvites.delete(inviteId);
+
+      if (!data.accept) {
+        io.to(invite.fromSocketId).emit('audio:pa-invite-result', {
+          accepted: false,
+          inviteId,
+          targetNickname: users.get(socket.id)?.nickname || 'User',
+        });
+        return;
+      }
+
+      const source = getChannel(invite.sourceChannelId);
+      const fromMember = source?.members.get(invite.fromSocketId);
+      const toMember = source?.members.get(invite.toSocketId);
+      const fromUser = users.get(invite.fromSocketId);
+      const toUser = users.get(invite.toSocketId);
+      if (!fromMember || !toMember || !fromUser || !toUser) {
+        socket.emit('audio:error', { message: 'Could not start PA — someone left the room.' });
+        io.to(invite.fromSocketId).emit('audio:pa-invite-result', { accepted: false, inviteId, reason: 'left' });
+        return;
+      }
+
+      const topic = `🔒 PA · ${fromMember.nickname} & ${toMember.nickname}`;
+      const paChannel = {
+        id: generateId('ach'),
+        topic,
+        isPrivate: false,
+        isPa: true,
+        locked: true,
+        lockCode: null,
+        paInviteToken: generateId('pat'),
+        paMembers: [invite.fromSocketId, invite.toSocketId],
+        cohostEnabled: true,
+        cohostJoined: false,
+        cohostSocketId: null,
+        maxMembers: 3,
+        maxSpeakers: 2,
+        members: new Map(),
+        bannedIps: new Set(),
+        pendingJoins: [],
+        gamesEnabled: true,
+        wallpaper: null,
+        createdAt: Date.now(),
+        gameId: null,
+      };
+      channels.set(paChannel.id, paChannel);
+
+      const fromSock = io.sockets.sockets.get(invite.fromSocketId);
+      const toSock = io.sockets.sockets.get(invite.toSocketId);
+      const fromIp = fromUser.ip;
+      const toIp = toUser.ip;
+
+      if (source) {
+        removeMember(invite.sourceChannelId, invite.fromSocketId, 'pa_left');
+        removeMember(invite.sourceChannelId, invite.toSocketId, 'pa_left');
+      }
+
+      if (fromSock) joinChannel(fromSock, paChannel, fromUser, fromIp);
+      if (toSock) joinChannel(toSock, paChannel, toUser, toIp);
+
+      io.to(invite.fromSocketId).emit('audio:pa-invite-result', {
+        accepted: true,
+        inviteId,
+        channelId: paChannel.id,
+        targetNickname: toMember.nickname,
+      });
+      io.to(invite.toSocketId).emit('audio:pa-invite-result', {
+        accepted: true,
+        inviteId,
+        channelId: paChannel.id,
+        targetNickname: fromMember.nickname,
+      });
+      audit?.('audio_pa_created', { channelId: paChannel.id, from: fromUser.id, to: toUser.id });
+    });
+
+    on('audio:make-public', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      if (!me || me.role !== 'host') {
+        return socket.emit('audio:error', { message: 'Only the room admin can open this PA room.' });
+      }
+      if (!channel.isPa) {
+        return socket.emit('audio:error', { message: 'This is not a PA room.' });
+      }
+      channel.isPa = false;
+      channel.locked = false;
+      channel.lockCode = null;
+      channel.paMembers = null;
+      channel.maxMembers = MAX_MEMBERS;
+      channel.maxSpeakers = MAX_SPEAKERS;
+      channel.topic = channel.topic.replace(/^🔒 PA · /, '').trim() || 'Open voice room';
+      broadcastState(channel);
+      broadcastList();
+      io.to(channel.id).emit('audio:chat-message', {
+        channelId: channel.id,
+        id: generateId('achm'),
+        socketId: socket.id,
+        nickname: me.nickname,
+        text: '🌐 PA room is now public — anyone can join',
+        system: true,
+        ts: Date.now(),
+      });
     });
 
     on('audio:grant-speak', (data) => {

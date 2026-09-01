@@ -17,11 +17,13 @@ export const PHASE_2 = {
 export const PHASE_3_PRO = {
   aiMoodDetection: true,
   reconnectToken: true,
+  countryMatch: true,
+  regionMatch: true,
   miniChatGames: true,
 };
 
 export const PHASE_4_UNIQUE = {
-  mutualConsent: false,
+  mutualConsent: true,
   nvidiaCopilot: true,
   structuredModes: true,
   trustScore: true,
