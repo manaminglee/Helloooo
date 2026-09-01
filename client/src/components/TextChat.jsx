@@ -490,7 +490,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
     <div className="mm-text-chat">
       <header className="mm-text-chat__header">
         <div className="mm-text-chat__header-start">
-          <button type="button" onClick={handleBack} className="mm-text-chat__icon-btn" aria-label="Leave chat">
+          <button type="button" id="text-back-btn" onClick={handleBack} className="mm-text-chat__icon-btn" aria-label="Leave chat">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
           </button>
           <div className="mm-text-chat__brand">
