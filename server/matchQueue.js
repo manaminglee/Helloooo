@@ -21,12 +21,13 @@ function metaKey(socketId) {
 
 function packEntry(entry) {
   const {
-    socketId, userData, interest, region, language, conversationMode, topicContract,
+    socketId, userData, interest, interests, region, language, conversationMode, topicContract,
     matchCountryOnly, matchRegionOnly, reconnectToUserId,
   } = entry;
   return {
     socketId,
     interest,
+    interests: Array.isArray(interests) ? interests.slice(0, 12) : [],
     region,
     language,
     conversationMode,
@@ -51,6 +52,7 @@ function unpackEntry(raw) {
   return {
     socketId: raw.socketId,
     interest: raw.interest,
+    interests: Array.isArray(raw.interests) ? raw.interests : [],
     region: raw.region,
     language: raw.language,
     conversationMode: raw.conversationMode,

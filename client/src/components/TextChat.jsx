@@ -69,7 +69,17 @@ const EMOJIS_3D = [
   { char: '👑', label: 'Crown', url: 'https://fonts.gstatic.com/s/e/notoemoji/latest/1f451/512.webp' },
 ];
 
-const QUICK_ICEBREAKERS = ['Hey! 👋', 'Where are you from?', 'What are you up to?'];
+const ICEBREAKER_POOL = [
+  'Hey! 👋', 'Where are you from?', 'What are you up to?',
+  'Got any hobbies?', 'Favorite music right now?', 'Coffee or tea?',
+  'Seen anything good lately?', 'What made you smile today?',
+  'Beach or mountains?', 'Dogs or cats?',
+];
+
+function pickIcebreakers(n = 3) {
+  const shuffled = [...ICEBREAKER_POOL].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, n);
+}
 
 const SEARCHING_STATUSES = [
   'Searching for a next user…',
@@ -204,6 +214,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   const [input, setInput] = useState('');
   const [roomId, setRoomId] = useState(null);
   const [peer, setPeer] = useState(null);
+  const [sharedInterests, setSharedInterests] = useState([]);
+  const [quickPrompts, setQuickPrompts] = useState(() => pickIcebreakers());
   // status: idle | searching | connected
   const [status, setStatus] = useState('searching');
   const latency = useLatency();
@@ -284,6 +296,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       region: region || country,
       conversationMode,
       topicContract,
+      interests: interest && interest !== 'general' ? [interest] : [],
       matchCountryOnly: proOpts.matchCountryOnly ?? prefs.matchCountryOnly,
       matchRegionOnly: proOpts.matchRegionOnly ?? prefs.matchRegionOnly,
       reconnectToUserId: proOpts.reconnectToUserId || undefined,
@@ -293,6 +306,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
   const clearRoom = useCallback(() => {
     setPeer(null);
+    setSharedInterests([]);
     setRoomId(null);
     setMessages([]);
     roomIdRef.current = null;
@@ -327,6 +341,9 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
       roomIdRef.current = data.roomId;
       setRoomId(data.roomId);
       setPeer(data.peer);
+      setSharedInterests(Array.isArray(data.sharedInterests) ? data.sharedInterests : []);
+      setQuickPrompts(pickIcebreakers());
+      if (data.mutualSkipReconnect) setUiMsg('↩️ Reconnected — you both skipped at the same time');
       setStatus('connected');
       onJoinedRef.current?.(data.roomId);
       notifyIfBackground('Text match', 'You have a new Helloooo text chat 💬.');
@@ -580,8 +597,8 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
         roomId: roomIdRef.current,
         reason: String(reason || 'unspecified'),
         ...(targetId ? { targetSocketId: targetId } : {}),
+        ...(block ? { block: true } : {}),
       });
-      if (block && targetId) socket.emit('block-user', { targetSocketId: targetId });
     }
     handleSkipRef.current?.();
   };
@@ -941,13 +958,13 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
                status={status === 'connected' ? 'connected' : 'searching'}
                peerCountry={peer?.country}
                peerName={peer?.nickname}
-               matchedInterests={status === 'connected' ? [interest].filter(Boolean) : []}
+               matchedInterests={status === 'connected' ? sharedInterests : []}
              />
            )}
 
            {status === 'connected' && (
              <div className="flex flex-wrap gap-1.5 mb-1">
-               {QUICK_ICEBREAKERS.map((q) => (
+               {quickPrompts.map((q) => (
                  <button
                    key={q}
                    type="button"

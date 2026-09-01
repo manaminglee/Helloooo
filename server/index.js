@@ -668,6 +668,29 @@ function interestKey(interest, mode) {
   return `${interest}_${mode}`;
 }
 
+/** Normalize interest tags from primary + optional list (excludes "general"). */
+function parseInterests(data, primaryInterest, sanitizeFn) {
+  const set = new Set();
+  const add = (v) => {
+    const s = sanitizeFn(String(v || '').toLowerCase(), 30);
+    if (s && s !== 'general') set.add(s);
+  };
+  add(primaryInterest);
+  if (Array.isArray(data?.interests)) data.interests.forEach(add);
+  return [...set];
+}
+
+/** Intersection of two normalized interest lists. */
+function computeSharedInterests(listA, listB, primaryInterest) {
+  const b = new Set(listB || []);
+  const shared = (listA || []).filter((x) => b.has(x));
+  const primary = sanitize(String(primaryInterest || '').toLowerCase(), 30);
+  if (primary && primary !== 'general' && (listA || []).includes(primary) && b.has(primary) && !shared.includes(primary)) {
+    shared.unshift(primary);
+  }
+  return shared.slice(0, 6);
+}
+
 function getRoomByInterestKey(key, returnEvenIfFull = false) {
   const roomId = interestToRoom.get(key);
   if (!roomId) return null;
@@ -3284,6 +3307,11 @@ io.on('connection', (socket) => {
     persistence.saveReport(reports[reports.length - 1]).catch(() => {});
     uniqueFeatures.adjustTrust(ip, -2);
     if (targetIp && targetIp !== 'unknown') uniqueFeatures.adjustTrust(targetIp, -8);
+    if (data?.block && targetIp && targetIp !== ip && targetIp !== 'unknown') {
+      if (!userBlocks.has(ip)) userBlocks.set(ip, new Set());
+      userBlocks.get(ip).add(targetIp);
+      audioChannels.kickByIp?.(targetIp, 'blocked');
+    }
   });
 
   on('block-user', (data) => {
@@ -3308,6 +3336,7 @@ io.on('connection', (socket) => {
     if (targetIp && targetIp !== ip) {
       if (!userBlocks.has(ip)) userBlocks.set(ip, new Set());
       userBlocks.get(ip).add(targetIp);
+      audioChannels.kickByIp?.(targetIp, 'blocked');
     }
   });
 
@@ -3368,11 +3397,19 @@ io.on('connection', (socket) => {
       const otherRegion = otherUser?.region || e.region || e.userData?.country;
       if (matchCountryOnly && otherCountry !== userData.country) return false;
       if (matchRegionOnly && otherRegion !== region) return false;
-      if (reconnectToUserId) {
-        const otherId = e.userData?.id || otherUser?.id;
-        if (otherId !== reconnectToUserId) return false;
+
+      const otherId = e.userData?.id || otherUser?.id;
+      if (reconnectToUserId) return otherId === reconnectToUserId;
+      if (e.reconnectToUserId) return e.reconnectToUserId === userData.id;
+
+      const sw = userData.skipWindow;
+      const otherSw = e.userData?.skipWindow || otherUser?.skipWindow;
+      if (sw?.partnerId && otherId && sw.partnerId === otherId && Date.now() < sw.until) {
+        if (otherSw?.partnerId === userData.id && Date.now() < otherSw.until) return true;
+        return false;
       }
-      if (e.reconnectToUserId && e.reconnectToUserId !== userData.id) return false;
+      if (otherSw?.partnerId === userData.id && Date.now() < otherSw.until) return false;
+
       return true;
     };
 
@@ -3384,10 +3421,12 @@ io.on('connection', (socket) => {
     };
 
     const repFn = (otherIp) => persistence.getReputationBoost(otherIp);
+    const interests = parseInterests(data, interest, sanitize);
     const entry = {
       socketId: socket.id,
       userData,
       interest,
+      interests,
       region,
       language,
       conversationMode,
@@ -3446,8 +3485,18 @@ io.on('connection', (socket) => {
       otherData.lastPartnerUserId = userData.id;
 
       const sessionConfig = uniqueFeatures.emitSessionConfig(room.id);
-      socket.emit('partner-found', { roomId: room.id, peer: otherPeer, country: userData.country, sessionConfig });
-      otherSocket.emit('partner-found', { roomId: room.id, peer: myPeer, country: otherData.country, sessionConfig });
+      const theirInterests = match.interests?.length
+        ? match.interests
+        : parseInterests({ interests: [match.interest] }, match.interest, sanitize);
+      const sharedInterests = computeSharedInterests(interests, theirInterests, interest);
+      const mutualSkipReconnect = !!(
+        userData.skipWindow?.partnerId === otherData.id
+        && otherData.skipWindow?.partnerId === userData.id
+        && Date.now() < (userData.skipWindow?.until || 0)
+        && Date.now() < (otherData.skipWindow?.until || 0)
+      );
+      socket.emit('partner-found', { roomId: room.id, peer: otherPeer, country: userData.country, sessionConfig, sharedInterests, mutualSkipReconnect });
+      otherSocket.emit('partner-found', { roomId: room.id, peer: myPeer, country: otherData.country, sessionConfig, sharedInterests, mutualSkipReconnect });
 
       const reconnectToken = enhancements.issueReconnectToken(socket.id, { roomId: room.id, nickname: userData.nickname, mode });
       socket.emit('reconnect-token', { token: reconnectToken });
@@ -3636,6 +3685,18 @@ io.on('connection', (socket) => {
     const userData = users.get(socket.id);
     const room = rooms.get(roomId);
     if (!userData || !room || !room.users.has(socket.id)) return;
+
+    if (room.mode === 'text' || room.mode === 'video') {
+      for (const pt of room.participants || []) {
+        if (pt.socketId === socket.id) continue;
+        const partner = users.get(pt.socketId);
+        if (partner?.id) {
+          userData.skipWindow = { partnerId: partner.id, until: Date.now() + 15000 };
+        }
+        break;
+      }
+    }
+
     userData.rooms.delete(roomId);
     socket.leave(roomId);
     removeUserFromRoom(socket.id, roomId, io);
@@ -4125,7 +4186,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  // LiveKit access token — only for members of the Helloooo group room
+  // LiveKit access token — group video or audio SFU rooms
   on('livekit-token', async (data) => {
     try {
       if (!livekitRooms.isConfigured()) {
@@ -4133,14 +4194,39 @@ io.on('connection', (socket) => {
       }
       const roomId = String(data?.roomId || '');
       const u = users.get(socket.id);
+      if (!u) {
+        return socket.emit('livekit-token-error', { message: 'Not signed in.' });
+      }
+      const kind = String(data?.kind || 'group_video');
+      const nickname = sanitize(data?.nickname || u.nickname || 'Anonymous', 30);
+
+      if (kind === 'audio') {
+        const channel = audioChannels.getChannel(roomId);
+        if (!channel?.members.has(socket.id)) {
+          return socket.emit('livekit-token-error', { message: 'Join the voice room before requesting SFU audio.' });
+        }
+        if (!channel.useSfu) {
+          return socket.emit('livekit-token-error', { message: 'This room is not on LiveKit SFU yet.' });
+        }
+        const tokenPayload = await livekitRooms.mintParticipantToken({
+          socketId: socket.id,
+          roomId,
+          nickname,
+          country: u.country || '',
+          isCreator: !!u.isCreator,
+          canPublish: true,
+          canSubscribe: true,
+        });
+        return socket.emit('livekit-token', tokenPayload);
+      }
+
       const room = rooms.get(roomId);
-      if (!u || !room || !room.users.has(socket.id)) {
+      if (!room || !room.users.has(socket.id)) {
         return socket.emit('livekit-token-error', { message: 'Join the Helloooo room before requesting an SFU token.' });
       }
       if (room.mode !== 'group_video') {
-        return socket.emit('livekit-token-error', { message: 'LiveKit is only used for group video.' });
+        return socket.emit('livekit-token-error', { message: 'LiveKit video is only used for group video.' });
       }
-      const nickname = sanitize(data?.nickname || u.nickname || 'Anonymous', 30);
       const tokenPayload = await livekitRooms.mintParticipantToken({
         socketId: socket.id,
         roomId,

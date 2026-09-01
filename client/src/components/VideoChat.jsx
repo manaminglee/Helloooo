@@ -485,6 +485,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [partnerLeft, setPartnerLeft] = useState(false);
   const [interestTags, setInterestTags] = useState(['social', 'fun', 'music', 'gaming']);
   const [selectedInterests, setSelectedInterests] = useState([]);
+  const [sharedInterests, setSharedInterests] = useState([]);
   const connTimerRef = useRef(null);
   const typingTimerRef = useRef(null);
   const toastTimerRef = useRef(null);
@@ -1230,6 +1231,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       return null;
     });
     setRoomId(null);
+    setSharedInterests([]);
     setMessages([]);
     roomIdRef.current = null;
     pendingOutIceRef.current.clear();
@@ -1349,9 +1351,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         roomId: roomIdRef.current,
         reason: String(reason || 'unspecified'),
         ...(targetId ? { targetSocketId: targetId } : {}),
+        ...(block ? { block: true } : {}),
       });
       if (block && targetId) {
-        socket.emit('block-user', { targetSocketId: targetId });
         setToast('User blocked — skipping to next match');
         setTimeout(() => handleSkip(), 400);
       }
@@ -1917,6 +1919,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       conversationMode,
       topicContract,
       creatorToken: isCreator || creatorToken ? creatorToken : undefined,
+      interests: [...new Set([...(selectedInterests || []), ...(interest && interest !== 'general' ? [interest] : [])])],
       matchCountryOnly: proOpts.matchCountryOnly ?? prefs.matchCountryOnly,
       matchRegionOnly: proOpts.matchRegionOnly ?? prefs.matchRegionOnly,
       reconnectToUserId: proOpts.reconnectToUserId || undefined,
@@ -1947,6 +1950,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         conversationMode,
         topicContract,
         creatorToken: isCreator || creatorToken ? creatorToken : undefined,
+        interests: [...new Set([...(selectedInterests || []), ...(interest && interest !== 'general' ? [interest] : [])])],
         matchCountryOnly: proOpts.matchCountryOnly ?? prefs.matchCountryOnly,
         matchRegionOnly: proOpts.matchRegionOnly ?? prefs.matchRegionOnly,
         reconnectToUserId: proOpts.reconnectToUserId || undefined,
@@ -1954,7 +1958,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       proMatchOptsRef.current = {};
     }, 2500);
     return () => clearTimeout(t);
-  }, [socket, connected, status, connectPhase, localStream, interest, nickname, conversationMode, topicContract, isCreator]);
+  }, [socket, connected, status, connectPhase, localStream, interest, nickname, conversationMode, topicContract, isCreator, selectedInterests]);
 
   // Auto-recover if connected but remote video never arrives.
   useEffect(() => {
@@ -2023,8 +2027,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       playMatch();
       if (p?.socketId) {
         peerInfoRef.current.set(p.socketId, { nickname: p.nickname, country: p.country, isCreator: p.isCreator });
-        setPeer({ socketId: p.socketId, userId: p.userId, nickname: p.nickname, country: p.country, isCreator: p.isCreator, stream: null });
-        createPeerConnection(p.socketId);
+      setPeer({ socketId: p.socketId, userId: p.userId, nickname: p.nickname, country: p.country, isCreator: p.isCreator, stream: null });
+      setSharedInterests(Array.isArray(data.sharedInterests) ? data.sharedInterests : []);
+      if (data.mutualSkipReconnect) setToast('↩️ Reconnected — you both skipped at the same time');
+      createPeerConnection(p.socketId);
         flushPendingOutIce(p.socketId);
         if (socket.id < p.socketId) {
           if (localStreamRef.current) doOffer(p.socketId);
@@ -2203,6 +2209,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           conversationMode,
           topicContract,
           creatorToken: isCreator || creatorToken ? creatorToken : undefined,
+          interests: [...new Set([...(selectedInterests || []), ...(interest && interest !== 'general' ? [interest] : [])])],
         });
       }
     };
@@ -2587,7 +2594,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           status={chatStatus}
           peerCountry={peer?.country}
           peerName={peer?.nickname}
-          matchedInterests={chatReady ? [interest, ...selectedInterests].filter(Boolean) : []}
+          matchedInterests={chatReady ? sharedInterests : []}
         />
       )}
       <div className="mm-desk-chat__messages custom-scrollbar" id="video-chat-messages">
@@ -2734,7 +2741,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         showStayConnected={showStayConnected && goodVibesMatch && peer?.isCreator}
         onStayConnected={() => { if (peer?.nickname) window.open(`/creator/${peer.nickname}`, '_blank'); setShowStayConnected(false); }}
         onDismissStayConnected={() => setShowStayConnected(false)}
-        matchedInterests={status === 'connected' ? selectedInterests : []}
+        matchedInterests={status === 'connected' ? sharedInterests : []}
       />
 
       <main className={desktopLayout ? 'mm-desk-main' : `mm-mobile-main ${status !== 'connected' ? 'mm-mobile-main--solo' : ''} ${status === 'connected' && !chatCollapsed ? 'mm-mobile-main--chat-open' : ''}`}>

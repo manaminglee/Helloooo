@@ -6,6 +6,7 @@ import { useYoutubeLive } from '../hooks/useYoutubeLive';
 import { CoinRaceGame } from './CoinRaceGame';
 import { GiftDrawer } from './GiftDrawer';
 import { CreatorLiveModal } from './CreatorLiveModal';
+import { playLockSound, playUnlockSound } from '../utils/sounds';
 
 const STAGE_SLOTS = 6;
 const ROLE_LABEL = { host: 'Admin', moderator: 'Co-taker', speaker: 'Speaker', listener: 'Viewer', cohost: 'Co-host' };
@@ -17,6 +18,7 @@ const ROOM_THEMES_CLIENT = [
   { id: 'sunset', label: 'Sunset' },
   { id: 'forest', label: 'Forest' },
   { id: 'gold', label: 'Gold' },
+  { id: 'couple', label: 'Couple' },
 ];
 
 const THEME_STYLES = {
@@ -24,6 +26,14 @@ const THEME_STYLES = {
   sunset: 'linear-gradient(135deg, rgba(251,146,60,0.35), rgba(244,63,94,0.25))',
   forest: 'linear-gradient(135deg, rgba(16,185,129,0.3), rgba(5,46,22,0.4))',
   gold: 'linear-gradient(135deg, rgba(251,191,36,0.35), rgba(120,53,15,0.35))',
+  couple: 'linear-gradient(135deg, rgba(244,114,182,0.35), rgba(167,139,250,0.3))',
+};
+
+const THEME_FRAMES = {
+  gold: 'mm-audio-frame--gold',
+  neon: 'mm-audio-frame--neon',
+  couple: 'mm-audio-frame--couple',
+  forest: 'mm-audio-frame--forest',
 };
 
 function LockCodeModal({ open, topic, onSubmit, onClose, onKnock }) {
@@ -59,7 +69,27 @@ function LockCodeModal({ open, topic, onSubmit, onClose, onKnock }) {
   );
 }
 
-function UserActionMenu({ member, onHello, onPa, onGift, onReport, onClose }) {
+function ProfileMiniCard({ member, frameClass = '' }) {
+  if (!member) return null;
+  const roleLabel = ROLE_LABEL[member.role] || member.role;
+  return (
+    <div className="mm-profile-mini-card">
+      <div className={`mm-profile-mini-card__avatar ${frameClass}`}>
+        <span>{(member.nickname || '?').slice(0, 1).toUpperCase()}</span>
+        {member.isCreator && <span className="mm-profile-mini-card__badge mm-profile-mini-card__badge--creator" title="Creator">✓</span>}
+        {member.verified && <span className="mm-profile-mini-card__badge mm-profile-mini-card__badge--verified" title="Verified">★</span>}
+      </div>
+      <div className="mm-profile-mini-card__body">
+        <p className="mm-profile-mini-card__name">{member.nickname}</p>
+        <p className="mm-profile-mini-card__meta">
+          {member.country ? `${member.country} · ` : ''}{roleLabel}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function UserActionMenu({ member, frameClass, onHello, onPa, onGift, onReport, onBlock, onClose }) {
   if (!member) return null;
   const helloTypes = [
     { id: 'wave', label: '👋 Hello' },
@@ -70,8 +100,8 @@ function UserActionMenu({ member, onHello, onPa, onGift, onReport, onClose }) {
   return (
     <div className="fixed inset-0 z-[450] flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div className="mm-audio-user-menu w-full max-w-xs" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
-        <p className="mm-audio-user-menu__head">{member.nickname}{member.country ? ` · ${member.country}` : ''}</p>
-        <div className="grid grid-cols-2 gap-1 mb-2">
+        <ProfileMiniCard member={member} frameClass={frameClass} />
+        <div className="grid grid-cols-2 gap-1 mb-2 mt-3">
           {helloTypes.map((h) => (
             <button key={h.id} type="button" className="mm-audio-user-menu__item !py-2 !text-xs" onClick={() => { onHello?.(member, h.id); onClose(); }}>
               {h.label}
@@ -86,6 +116,9 @@ function UserActionMenu({ member, onHello, onPa, onGift, onReport, onClose }) {
         </button>
         <button type="button" className="mm-audio-user-menu__item text-rose-300" onClick={() => { onReport?.(member); onClose(); }}>
           🚩 Report
+        </button>
+        <button type="button" className="mm-audio-user-menu__item text-rose-400" onClick={() => { onBlock?.(member); onClose(); }}>
+          ⛔ Block &amp; never match
         </button>
       </div>
     </div>
@@ -148,6 +181,24 @@ function GiftStreakBurst({ event, onDone }) {
   );
 }
 
+function GiftBonusToast({ bonus, onDone }) {
+  useEffect(() => {
+    if (!bonus) return undefined;
+    const t = setTimeout(onDone, 2800);
+    return () => clearTimeout(t);
+  }, [bonus, onDone]);
+  if (!bonus) return null;
+  return (
+    <div className="mm-host-bonus-toast" aria-live="polite">
+      <span className="mm-host-bonus-toast__icon">🎁</span>
+      <div>
+        <p className="mm-host-bonus-toast__title">Gift bonus +{bonus.coins} coins</p>
+        <p className="mm-host-bonus-toast__sub">{bonus.giftName || 'Nice gift!'}</p>
+      </div>
+    </div>
+  );
+}
+
 function HostBonusToast({ bonus, onDone }) {
   useEffect(() => {
     if (!bonus) return undefined;
@@ -159,8 +210,12 @@ function HostBonusToast({ bonus, onDone }) {
     <div className="mm-host-bonus-toast" aria-live="polite">
       <span className="mm-host-bonus-toast__icon">🪙</span>
       <div>
-        <p className="mm-host-bonus-toast__title">Host bonus +{bonus.coins} coins</p>
-        <p className="mm-host-bonus-toast__sub">{bonus.minutes} minutes live</p>
+        <p className="mm-host-bonus-toast__title">
+          {bonus.entryFee ? 'Entry fee earned' : 'Host bonus'} +{bonus.coins} coins
+        </p>
+        <p className="mm-host-bonus-toast__sub">
+          {bonus.entryFee ? 'Someone joined your room' : `${bonus.minutes} minutes live`}
+        </p>
       </div>
     </div>
   );
@@ -245,7 +300,7 @@ function AudioChatBubble({ m, isMe }) {
   );
 }
 
-function StageAvatar({ member, speaking, size = 'lg', onUserTap, isPa = false }) {
+function StageAvatar({ member, speaking, size = 'lg', onUserTap, isPa = false, frameClass = '' }) {
   const dim = size === 'lg' ? 'mm-audio-avatar mm-audio-avatar--lg' : 'mm-audio-avatar mm-audio-avatar--sm';
   const royal =
     member?.role === 'host'
@@ -253,8 +308,8 @@ function StageAvatar({ member, speaking, size = 'lg', onUserTap, isPa = false })
       : member?.role === 'moderator'
         ? 'mm-audio-royal mm-audio-royal--mod'
         : '';
-  const showMuted = member?.role !== 'listener' && !!member?.micMuted;
-  const live = member?.role !== 'listener' && !member?.micMuted;
+  const showMuted = member?.role !== 'listener' && member?.role !== 'cohost' && !!member?.micMuted;
+  const live = member?.role !== 'listener' && member?.role !== 'cohost' && !member?.micMuted;
 
   return (
     <button
@@ -265,7 +320,7 @@ function StageAvatar({ member, speaking, size = 'lg', onUserTap, isPa = false })
         e.stopPropagation();
         if (member && onUserTap) onUserTap(member, e);
       }}
-      className={`${dim} rounded-full grid place-items-center font-bold text-white relative transition-all duration-200 ${royal} ${isPa ? 'mm-audio-avatar--pa' : ''} ${
+      className={`${dim} rounded-full grid place-items-center font-bold text-white relative transition-all duration-200 ${royal} ${frameClass} ${isPa ? 'mm-audio-avatar--pa' : ''} ${
         speaking ? 'mm-audio-avatar--speaking bg-emerald-500/25 ring-2 ring-emerald-400 scale-105' : live ? 'bg-emerald-500/15 ring-2 ring-emerald-400/50' : 'bg-white/[0.07] ring-1 ring-white/10'
       }`}
       title={onUserTap ? `Tap ${member?.nickname}` : member?.nickname}
@@ -284,7 +339,7 @@ function StageAvatar({ member, speaking, size = 'lg', onUserTap, isPa = false })
 }
 
 function StageSlot({
-  index, occupant, speaking, canClaim, onClaim, canModerate, isSelf, onModerate, isHost, onUserTap, isPa,
+  index, occupant, speaking, canClaim, onClaim, canModerate, isSelf, onModerate, isHost, onUserTap, isPa, frameClass = '',
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -311,6 +366,7 @@ function StageSlot({
           member={occupant}
           speaking={speaking}
           isPa={isPa}
+          frameClass={frameClass}
           onUserTap={!isSelf ? onUserTap : undefined}
         />
         <button
@@ -366,17 +422,19 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
   const iceServers = iceServersProp?.length ? iceServersProp : iceFromHook;
   const {
     channel, members, micMuted, speakingIds, error, connecting, chatMessages,
-    lockRequired, paInvite, helloEvent, stickerBurst, giftStreak, hostBonus,
+    lockRequired, paInvite, helloEvent, stickerBurst, giftStreak, hostBonus, giftBonus,
+    scheduledEvents, useSfu, livekitConnected,
     join, create, leave, toggleMic, moderate, grantSpeak, claimSlot,
     approveJoin, denyJoin, renameRoom, setWallpaper, setGamesEnabled, sendChat,
     sendSticker, sendHello, invitePa, respondPa, setRoomLock, makePublic,
-    knockRoom, approveKnock, denyKnock, setTheme,
+    knockRoom, approveKnock, denyKnock, setTheme, setEntryFee, scheduleEvent,
     resumeRemoteAudio, clearError, dismissLockRequired, dismissHello, dismissSticker, dismissPaInvite,
-    dismissGiftStreak, dismissHostBonus,
-  } = useAudioChannel(socket, iceServers);
+    dismissGiftStreak, dismissHostBonus, dismissGiftBonus,
+  } = useAudioChannel(socket, iceServers, nickname);
 
   const [channels, setChannels] = useState([]);
   const [topic, setTopic] = useState('');
+  const [scheduleAt, setScheduleAt] = useState('');
   const [giftOpen, setGiftOpen] = useState(false);
   const [giftTarget, setGiftTarget] = useState(null);
   const [userMenu, setUserMenu] = useState(null); // { member, x, y }
@@ -394,6 +452,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
   const liveCameraRef = useRef(null);
   const [showLiveModal, setShowLiveModal] = useState(false);
   const [liveCamBusy, setLiveCamBusy] = useState(false);
+  const [lobbyScheduled, setLobbyScheduled] = useState([]);
 
   const youtubeLive = useYoutubeLive({
     socket,
@@ -407,8 +466,13 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
 
   useEffect(() => {
     if (!socket) return undefined;
-    const onList = ({ channels: c }) => setChannels(c || []);
+    const onList = ({ channels: c, events }) => {
+      setChannels(c || []);
+      if (events?.length) setLobbyScheduled(events);
+    };
+    const onScheduled = ({ events }) => setLobbyScheduled(events || []);
     socket.on('audio:channels', onList);
+    socket.on('audio:scheduled', onScheduled);
     socket.emit('audio:list');
     const id = setInterval(() => socket.emit('audio:list'), 8000);
 
@@ -422,6 +486,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
           if (Array.isArray(data.channels) && data.channels.length) {
             setChannels((prev) => (prev.length ? prev : data.channels));
           }
+          if (Array.isArray(data.scheduled)) setLobbyScheduled(data.scheduled);
         }
       } catch {
         /* ignore */
@@ -431,6 +496,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
     return () => {
       cancelled = true;
       socket.off('audio:channels', onList);
+      socket.off('audio:scheduled', onScheduled);
       clearInterval(id);
     };
   }, [socket]);
@@ -459,7 +525,29 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
   const pendingJoins = channel?.pendingJoins || [];
   const pendingKnocks = channel?.pendingKnocks || [];
   const themeOverlay = THEME_STYLES[channel?.themeId] || null;
+  const frameClass = THEME_FRAMES[channel?.themeId] || '';
   const maxSlots = channel?.maxSpeakers || STAGE_SLOTS;
+
+  const [clock, setClock] = useState(Date.now());
+  useEffect(() => {
+    if (!channel?.isPa) return undefined;
+    const t = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [channel?.isPa]);
+
+  const paCountdown = useMemo(() => {
+    if (!channel?.isPa) return null;
+    const alone = members.length < 2 && channel.paAloneCloseAt;
+    const endsAt = alone ? channel.paAloneCloseAt : channel.paEndsAt;
+    if (!endsAt) return null;
+    const sec = Math.max(0, Math.ceil((endsAt - clock) / 1000));
+    const min = Math.floor(sec / 60);
+    const s = String(sec % 60).padStart(2, '0');
+    return {
+      label: alone ? `Closes in ${min}:${s} (alone)` : `PA ends in ${min}:${s}`,
+      urgent: sec <= 60,
+    };
+  }, [channel, members.length, clock]);
 
   const slots = useMemo(() => {
     const arr = Array.from({ length: maxSlots }, () => null);
@@ -624,6 +712,17 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
     setUiMsg(`Reported ${member.nickname}`);
   };
 
+  const handleBlockUser = (member) => {
+    if (!member || !socket) return;
+    socket.emit('report-user', {
+      roomId: channel?.channelId,
+      targetSocketId: member.socketId,
+      reason: 'audio_room_block',
+      block: true,
+    });
+    setUiMsg(`Blocked ${member.nickname} — you won't match again`);
+  };
+
   const handleKnock = () => {
     const id = pendingJoinId || lockRequired?.channelId;
     if (!id) return;
@@ -639,11 +738,16 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
     setUiMsg(`🎙 PA invite sent to ${member.nickname}`);
   };
 
-  const tryJoinRoom = (channelId, hasLock) => {
+  const tryJoinRoom = (channelId, hasLock, entryFee = 0) => {
+    if (entryFee > 0 && coins < entryFee) {
+      setUiMsg(`This room costs ${entryFee} coins — you have ${coins}`);
+      return;
+    }
     if (hasLock) {
       setPendingJoinId(channelId);
       return;
     }
+    if (entryFee > 0) setUiMsg(`Joining — ${entryFee} coins entry fee`);
     join(channelId, nickname);
   };
 
@@ -713,6 +817,21 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
           </div>
         )}
 
+        {lobbyScheduled.length > 0 && (
+          <div className="mm-voice-lobby__scheduled mb-4 p-4 rounded-xl border border-violet-400/20 bg-violet-500/5">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-violet-200/80 mb-2">Upcoming events</p>
+            {lobbyScheduled.map((ev) => (
+              <div key={ev.id} className="flex items-center justify-between gap-2 text-xs py-1">
+                <span className="truncate">{ev.topic}</span>
+                <span className="text-white/45 shrink-0">{new Date(ev.scheduledStartAt).toLocaleString()}</span>
+                <button type="button" className="mm-btn mm-btn--ghost !px-2 !py-1 !text-[10px]" onClick={() => tryJoinRoom(ev.id, false, ev.entryFee || 0)}>
+                  Join
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="mm-voice-lobby__list-head">
           <h3>Live rooms</h3>
           <span>{channels.length} open</span>
@@ -724,7 +843,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
               key={c.id}
               type="button"
               disabled={connecting}
-              onClick={() => tryJoinRoom(c.id, c.hasLockCode)}
+              onClick={() => tryJoinRoom(c.id, c.hasLockCode, c.entryFee || 0)}
               className={`mm-voice-room-card${c.isPa ? ' mm-voice-room-card--pa' : ''}${c.locked || c.hasLockCode ? ' mm-voice-room-card--locked' : ''}`}
             >
               <div className="mm-voice-room-card__top">
@@ -738,6 +857,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
               <div className="mm-voice-room-card__meta">
                 <span>🎙 {c.speakerCount}/{c.maxSpeakers || 6} stage</span>
                 <span>👥 {c.memberCount}</span>
+                {c.entryFee > 0 && <span>🪙 {c.entryFee}</span>}
               </div>
               <span className="mm-voice-room-card__cta">{c.hasLockCode ? 'Enter code →' : 'Join →'}</span>
             </button>
@@ -758,10 +878,10 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
           onClose={() => { setPendingJoinId(null); dismissLockRequired(); }}
         />
 
-        {channels.length === 0 && (
+        {channels.length < 3 && (
           <div className="mm-voice-lobby__cta mt-4 p-4 rounded-xl border border-violet-500/20 bg-violet-500/5 text-center">
-            <p className="text-sm text-white/70 mb-2">No rooms yet — be the first host or start a PA with someone online</p>
-            <button type="button" className="mm-btn mm-btn--primary" onClick={() => create(topic || 'Open voice room 🎙️', false, nickname)}>Start the first room</button>
+            <p className="text-sm text-white/70 mb-2">Few rooms live — be the first host or start a PA with someone online</p>
+            <button type="button" className="mm-btn mm-btn--primary" onClick={() => create(topic || 'Open voice room 🎙️', false, nickname)}>Start a room</button>
           </div>
         )}
       </div>
@@ -787,11 +907,17 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
         <div className="min-w-0">
           <h2 className="text-base sm:text-lg font-bold truncate flex items-center gap-2">
             {isPaRoom && <span className="mm-audio-pa-badge" title="Private Audio">🔒 PA</span>}
+            {useSfu && <span className="mm-audio-sfu-badge" title="LiveKit SFU">📡 SFU</span>}
             {channel.topic}
           </h2>
           <p className="text-[11px] text-white/40">
             {members.length} here · {slots.filter(Boolean).length}/{maxSlots} on stage
             {raisedHands > 0 && <span className="text-amber-300 font-semibold"> · ✋ {raisedHands} waiting</span>}
+            {paCountdown && (
+              <span className={`block mt-0.5 ${paCountdown.urgent ? 'text-rose-300 font-semibold' : 'text-violet-300/80'}`}>
+                ⏱ {paCountdown.label}
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -884,6 +1010,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
                 onModerate={moderate}
                 isHost={isHost}
                 isPa={isPaRoom}
+                frameClass={frameClass}
                 onUserTap={openUserMenu}
               />
             ))}
@@ -906,7 +1033,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
                     }`}
                   >
                     {m.handRaised && <span aria-label="Hand raised" title="Wants to speak">✋</span>}
-                    <StageAvatar member={m} speaking={false} size="sm" onUserTap={m.socketId !== socket?.id ? openUserMenu : undefined} />
+                    <StageAvatar member={m} speaking={false} size="sm" frameClass={frameClass} onUserTap={m.socketId !== socket?.id ? openUserMenu : undefined} />
                     <button
                       type="button"
                       onClick={() => canModerate && grantSpeak(m.socketId, true)}
@@ -1047,9 +1174,9 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
                     placeholder="1234"
                     className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm tracking-[0.3em] text-center"
                   />
-                  <button type="button" className="mm-btn mm-btn--primary !px-3" onClick={() => { setRoomLock(lockCodeInput); setUiMsg('🔒 Room lock updated'); setLockCodeInput(''); }}>Lock</button>
+                  <button type="button" className="mm-btn mm-btn--primary !px-3" onClick={() => { setRoomLock(lockCodeInput); playLockSound(); setUiMsg('🔒 Room lock updated'); setLockCodeInput(''); }}>Lock</button>
                 </div>
-                <button type="button" className="mm-btn mm-btn--ghost w-full mb-4" onClick={() => { setRoomLock(''); setUiMsg('🔓 Room unlocked'); }}>
+                <button type="button" className="mm-btn mm-btn--ghost w-full mb-4" onClick={() => { setRoomLock(''); playUnlockSound(); setUiMsg('🔓 Room unlocked'); }}>
                   Remove lock
                 </button>
                 <label className="block text-[10px] font-bold uppercase text-white/40 mb-1">Room theme</label>
@@ -1065,6 +1192,47 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
                     </button>
                   ))}
                 </div>
+                {!isPaRoom && (
+                  <>
+                    <label className="block text-[10px] font-bold uppercase text-white/40 mb-1">Entry fee (coins)</label>
+                    <div className="flex flex-wrap gap-1.5 mb-4">
+                      {[0, 5, 10, 25, 50].map((fee) => (
+                        <button
+                          key={fee}
+                          type="button"
+                          className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold border ${ (channel.entryFee || 0) === fee ? 'border-amber-400 bg-amber-500/20 text-amber-200' : 'border-white/10 bg-white/5 text-white/50'}`}
+                          onClick={() => { setEntryFee(fee); setUiMsg(fee ? `Entry fee set to ${fee} coins` : 'Room is free to enter'); }}
+                        >
+                          {fee === 0 ? 'Free' : `${fee} 🪙`}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="block text-[10px] font-bold uppercase text-white/40 mb-1">Schedule event</label>
+                    <input
+                      type="datetime-local"
+                      value={scheduleAt}
+                      onChange={(e) => setScheduleAt(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm mb-2"
+                    />
+                    <button
+                      type="button"
+                      className="mm-btn mm-btn--ghost w-full mb-4"
+                      disabled={!scheduleAt}
+                      onClick={() => {
+                        const ts = new Date(scheduleAt).getTime();
+                        if (!Number.isFinite(ts) || ts <= Date.now()) {
+                          setUiMsg('Pick a future date/time');
+                          return;
+                        }
+                        scheduleEvent(ts, renameValue || channel.topic);
+                        setUiMsg('📅 Event scheduled — reminder 15 min before');
+                        setScheduleAt('');
+                      }}
+                    >
+                      📅 Schedule room opening
+                    </button>
+                  </>
+                )}
               </>
             )}
 
@@ -1164,10 +1332,12 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
       {userMenu && (
         <UserActionMenu
           member={userMenu.member}
+          frameClass={frameClass}
           onHello={handleHello}
           onPa={handlePaInvite}
           onGift={openGiftFor}
           onReport={handleReportUser}
+          onBlock={handleBlockUser}
           onClose={() => setUserMenu(null)}
         />
       )}
@@ -1182,6 +1352,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
       <StickerBurst event={stickerBurst} onDone={dismissSticker} />
       <GiftStreakBurst event={giftStreak} onDone={dismissGiftStreak} />
       <HostBonusToast bonus={hostBonus} onDone={dismissHostBonus} />
+      <GiftBonusToast bonus={giftBonus} onDone={dismissGiftBonus} />
     </div>
   );
 }

@@ -5102,6 +5102,88 @@ h1, h2, h3, .font-display {
 .mm-audio-user-menu__item--pa { color: #ddd6fe; }
 .mm-audio-user-menu__hint { font-size: 0.625rem; font-weight: 600; color: rgba(255,255,255,0.35); }
 
+/* Profile mini-card (tap avatar) */
+.mm-profile-mini-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.25rem 0.25rem;
+}
+
+.mm-profile-mini-card__avatar {
+  position: relative;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 1.1rem;
+  background: rgba(255,255,255,0.08);
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,0.12);
+}
+
+.mm-profile-mini-card__avatar.mm-audio-frame--gold {
+  box-shadow: 0 0 0 2px rgba(251,191,36,0.7), 0 0 18px rgba(251,191,36,0.25);
+}
+.mm-profile-mini-card__avatar.mm-audio-frame--neon {
+  box-shadow: 0 0 0 2px rgba(139,92,246,0.8), 0 0 20px rgba(6,182,212,0.3);
+}
+.mm-profile-mini-card__avatar.mm-audio-frame--couple {
+  box-shadow: 0 0 0 2px rgba(244,114,182,0.75), 0 0 18px rgba(167,139,250,0.3);
+}
+.mm-profile-mini-card__avatar.mm-audio-frame--sunset {
+  box-shadow: 0 0 0 2px rgba(251,146,60,0.75), 0 0 16px rgba(244,63,94,0.25);
+}
+
+.mm-audio-avatar.mm-audio-frame--gold { box-shadow: 0 0 0 2px rgba(251,191,36,0.65), 0 0 14px rgba(251,191,36,0.2); }
+.mm-audio-avatar.mm-audio-frame--neon { box-shadow: 0 0 0 2px rgba(139,92,246,0.7), 0 0 16px rgba(6,182,212,0.25); }
+.mm-audio-avatar.mm-audio-frame--couple { box-shadow: 0 0 0 2px rgba(244,114,182,0.7), 0 0 14px rgba(167,139,250,0.25); }
+.mm-audio-avatar.mm-audio-frame--sunset { box-shadow: 0 0 0 2px rgba(251,146,60,0.7), 0 0 12px rgba(244,63,94,0.2); }
+.mm-audio-avatar.mm-audio-frame--forest { box-shadow: 0 0 0 2px rgba(16,185,129,0.7), 0 0 14px rgba(5,46,22,0.35); }
+
+.mm-audio-sfu-badge {
+  font-size: 0.625rem;
+  font-weight: 800;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(6,182,212,0.2);
+  border: 1px solid rgba(6,182,212,0.45);
+  color: #a5f3fc;
+}
+
+.mm-profile-mini-card__avatar.mm-audio-frame--forest {
+  box-shadow: 0 0 0 2px rgba(16,185,129,0.75), 0 0 16px rgba(5,46,22,0.3);
+}
+
+.mm-profile-mini-card__badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  font-size: 0.55rem;
+  font-weight: 900;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(0,0,0,0.4);
+}
+.mm-profile-mini-card__badge--creator { background: #a78bfa; color: #1e1b4b; }
+.mm-profile-mini-card__badge--verified { background: #34d399; color: #064e3b; }
+
+.mm-profile-mini-card__name {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+}
+.mm-profile-mini-card__meta {
+  font-size: 0.6875rem;
+  color: rgba(255,255,255,0.45);
+  margin: 0.15rem 0 0;
+}
+
 .mm-audio-hello-overlay,
 .mm-audio-sticker-overlay,
 .mm-gift-streak-overlay {

@@ -99,6 +99,17 @@ export const playStickerSound = () => play((ac, dest) => {
   tone(ac, dest, { freq: 520, endFreq: 880, peak: 0.7, attack: 0.005, decay: 0.12, type: 'triangle' });
 });
 
+/** Room lock — low secure click. */
+export const playLockSound = () => play((ac, dest) => {
+  tone(ac, dest, { freq: 280, endFreq: 180, peak: 0.85, attack: 0.008, decay: 0.22, type: 'triangle' });
+});
+
+/** Room unlock — bright release chime. */
+export const playUnlockSound = () => play((ac, dest) => {
+  tone(ac, dest, { freq: 440, at: 0, peak: 0.9, attack: 0.01, decay: 0.28 });
+  tone(ac, dest, { freq: 660, at: 0.08, peak: 0.85, attack: 0.01, decay: 0.32 });
+});
+
 // ---------------------------------------------------------------------------
 // Backwards-compatible aliases (existing call sites use these names)
 // ---------------------------------------------------------------------------

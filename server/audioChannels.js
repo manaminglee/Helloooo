@@ -45,8 +45,13 @@ const SIGNAL_MAX = 200;
 
 const ROLE_RANK = { cohost: 0, listener: 0, speaker: 1, moderator: 2, host: 3 };
 const PA_EMPTY_CLOSE_MS = Number(process.env.PA_EMPTY_CLOSE_MS) || 120000;
+const PA_SESSION_MS = Number(process.env.PA_SESSION_MS) || 30 * 60 * 1000;
 const HOST_BONUS_MINUTES = 30;
 const HOST_BONUS_COINS = 15;
+const ALLOWED_ENTRY_FEES = [0, 5, 10, 25, 50];
+
+const livekitRooms = require('./livekitRooms');
+const LIVEKIT_AUDIO_THRESHOLD = Number(process.env.LIVEKIT_AUDIO_THRESHOLD) || 4;
 
 const ROOM_THEMES = {
   default: null,
@@ -54,6 +59,7 @@ const ROOM_THEMES = {
   sunset: 'linear-gradient(135deg, rgba(251,146,60,0.35), rgba(244,63,94,0.25))',
   forest: 'linear-gradient(135deg, rgba(16,185,129,0.3), rgba(5,46,22,0.4))',
   gold: 'linear-gradient(135deg, rgba(251,191,36,0.35), rgba(120,53,15,0.35))',
+  couple: 'linear-gradient(135deg, rgba(244,114,182,0.35), rgba(167,139,250,0.3))',
 };
 
 const HELLO_EMOJI = { wave: '👋', fire: '🔥', heart: '❤️', sparkle: '✨' };
@@ -82,6 +88,7 @@ function registerAudioChannels(app, io, deps) {
   /** inviteId -> { fromSocketId, toSocketId, sourceChannelId, fromNickname, at } */
   const paInvites = new Map();
   const paCloseTimers = new Map();
+  const paSessionTimers = new Map();
   const hostMinuteTimers = new Map();
 
   const rateOk = (map, key, windowMs, max) => {
@@ -111,6 +118,9 @@ function registerAudioChannels(app, io, deps) {
     themeId: c.themeId || 'default',
     createdAt: c.createdAt,
     hasActiveGame: !!c.gameId,
+    entryFee: c.entryFee || 0,
+    scheduledStartAt: c.scheduledStartAt || null,
+    useSfu: !!c.useSfu,
   });
 
   const memberView = (m) => ({
@@ -145,6 +155,11 @@ function registerAudioChannels(app, io, deps) {
     pendingKnocks: [...(c.pendingKnocks || [])].map((k) => ({ socketId: k.socketId, nickname: k.nickname })),
     cohostEnabled: !!c.cohostEnabled,
     cohostJoined: !!c.cohostJoined,
+    paEndsAt: c.isPa ? (c.paEndsAt || null) : null,
+    paAloneCloseAt: c.isPa ? (c.paAloneCloseAt || null) : null,
+    entryFee: c.entryFee || 0,
+    scheduledStartAt: c.scheduledStartAt || null,
+    useSfu: !!c.useSfu,
     members: [...c.members.values()].map(memberView),
   });
 
@@ -161,13 +176,40 @@ function registerAudioChannels(app, io, deps) {
 
   const listChannels = () =>
     [...channels.values()]
-      .filter((c) => !c.isPrivate || c.isPa)
+      .filter((c) => !c.isPrivate && !c.isPa)
       .sort((a, b) => b.members.size - a.members.size || b.createdAt - a.createdAt)
       .slice(0, 60)
       .map(publicChannel);
 
+  const listScheduled = () =>
+    [...channels.values()]
+      .filter((c) => !c.isPa && c.scheduledStartAt && c.scheduledStartAt > Date.now())
+      .sort((a, b) => a.scheduledStartAt - b.scheduledStartAt)
+      .slice(0, 20)
+      .map((c) => ({
+        id: c.id,
+        topic: c.topic,
+        scheduledStartAt: c.scheduledStartAt,
+        memberCount: c.members.size,
+        entryFee: c.entryFee || 0,
+      }));
+
+  const maybeEnableSfu = (c) => {
+    if (!c || c.useSfu || c.isPa || !livekitRooms.isConfigured()) return;
+    if (c.members.size < LIVEKIT_AUDIO_THRESHOLD) return;
+    c.useSfu = true;
+    io.to(c.id).emit('audio:sfu-mode', {
+      channelId: c.id,
+      enabled: true,
+      url: livekitRooms.publicUrl(),
+    });
+    broadcastState(c);
+  };
+
   const broadcastList = () => {
-    io.emit('audio:channels', { channels: listChannels() });
+    const payload = { channels: listChannels(), events: listScheduled() };
+    io.emit('audio:channels', payload);
+    io.emit('audio:scheduled', { events: payload.events });
   };
 
   const getChannel = (id) => channels.get(String(id || ''));
@@ -179,12 +221,47 @@ function registerAudioChannels(app, io, deps) {
     const t = paCloseTimers.get(channelId);
     if (t) clearTimeout(t);
     paCloseTimers.delete(channelId);
+    const c = channels.get(channelId);
+    if (c) c.paAloneCloseAt = null;
+  };
+
+  const clearPaSessionTimer = (channelId) => {
+    const t = paSessionTimers.get(channelId);
+    if (t) clearTimeout(t);
+    paSessionTimers.delete(channelId);
+  };
+
+  const startPaSessionTimer = (channel) => {
+    if (!channel?.isPa) return;
+    clearPaSessionTimer(channel.id);
+    channel.paStartedAt = channel.paStartedAt || Date.now();
+    channel.paEndsAt = channel.paStartedAt + PA_SESSION_MS;
+    const delay = Math.max(0, channel.paEndsAt - Date.now());
+    paSessionTimers.set(channel.id, setTimeout(() => {
+      const c = channels.get(channel.id);
+      if (!c?.isPa) return;
+      io.to(c.id).emit('audio:chat-message', {
+        channelId: c.id,
+        id: generateId('achm'),
+        socketId: 'system',
+        nickname: 'System',
+        text: '⏱️ PA session ended (30 min limit)',
+        system: true,
+        ts: Date.now(),
+      });
+      for (const sid of [...c.members.keys()]) removeMember(c.id, sid, 'pa_session_end');
+    }, delay));
   };
 
   const schedulePaClose = (channel) => {
     if (!channel?.isPa) return;
     clearPaCloseTimer(channel.id);
-    if (channel.members.size > 1) return;
+    channel.paAloneCloseAt = null;
+    if (channel.members.size > 1) {
+      broadcastState(channel);
+      return;
+    }
+    channel.paAloneCloseAt = Date.now() + PA_EMPTY_CLOSE_MS;
     paCloseTimers.set(channel.id, setTimeout(() => {
       const c = channels.get(channel.id);
       if (!c?.isPa || c.members.size > 1) return;
@@ -199,6 +276,7 @@ function registerAudioChannels(app, io, deps) {
       });
       for (const sid of [...c.members.keys()]) removeMember(c.id, sid, 'pa_timeout');
     }, PA_EMPTY_CLOSE_MS));
+    broadcastState(channel);
   };
 
   const stopHostRewards = (channelId) => {
@@ -264,6 +342,7 @@ function registerAudioChannels(app, io, deps) {
 
     if (c.members.size === 0) {
       clearPaCloseTimer(channelId);
+      clearPaSessionTimer(channelId);
       stopHostRewards(channelId);
       channels.delete(channelId);
       if (typeof onChannelEmpty === 'function') {
@@ -412,8 +491,15 @@ function registerAudioChannels(app, io, deps) {
       locked: channel.locked || !!channel.lockCode || !!channel.isPa,
       themeId: channel.themeId || 'default',
       paInviteToken: channel.isPa ? channel.paInviteToken : null,
+      paEndsAt: channel.isPa ? (channel.paEndsAt || null) : null,
+      paAloneCloseAt: channel.isPa ? (channel.paAloneCloseAt || null) : null,
+      entryFee: channel.entryFee || 0,
+      scheduledStartAt: channel.scheduledStartAt || null,
+      useSfu: !!channel.useSfu,
       pendingKnocks: (channel.pendingKnocks || []).map((k) => ({ socketId: k.socketId, nickname: k.nickname })),
     });
+    if (channel.isPa) startPaSessionTimer(channel);
+    maybeEnableSfu(channel);
     socket.to(channel.id).emit('audio:peer-joined', { channelId: channel.id, member: memberView(member) });
     broadcastState(channel);
     broadcastList();
@@ -438,7 +524,7 @@ function registerAudioChannels(app, io, deps) {
     };
 
     on('audio:list', () => {
-      socket.emit('audio:channels', { channels: listChannels() });
+      socket.emit('audio:channels', { channels: listChannels(), events: listScheduled() });
     });
 
     on('audio:create', (data) => {
@@ -464,6 +550,9 @@ function registerAudioChannels(app, io, deps) {
         wallpaper: null,
         createdAt: Date.now(),
         gameId: null,
+        entryFee: 0,
+        scheduledStartAt: null,
+        useSfu: false,
       };
       channels.set(channel.id, channel);
       if (typeof data.nickname === 'string') userData.nickname = sanitize(data.nickname, 30);
@@ -471,7 +560,7 @@ function registerAudioChannels(app, io, deps) {
       audit?.('audio_channel_created', { ip, channelId: channel.id, topic });
     });
 
-    on('audio:join', (data) => {
+    on('audio:join', async (data) => {
       if (!rateOk(joinRates, ip, JOIN_WINDOW_MS, JOIN_MAX)) {
         return socket.emit('audio:error', { message: 'Slow down — too many join attempts.' });
       }
@@ -501,9 +590,37 @@ function registerAudioChannels(app, io, deps) {
           isPa: !!channel.isPa,
           hasLockCode: !!channel.lockCode,
           locked: channel.locked || !!channel.lockCode || !!channel.isPa,
+          themeId: channel.themeId || 'default',
+          entryFee: channel.entryFee || 0,
+          useSfu: !!channel.useSfu,
         });
         broadcastState(channel);
         return;
+      }
+
+      const fee = Number(channel.entryFee) || 0;
+      if (fee > 0 && !channel.isPa && economy?.debit) {
+        const hostMember = [...channel.members.values()].find((m) => m.role === 'host');
+        const hostIp = hostMember && users.get(hostMember.socketId)?.ip;
+        try {
+          const spent = await economy.debit(ip, fee, 'audio_room_entry', { channelId: channel.id });
+          if (!spent.ok) {
+            return socket.emit('audio:error', {
+              message: `This room costs ${fee} coins to enter.`,
+              needCoins: fee,
+            });
+          }
+          if (hostIp && hostIp !== ip && economy.credit) {
+            const hostShare = Math.max(1, Math.floor(fee * 0.85));
+            await economy.credit(hostIp, hostShare, 'audio_room_entry_host', { channelId: channel.id, from: ip });
+            const hostSid = hostMember?.socketId;
+            if (hostSid) {
+              io.to(hostSid).emit('audio:entry-fee-earned', { channelId: channel.id, coins: hostShare });
+            }
+          }
+        } catch {
+          return socket.emit('audio:error', { message: 'Could not process entry fee.' });
+        }
       }
 
       joinChannel(socket, channel, userData, ip, {
@@ -836,6 +953,50 @@ function registerAudioChannels(app, io, deps) {
       broadcastState(channel);
     });
 
+    on('audio:set-entry-fee', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      if (!me || me.role !== 'host' || channel.isPa) {
+        return socket.emit('audio:error', { message: 'Only the room admin can set entry fee.' });
+      }
+      const fee = ALLOWED_ENTRY_FEES.includes(Number(data.entryFee)) ? Number(data.entryFee) : 0;
+      channel.entryFee = fee;
+      broadcastState(channel);
+      broadcastList();
+      socket.emit('audio:chat-message', {
+        channelId: channel.id,
+        id: generateId('achm'),
+        socketId: socket.id,
+        nickname: me.nickname,
+        text: fee > 0 ? `🪙 Entry fee set to ${fee} coins` : '🆓 Room is now free to enter',
+        system: true,
+        ts: Date.now(),
+      });
+    });
+
+    on('audio:schedule-event', (data) => {
+      const channel = getChannel(data.channelId);
+      const me = channel?.members.get(socket.id);
+      if (!me || me.role !== 'host' || channel.isPa) {
+        return socket.emit('audio:error', { message: 'Only the room admin can schedule events.' });
+      }
+      const startsAt = Number(data.startsAt);
+      if (!startsAt || startsAt <= Date.now()) {
+        return socket.emit('audio:error', { message: 'Pick a future start time.' });
+      }
+      channel.scheduledStartAt = startsAt;
+      channel.scheduledTopic = sanitize(String(data.topic || channel.topic), TOPIC_MAX);
+      channel.reminderSent = false;
+      broadcastState(channel);
+      broadcastList();
+      io.emit('audio:event-scheduled', {
+        channelId: channel.id,
+        topic: channel.scheduledTopic || channel.topic,
+        startsAt: channel.scheduledStartAt,
+        entryFee: channel.entryFee || 0,
+      });
+    });
+
     on('audio:sticker', (data) => {
       if (!rateOk(signalRates, `${socket.id}:sticker`, SIGNAL_WINDOW_MS, 24)) return;
       const channel = getChannel(data.channelId);
@@ -931,6 +1092,8 @@ function registerAudioChannels(app, io, deps) {
         wallpaper: null,
         createdAt: Date.now(),
         gameId: null,
+        paStartedAt: Date.now(),
+        paEndsAt: Date.now() + PA_SESSION_MS,
       };
       channels.set(paChannel.id, paChannel);
 
@@ -1085,6 +1248,10 @@ function registerAudioChannels(app, io, deps) {
         target.forceMuted = false;
       } else if (action === 'kick' || action === 'block') {
         const targetIp = users.get(targetId)?.ip;
+        if (action === 'block' && targetIp && ip && targetIp !== ip) {
+          if (!userBlocks.has(ip)) userBlocks.set(ip, new Set());
+          userBlocks.get(ip).add(targetIp);
+        }
         if (targetIp) channel.bannedIps.add(targetIp);
         io.to(targetId).emit('audio:kicked', {
           channelId: channel.id,
@@ -1154,16 +1321,48 @@ function registerAudioChannels(app, io, deps) {
 
   // Public channel list for the lobby.
   app.get('/api/audio/channels', (_req, res) => {
-    res.json({ channels: listChannels() });
+    res.json({ channels: listChannels(), scheduled: listScheduled() });
   });
+
+  // Remind subscribers ~15 min before scheduled events
+  const reminderIv = setInterval(() => {
+    const soon = Date.now() + 15 * 60 * 1000;
+    for (const c of channels.values()) {
+      if (c.isPa || !c.scheduledStartAt || c.reminderSent) continue;
+      if (c.scheduledStartAt <= Date.now() || c.scheduledStartAt > soon) continue;
+      c.reminderSent = true;
+      io.emit('audio:event-reminder', {
+        channelId: c.id,
+        topic: c.scheduledTopic || c.topic,
+        startsAt: c.scheduledStartAt,
+        entryFee: c.entryFee || 0,
+      });
+    }
+  }, 60000);
+  if (typeof reminderIv.unref === 'function') reminderIv.unref();
+
+  /** Kick a user from every voice channel (global block enforcement). */
+  function kickByIp(targetIp, reason = 'blocked') {
+    if (!targetIp) return;
+    for (const c of channels.values()) {
+      for (const sid of [...c.members.keys()]) {
+        const memberIp = users.get(sid)?.ip;
+        if (memberIp !== targetIp) continue;
+        io.to(sid).emit('audio:kicked', { channelId: c.id, reason: 'You were blocked.' });
+        removeMember(c.id, sid, reason);
+      }
+    }
+  }
 
   return {
     attachSocketHandlers,
     channels,
     getChannel,
     listChannels,
+    listScheduled,
     broadcastState,
     removeMember,
+    kickByIp,
     publicChannel,
     ROLE_RANK,
   };

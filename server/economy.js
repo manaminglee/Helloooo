@@ -190,6 +190,7 @@ function registerEconomy(app, io, deps) {
   const GIFT_WINDOW_MS = 8000;
   const GIFT_MAX = 6;
   const GIFT_STREAK_WINDOW_MS = 90000;
+  const GIFT_RECEIVE_BONUS = 3;
 
   const giftRateOk = (key) => {
     const now = Date.now();
@@ -242,6 +243,25 @@ function registerEconomy(app, io, deps) {
     const recipientTier = tierFor(recipient.ip);
     const share = Math.floor(gift.cost * gift.creatorShare * recipientTier.giftBoost);
     await credit(recipient.ip, share, `gift_received_${gift.id}`, { fromSocketId, channelId });
+
+    if (channelId && share > 0) {
+      try {
+        const bonus = await credit(recipient.ip, GIFT_RECEIVE_BONUS, 'audio_gift_receive_bonus', { channelId, giftId: gift.id });
+        if (bonus.ok) {
+          io.to(channelId).emit('audio:gift-bonus', {
+            channelId,
+            toSocketId,
+            toNickname: recipient.nickname,
+            coins: GIFT_RECEIVE_BONUS,
+            giftName: gift.name,
+          });
+          io.to(toSocketId).emit('coins-updated', {
+            coins: bonus.balance,
+            reason: 'Gift receive bonus',
+          });
+        }
+      } catch { /* bonus is best-effort */ }
+    }
 
     const rStats = statsFor(recipient.ip);
     rStats.earned += share;

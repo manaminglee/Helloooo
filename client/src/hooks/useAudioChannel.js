@@ -1,20 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { hapticNotify, hapticSuccess, hapticTap } from '../utils/haptics';
-import { playInviteSound, playStickerSound, playStreakSound } from '../utils/sounds';
+import { playInviteSound, playStickerSound, playStreakSound, playWaveSound } from '../utils/sounds';
 import { ensureNotifyPermission, notifyUser } from '../utils/browserNotify';
+import { useLiveKitAudio } from './useLiveKitAudio';
 
 /**
  * Group audio channel client — WebRTC audio mesh driven by server signalling.
- *
- * Only speakers publish a track; listeners keep a recvonly transceiver so they
- * still hear the room without uploading anything. Mic starts muted, always.
- *
- * Fast-connect notes:
- *  - We create the peer connection immediately on peer-joined (no waiting for
- *    getUserMedia) so ICE gathering starts as early as possible.
- *  - Deterministic offer role (higher socketId offers) avoids glare/collisions.
+ * Falls back to LiveKit SFU when the room hits the server threshold (large rooms).
  */
-export function useAudioChannel(socket, iceServers) {
+export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
   const [channel, setChannel] = useState(null);      // { channelId, topic, you }
   const [members, setMembers] = useState([]);
   const [micMuted, setMicMuted] = useState(true);
@@ -28,12 +22,25 @@ export function useAudioChannel(socket, iceServers) {
   const [stickerBurst, setStickerBurst] = useState(null);
   const [giftStreak, setGiftStreak] = useState(null);
   const [hostBonus, setHostBonus] = useState(null);
-
-  const pcsRef = useRef(new Map());        // socketId -> RTCPeerConnection
-  const localStreamRef = useRef(null);
-  const audioElsRef = useRef(new Map());   // socketId -> HTMLAudioElement
-  const analysersRef = useRef(new Map());
+  const [giftBonus, setGiftBonus] = useState(null);
+  const [scheduledEvents, setScheduledEvents] = useState([]);
+  const [useSfu, setUseSfu] = useState(false);
   const channelIdRef = useRef(null);
+
+  const livekit = useLiveKitAudio({
+    enabled: useSfu,
+    socket,
+    channelId: channel?.channelId || channel?.id || channelIdRef.current,
+    nickname,
+    active: !!channel,
+  });
+  const useSfuRef = useRef(false);
+  useEffect(() => { useSfuRef.current = useSfu; }, [useSfu]);
+
+  const pcsRef = useRef(new Map());
+  const localStreamRef = useRef(null);
+  const audioElsRef = useRef(new Map());
+  const analysersRef = useRef(new Map());
   const rafRef = useRef(0);
 
   const iceConfig = useRef({ iceServers: iceServers || [{ urls: 'stun:stun.l.google.com:19302' }] });
@@ -110,6 +117,7 @@ export function useAudioChannel(socket, iceServers) {
 
   const createPeer = useCallback(
     (peerId, shouldOffer) => {
+      if (useSfuRef.current) return null;
       if (pcsRef.current.has(peerId)) return pcsRef.current.get(peerId);
       const pc = new RTCPeerConnection(iceConfig.current);
       pcsRef.current.set(peerId, pc);
@@ -154,7 +162,10 @@ export function useAudioChannel(socket, iceServers) {
     [socket, attachRemote]
   );
 
-  const teardown = useCallback(() => {
+  const livekitRef = useRef(livekit);
+  useEffect(() => { livekitRef.current = livekit; }, [livekit]);
+
+  const closeMeshPeers = useCallback(() => {
     pcsRef.current.forEach((pc) => pc.close());
     pcsRef.current.clear();
     audioElsRef.current.forEach((el) => {
@@ -163,6 +174,10 @@ export function useAudioChannel(socket, iceServers) {
     audioElsRef.current.clear();
     analysersRef.current.forEach(({ ctx }) => ctx.close?.().catch?.(() => {}));
     analysersRef.current.clear();
+  }, []);
+
+  const teardown = useCallback(() => {
+    closeMeshPeers();
     localStreamRef.current?.getTracks().forEach((t) => {
       try {
         t.enabled = false;
@@ -175,13 +190,15 @@ export function useAudioChannel(socket, iceServers) {
     channelIdRef.current = null;
     cancelAnimationFrame(rafRef.current);
     setChatMessages([]);
-  }, []);
+    setUseSfu(false);
+    livekitRef.current?.disconnect?.();
+  }, [closeMeshPeers]);
 
   // ---- socket wiring ----
   useEffect(() => {
     if (!socket) return undefined;
 
-    const onJoined = async ({ channelId, topic, you, peers, maxSpeakers, wallpaper, gamesEnabled, pendingJoins, pendingKnocks, isPa, hasLockCode, locked, themeId, paInviteToken }) => {
+    const onJoined = async ({ channelId, topic, you, peers, maxSpeakers, wallpaper, gamesEnabled, pendingJoins, pendingKnocks, isPa, hasLockCode, locked, themeId, paInviteToken, paEndsAt, paAloneCloseAt, useSfu: sfu, entryFee, scheduledStartAt }) => {
       if (channelIdRef.current && channelIdRef.current !== channelId) {
         pcsRef.current.forEach((pc) => pc.close());
         pcsRef.current.clear();
@@ -205,8 +222,14 @@ export function useAudioChannel(socket, iceServers) {
         locked: !!locked,
         themeId: themeId || 'default',
         paInviteToken: paInviteToken || null,
+        paEndsAt: paEndsAt || null,
+        paAloneCloseAt: paAloneCloseAt || null,
+        entryFee: entryFee || 0,
+        scheduledStartAt: scheduledStartAt || null,
+        useSfu: !!sfu,
         pendingKnocks: pendingKnocks || [],
       });
+      setUseSfu(!!sfu);
       setMembers([you, ...(peers || [])].filter(Boolean));
       setMicMuted(you?.micMuted !== false);
       setConnecting(false);
@@ -220,11 +243,14 @@ export function useAudioChannel(socket, iceServers) {
           setError('Microphone blocked — you joined as a listener.');
         }
       }
-      // Deterministic offerer: avoids both sides offering at once.
-      peers.forEach((p) => createPeer(p.socketId, String(you.socketId) > String(p.socketId)));
+      // Mesh WebRTC only when SFU is off — large rooms switch to LiveKit.
+      if (!sfu) {
+        peers.forEach((p) => createPeer(p.socketId, String(you.socketId) > String(p.socketId)));
+      }
     };
 
     const onPeerJoined = ({ member }) => {
+      if (useSfuRef.current) return;
       const me = channelIdRef.current && member?.socketId;
       if (!me) return;
       createPeer(member.socketId, String(socket.id) > String(member.socketId));
@@ -240,6 +266,7 @@ export function useAudioChannel(socket, iceServers) {
     };
 
     const onSignal = async ({ fromSocketId, signal }) => {
+      if (useSfuRef.current) return;
       let pc = pcsRef.current.get(fromSocketId);
       if (!pc) pc = createPeer(fromSocketId, false);
       try {
@@ -285,7 +312,13 @@ export function useAudioChannel(socket, iceServers) {
         pendingKnocks: state.pendingKnocks || [],
         cohostEnabled: !!state.cohostEnabled,
         cohostJoined: !!state.cohostJoined,
+        paEndsAt: state.paEndsAt ?? prev?.paEndsAt ?? null,
+        paAloneCloseAt: state.paAloneCloseAt ?? prev?.paAloneCloseAt ?? null,
+        entryFee: state.entryFee ?? prev?.entryFee ?? 0,
+        scheduledStartAt: state.scheduledStartAt ?? prev?.scheduledStartAt ?? null,
+        useSfu: !!state.useSfu,
       } : prev);
+      if (state.useSfu != null) setUseSfu(!!state.useSfu);
     };
     const onSpeaking = ({ socketId, micMuted: muted }) => {
       // Keep member.micMuted in sync — otherwise avatars stay "muted" forever
@@ -319,6 +352,7 @@ export function useAudioChannel(socket, iceServers) {
 
     const onHello = (payload) => {
       hapticTap();
+      playWaveSound();
       setHelloEvent({ ...payload, id: `${payload.fromSocketId}-${Date.now()}` });
     };
 
@@ -359,6 +393,29 @@ export function useAudioChannel(socket, iceServers) {
       setHostBonus(payload);
     };
 
+    const onGiftBonus = (payload) => {
+      if (payload?.channelId && channelIdRef.current && payload.channelId !== channelIdRef.current) return;
+      hapticSuccess();
+      setGiftBonus(payload);
+    };
+
+    const onSfuMode = (payload) => {
+      if (payload?.channelId && channelIdRef.current && payload.channelId !== channelIdRef.current) return;
+      if (payload.enabled) closeMeshPeers();
+      setUseSfu(!!payload.enabled);
+    };
+
+    const onEntryFeeEarned = (payload) => {
+      if (payload?.channelId && channelIdRef.current && payload.channelId !== channelIdRef.current) return;
+      hapticSuccess();
+      setHostBonus({ coins: payload.coins, entryFee: true });
+    };
+
+    const onScheduled = ({ events }) => setScheduledEvents(events || []);
+    const onEventReminder = (payload) => {
+      notifyUser('Voice event starting soon', `${payload.topic || 'Live room'} · ${new Date(payload.startsAt).toLocaleTimeString()}`);
+    };
+
     const onChatMessage = (msg) => {
       if (msg?.channelId && channelIdRef.current && msg.channelId !== channelIdRef.current) return;
       if (!msg?.text && msg?.kind !== 'gift') return;
@@ -381,6 +438,11 @@ export function useAudioChannel(socket, iceServers) {
     socket.on('audio:sticker', onSticker);
     socket.on('gift:streak', onGiftStreak);
     socket.on('audio:host-bonus', onHostBonus);
+    socket.on('audio:gift-bonus', onGiftBonus);
+    socket.on('audio:sfu-mode', onSfuMode);
+    socket.on('audio:scheduled', onScheduled);
+    socket.on('audio:event-reminder', onEventReminder);
+    socket.on('audio:entry-fee-earned', onEntryFeeEarned);
 
     return () => {
       socket.off('audio:joined', onJoined);
@@ -399,8 +461,19 @@ export function useAudioChannel(socket, iceServers) {
       socket.off('audio:sticker', onSticker);
       socket.off('gift:streak', onGiftStreak);
       socket.off('audio:host-bonus', onHostBonus);
+      socket.off('audio:gift-bonus', onGiftBonus);
+      socket.off('audio:sfu-mode', onSfuMode);
+      socket.off('audio:scheduled', onScheduled);
+      socket.off('audio:event-reminder', onEventReminder);
+      socket.off('audio:entry-fee-earned', onEntryFeeEarned);
     };
-  }, [socket, createPeer, ensureMic, teardown]);
+  }, [socket, createPeer, ensureMic, teardown, closeMeshPeers]);
+
+  // Keep LiveKit mic in sync after SFU handoff.
+  useEffect(() => {
+    if (!useSfu || !livekit.connected || micMuted) return;
+    livekit.setMicEnabled(true).catch(() => {});
+  }, [useSfu, livekit.connected, micMuted, livekit]);
 
   useEffect(() => {
     ensureNotifyPermission().catch(() => {});
@@ -506,6 +579,13 @@ export function useAudioChannel(socket, iceServers) {
   const toggleMic = useCallback(async () => {
     const next = !micMuted;
     try {
+      if (useSfuRef.current && livekit.connected) {
+        livekit.resumeRemoteAudio();
+        await livekit.setMicEnabled(!next);
+        setMicMuted(next);
+        socket?.emit('audio:mic', { channelId: channelIdRef.current, muted: next });
+        return;
+      }
       resumeRemoteAudio();
       const stream = await ensureMic();
       stream.getAudioTracks().forEach((t) => {
@@ -523,7 +603,21 @@ export function useAudioChannel(socket, iceServers) {
     } catch (_) {
       setError('Microphone permission denied.');
     }
-  }, [micMuted, ensureMic, socket, publishAudioToAllPeers, resumeRemoteAudio]);
+  }, [micMuted, ensureMic, socket, publishAudioToAllPeers, resumeRemoteAudio, livekit]);
+
+  const setEntryFee = useCallback(
+    (entryFee) => {
+      socket?.emit('audio:set-entry-fee', { channelId: channelIdRef.current, entryFee });
+    },
+    [socket]
+  );
+
+  const scheduleEvent = useCallback(
+    (startsAt, topic) => {
+      socket?.emit('audio:schedule-event', { channelId: channelIdRef.current, startsAt, topic });
+    },
+    [socket]
+  );
 
   const requestSpeak = useCallback(() => {
     socket?.emit('audio:request-speak', { channelId: channelIdRef.current });
@@ -676,6 +770,7 @@ export function useAudioChannel(socket, iceServers) {
   const dismissPaInvite = useCallback(() => setPaInvite(null), []);
   const dismissGiftStreak = useCallback(() => setGiftStreak(null), []);
   const dismissHostBonus = useCallback(() => setHostBonus(null), []);
+  const dismissGiftBonus = useCallback(() => setGiftBonus(null), []);
 
   return {
     channel,
@@ -691,6 +786,10 @@ export function useAudioChannel(socket, iceServers) {
     stickerBurst,
     giftStreak,
     hostBonus,
+    giftBonus,
+    scheduledEvents,
+    useSfu,
+    livekitConnected: livekit.connected,
     join,
     create,
     leave,
@@ -711,6 +810,8 @@ export function useAudioChannel(socket, iceServers) {
     approveKnock,
     denyKnock,
     setTheme,
+    setEntryFee,
+    scheduleEvent,
     invitePa,
     respondPa,
     setRoomLock,
@@ -723,6 +824,7 @@ export function useAudioChannel(socket, iceServers) {
     dismissPaInvite,
     dismissGiftStreak,
     dismissHostBonus,
+    dismissGiftBonus,
   };
 }
 
