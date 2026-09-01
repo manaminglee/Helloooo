@@ -4524,6 +4524,10 @@ h1, h2, h3, .font-display {
 }
 
 /* Audio room panel */
+.mm-voice-room {
+  max-width: 100vw;
+}
+
 .mm-audio-room-header {
   flex-shrink: 0;
   display: flex;
@@ -4556,6 +4560,9 @@ h1, h2, h3, .font-display {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(10, 12, 20, 0.95);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .mm-audio-chat-panel__head {
@@ -4572,10 +4579,39 @@ h1, h2, h3, .font-display {
 
 .mm-audio-chat-panel__messages {
   flex: 1 1 auto;
-  min-height: 8rem;
-  max-height: min(28dvh, 16rem);
+  min-height: 0;
   overflow-y: auto;
   padding: 0.65rem 0.75rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 1023px) {
+  .mm-voice-room main {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .mm-audio-chat-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .mm-audio-chat-panel__messages {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+  }
+
+  .mm-audio-chat-panel__input-row {
+    flex-shrink: 0;
+    margin-top: auto;
+  }
+
+  .mm-actionbar--voice {
+    position: relative;
+    flex-shrink: 0;
+  }
 }
 
 @media (min-width: 1024px) {
@@ -4742,11 +4778,11 @@ h1, h2, h3, .font-display {
   }
 
   .mm-audio-chat-panel {
-    margin-top: 0.65rem;
+    margin-top: 0.5rem;
   }
 
   .mm-audio-chat-panel__messages {
-    max-height: min(22dvh, 11rem);
+    max-height: none;
   }
 
   .mm-audio-chat-bubble__text {
@@ -4756,7 +4792,7 @@ h1, h2, h3, .font-display {
   }
 
   .mm-audio-chat-panel__input-row {
-    padding-bottom: calc(0.65rem + env(safe-area-inset-bottom, 0px));
+    padding-bottom: 0.65rem;
   }
 }
 

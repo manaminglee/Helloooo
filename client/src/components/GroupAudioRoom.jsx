@@ -900,7 +900,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
 
   return (
     <div
-      className={`min-h-[100dvh] max-w-[100vw] flex flex-col bg-[#08090f] text-white overflow-x-hidden mm-voice-room${isPaRoom ? ' mm-voice-room--pa' : ''}`}
+      className={`h-[100dvh] max-h-[100dvh] flex flex-col bg-[#08090f] text-white overflow-hidden mm-voice-room${isPaRoom ? ' mm-voice-room--pa' : ''}`}
       onPointerDownCapture={() => resumeRemoteAudio?.()}
     >
       <header className="mm-audio-room-header">
@@ -991,8 +991,8 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
         </div>
       )}
 
-      <main className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[1fr_20rem] lg:gap-4 px-3 sm:px-4 pb-2 overflow-x-hidden">
-        <section className={`mm-audio-stage-panel flex-shrink-0 lg:flex-shrink min-h-0 overflow-y-auto overflow-x-hidden${isPaRoom ? ' mm-audio-stage-panel--pa' : ''}`} style={stageStyle}>
+      <main className="flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[1fr_20rem] lg:gap-4 px-3 sm:px-4 pb-2 overflow-hidden">
+        <section className={`mm-audio-stage-panel flex-shrink-0 lg:flex-shrink lg:min-h-0 lg:overflow-y-auto overflow-x-hidden${isPaRoom ? ' mm-audio-stage-panel--pa' : ''}`} style={stageStyle}>
           <h3 className="mm-audio-panel-label">
             {isPaRoom ? 'Private Audio · tap profile for stickers' : 'Stage · tap a profile · 6 seats'}
           </h3>
@@ -1057,7 +1057,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
           )}
         </section>
 
-        <aside className="mm-audio-chat-panel flex-1 min-h-0 flex flex-col mt-4 lg:mt-0">
+        <aside className="mm-audio-chat-panel flex-1 min-h-0 flex flex-col mt-3 lg:mt-0">
           <div className="mm-audio-chat-panel__head">
             <span>Room chat</span>
             <span className="text-white/35 text-[10px]">60s vanish</span>
@@ -1084,7 +1084,7 @@ export function GroupAudioRoom({ socket, iceServers: iceServersProp, coins = 0, 
         </aside>
       </main>
 
-      <div className="mm-actionbar sticky bottom-0">
+      <div className="mm-actionbar mm-actionbar--voice flex-shrink-0">
         <div className="mm-shell mm-shell--wide flex items-center gap-2 !px-4">
           {me?.role === 'listener' ? (
             <button
