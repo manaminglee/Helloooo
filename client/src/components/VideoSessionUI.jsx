@@ -46,8 +46,8 @@ export function ChatMatchStatus({ status, peerCountry, peerName, matchedInterest
 export function ConversationRatingModal({ open, onClose, onRate, title = 'How was your chat?' }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[2000] flex items-center justify-center p-6 bg-black/90 backdrop-blur-3xl animate-fade-in" onClick={onClose}>
-      <div className="bg-black border border-white/10 rounded-[32px] p-8 max-w-sm w-full text-center shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="mm-modal-overlay z-[2000] animate-fade-in" onClick={onClose}>
+      <div className="mm-modal-surface max-w-sm text-center" onClick={(e) => e.stopPropagation()}>
         <div className="text-4xl mb-4">⭐</div>
         <h3 className="text-lg font-black uppercase tracking-tight text-white mb-2">{title}</h3>
         <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-8">Anonymous feedback helps improve matches.</p>
@@ -119,8 +119,8 @@ export function VideoMoreSheet({
   );
 
   return (
-    <div className="fixed inset-0 z-[500] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full sm:max-w-md bg-[#0a0c14] border border-white/10 rounded-t-3xl sm:rounded-3xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[85vh] overflow-y-auto custom-scrollbar" onClick={(e) => e.stopPropagation()}>
+    <div className="mm-modal-overlay mm-modal-overlay--sheet z-[500]" onClick={onClose}>
+      <div className="mm-modal-surface w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[85vh] custom-scrollbar" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-xs font-black uppercase tracking-widest text-white/50">More options</h3>
           <button type="button" onClick={onClose} className="text-white/40 hover:text-white px-2">✕</button>
@@ -241,8 +241,8 @@ export function FloatingVideoReactions({ reactions }) {
 export function DevicePickerSheet({ open, onClose, videoDevices, audioDevices, selectedVideoId, selectedAudioId, onSelectVideo, onSelectAudio }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[520] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full sm:max-w-md bg-[#0a0c14] border border-white/10 rounded-t-3xl sm:rounded-3xl p-5 pb-[max(1rem,env(safe-area-inset-bottom))]" onClick={(e) => e.stopPropagation()}>
+    <div className="mm-modal-overlay mm-modal-overlay--sheet z-[520]" onClick={onClose}>
+      <div className="mm-modal-surface w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl pb-[max(1rem,env(safe-area-inset-bottom))]" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-xs font-black uppercase tracking-widest text-white/50 mb-4">Audio & video devices</h3>
         <label className="block text-[10px] font-bold text-white/40 uppercase mb-2">Camera</label>
         <select
@@ -320,8 +320,8 @@ export function TipCreatorModal({ open, onClose, onTip, balance, creatorName }) 
   if (!open) return null;
   const options = [10, 25, 50];
   return (
-    <div className="fixed inset-0 z-[530] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-xs bg-[#0a0c14] border border-amber-500/20 rounded-3xl p-6" onClick={(e) => e.stopPropagation()}>
+    <div className="mm-modal-overlay z-[530]" onClick={onClose}>
+      <div className="mm-modal-surface max-w-xs border-amber-500/20" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-sm font-black text-amber-400 uppercase tracking-widest mb-1">Tip creator</h3>
         <p className="text-xs text-white/50 mb-4">Send coins to @{creatorName || 'creator'}</p>
         <div className="flex gap-2 mb-4">

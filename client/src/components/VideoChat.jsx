@@ -3243,8 +3243,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       )}
 
       {showProfileHandle && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-xl animate-fade-in" onClick={() => setShowProfileHandle(null)} />
+        <div className="mm-modal-overlay z-[1000]">
+          <button type="button" className="absolute inset-0 h-full w-full cursor-default bg-[#04050a]" onClick={() => setShowProfileHandle(null)} aria-label="Close profile" />
           <div className="relative animate-in-zoom">
             <CreatorProfilePopup handle={showProfileHandle} onClose={() => setShowProfileHandle(null)} />
           </div>

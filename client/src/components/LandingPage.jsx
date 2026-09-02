@@ -633,7 +633,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* COMMUNITY POLICY (first-time video / group video) */}
       {showCommunityPolicy && (
-        <div className="fixed inset-0 z-[2100] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl" role="dialog" aria-modal="true" aria-labelledby="community-policy-title">
+        <div className="mm-modal-overlay z-[2100]" role="dialog" aria-modal="true" aria-labelledby="community-policy-title">
           <div className="w-full max-w-lg rounded-[2rem] border border-white/10 bg-[#0c0e14] p-8 shadow-2xl">
             <h2 id="community-policy-title" className="text-lg font-black uppercase tracking-wide text-white mb-2">Community safety</h2>
             <p className="text-[11px] text-white/50 leading-relaxed mb-6">
@@ -984,7 +984,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* CREATOR MODAL */}
       {showCreatorModal && (
-        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4 sm:p-6 bg-black/80" onClick={() => setShowCreatorModal(false)}>
+        <div className="mm-modal-overlay z-[2000]" onClick={() => setShowCreatorModal(false)}>
           <div className="relative w-full max-w-lg bg-[#161a22] border border-white/10 rounded-2xl p-6 sm:p-8 overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
             <button
               onClick={() => setShowCreatorModal(false)}
@@ -1576,7 +1576,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* CREATOR LOGIN MODAL */}
       {showLoginModal && (
-        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-6 bg-black/95 backdrop-blur-3xl animate-in-zoom" onClick={() => setShowLoginModal(false)}>
+        <div className="mm-modal-overlay z-[2000] animate-in-zoom" onClick={() => setShowLoginModal(false)}>
           <div className="relative w-full max-w-sm bg-black border border-white/10 rounded-[50px] p-10 shadow-2xl" onClick={e => e.stopPropagation()}>
             <button onClick={() => setShowLoginModal(false)} className="absolute top-6 right-8 text-white/20 hover:text-white transition-colors">✕</button>
             <div className="text-center mb-8">
@@ -1627,7 +1627,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* FORGOT PASSWORD MODAL */}
       {showForgotPasswordModal && (
-        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-6 bg-black/95 backdrop-blur-3xl animate-in-zoom" onClick={() => setShowForgotPasswordModal(false)}>
+        <div className="mm-modal-overlay z-[2000] animate-in-zoom" onClick={() => setShowForgotPasswordModal(false)}>
           <div className="relative w-full max-w-sm bg-black border border-white/10 rounded-[50px] p-10 shadow-2xl" onClick={e => e.stopPropagation()}>
             <button onClick={() => setShowForgotPasswordModal(false)} className="absolute top-6 right-8 text-white/20 hover:text-white transition-colors">✕</button>
             <div className="text-center mb-8">
@@ -1672,7 +1672,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* RESET PASSWORD MODAL (from email link) */}
       {showResetPasswordModal && resetToken && (
-        <div className="fixed inset-0 z-[2100] flex items-center justify-center p-6 bg-black/95 backdrop-blur-3xl animate-in-zoom">
+        <div className="mm-modal-overlay z-[2100] animate-in-zoom">
           <div className="relative w-full max-w-sm bg-black border border-white/10 rounded-[50px] p-10 shadow-2xl">
             <button
               type="button"
@@ -1737,7 +1737,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* CHECK STATUS MODAL */}
       {showStatusModal && (
-        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-6 bg-black/95 backdrop-blur-3xl animate-in-zoom" onClick={() => { setShowStatusModal(false); setStatusCheckResult(null); setStatusCheckCode(''); }}>
+        <div className="mm-modal-overlay z-[2000] animate-in-zoom" onClick={() => { setShowStatusModal(false); setStatusCheckResult(null); setStatusCheckCode(''); }}>
           <div className="relative w-full max-w-sm bg-black border border-white/10 rounded-[50px] p-10 shadow-2xl" onClick={e => e.stopPropagation()}>
             <button onClick={() => { setShowStatusModal(false); setStatusCheckResult(null); setStatusCheckCode(''); }} className="absolute top-6 right-8 text-white/20 hover:text-white transition-colors text-xl">✕</button>
             <div className="text-center mb-8">
@@ -2119,7 +2119,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* PROFILE EDITOR MODAL */}
       {showProfileModal && (
-        <div className="fixed inset-0 z-[2500] flex items-center justify-center p-6 bg-black/95 backdrop-blur-3xl animate-in-zoom" onClick={() => setShowProfileModal(false)}>
+        <div className="mm-modal-overlay z-[2500] animate-in-zoom" onClick={() => setShowProfileModal(false)}>
           <div className="relative w-full max-w-sm bg-[#0a0a0a] border border-white/10 rounded-[50px] p-10 shadow-[0_0_100px_rgba(6,182,212,0.15)]" onClick={e => e.stopPropagation()}>
             <button onClick={() => setShowProfileModal(false)} className="absolute top-8 right-8 text-white/20 hover:text-white transition-colors">✕</button>
 
@@ -2170,7 +2170,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* STANDARD MODAL */}
       {modal && (
-        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-6 bg-black/90 backdrop-blur-3xl animate-in-zoom" onClick={() => setModal(null)}>
+        <div className="mm-modal-overlay z-[2000] animate-in-zoom" onClick={() => setModal(null)}>
           <div className="relative w-full max-w-sm bg-black border border-white/10 rounded-[40px] p-10 text-center" onClick={e => e.stopPropagation()}>
             <button onClick={() => setModal(null)} className="absolute top-6 right-8 text-white/20 hover:text-white transition-colors text-xl">✕</button>
             <h3 className="text-2xl font-black text-white italic uppercase mb-6 tracking-tighter">{MODALS[modal]?.title}</h3>
@@ -2182,7 +2182,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* CUSTOM APP DIALOG — replaces system alert/confirm */}
       {dialog && (
-        <div className="fixed inset-0 z-[3000] flex items-center justify-center p-6 bg-black/90 backdrop-blur-3xl">
+        <div className="mm-modal-overlay z-[3000]">
           <div className="w-full max-w-xs bg-[#0a0a0a] border border-white/10 rounded-[40px] p-8 shadow-2xl animate-in-zoom">
             <div className="text-center mb-6">
               <div className="text-3xl mb-4">{dialog.confirm ? '⚠️' : 'ℹ️'}</div>

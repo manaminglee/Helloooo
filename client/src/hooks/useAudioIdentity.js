@@ -2,6 +2,19 @@ import { useState, useEffect, useCallback } from 'react';
 import { API_BASE } from '../config/apiBase';
 
 const STORAGE_KEY = 'mm_audio_session';
+const USERNAME_KEY = 'mm_audio_username';
+
+function readSavedUsername() {
+  try { return localStorage.getItem(USERNAME_KEY) || ''; }
+  catch { return ''; }
+}
+
+function persistUsername(username) {
+  try {
+    if (username) localStorage.setItem(USERNAME_KEY, username);
+    else localStorage.removeItem(USERNAME_KEY);
+  } catch { /* ignore */ }
+}
 
 export function useAudioIdentity(socket) {
   const [identity, setIdentity] = useState(null);
@@ -10,6 +23,7 @@ export function useAudioIdentity(socket) {
     catch { return null; }
   });
   const [loading, setLoading] = useState(false);
+  const [hydrating, setHydrating] = useState(true);
   const [error, setError] = useState('');
 
   const attachSocket = useCallback((sessionToken) => {
@@ -20,17 +34,61 @@ export function useAudioIdentity(socket) {
   }, [socket]);
 
   useEffect(() => {
-    if (!socket || !token) return undefined;
+    let cancelled = false;
+    async function bootstrap() {
+      setHydrating(true);
+      try {
+        if (token) {
+          const res = await fetch(`${API_BASE}/api/audio-identity/me`, {
+            headers: { 'x-audio-session': token },
+            credentials: 'include',
+          });
+          if (!cancelled && res.ok) {
+            const data = await res.json();
+            if (data.identity) {
+              setIdentity(data.identity);
+              attachSocket(token);
+              return;
+            }
+          }
+        }
+        const restore = await fetch(`${API_BASE}/api/audio-identity/restore-ip`, { credentials: 'include' });
+        if (!cancelled && restore.ok) {
+          const data = await restore.json();
+          if (data.ok && data.token && data.identity) {
+            setToken(data.token);
+            setIdentity(data.identity);
+            try { sessionStorage.setItem(STORAGE_KEY, data.token); } catch { /* ignore */ }
+            if (data.identity?.username) persistUsername(data.identity.username);
+            attachSocket(data.token);
+            return;
+          }
+        }
+        if (token && socket) attachSocket(token);
+      } catch {
+        if (token && socket) attachSocket(token);
+      } finally {
+        if (!cancelled) setHydrating(false);
+      }
+    }
+    bootstrap();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socket]);
+
+  useEffect(() => {
+    if (!socket || !token || identity) return undefined;
     const onReady = (payload) => setIdentity(payload);
     socket.on('audio-identity:ready', onReady);
     attachSocket(token);
     return () => socket.off('audio-identity:ready', onReady);
-  }, [socket, token, attachSocket]);
+  }, [socket, token, attachSocket, identity]);
 
   const persistSession = (sessionToken, id) => {
     setToken(sessionToken);
     setIdentity(id);
     try { sessionStorage.setItem(STORAGE_KEY, sessionToken); } catch { /* ignore */ }
+    if (id?.username) persistUsername(id.username);
     attachSocket(sessionToken);
   };
 
@@ -84,6 +142,15 @@ export function useAudioIdentity(socket) {
     }
   };
 
+  const clearLocalIdentity = useCallback(() => {
+    setIdentity(null);
+    setToken(null);
+    try {
+      sessionStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(USERNAME_KEY);
+    } catch { /* ignore */ }
+  }, []);
+
   const logout = useCallback(async () => {
     if (token) {
       try {
@@ -99,6 +166,7 @@ export function useAudioIdentity(socket) {
     setIdentity(null);
     setToken(null);
     try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem(USERNAME_KEY); } catch { /* ignore */ }
   }, [token, socket]);
 
   const refresh = useCallback(async () => {
@@ -125,6 +193,9 @@ export function useAudioIdentity(socket) {
     login,
     logout,
     refresh,
+    clearLocalIdentity,
+    savedUsername: readSavedUsername(),
+    hydrating,
     isSignedIn: !!identity?.username,
   };
 }

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAudioChannel } from '../hooks/useAudioChannel';
 import { useIceServers } from '../hooks/useIceServers';
 import { useMessageTtl, formatTtl } from '../hooks/useMessageTtl';
@@ -9,6 +10,7 @@ import { CreatorLiveModal } from './CreatorLiveModal';
 import { playLockSound, playUnlockSound } from '../utils/sounds';
 import { countryToFlag } from '../utils/countryFlag';
 import { AudioName, AudioCoinShop, AudioIdentityGate } from './AudioIdentityGate';
+import { primaryNameColor, resolveNameStyle, isGradientNameColor } from '../utils/audioNameStyle';
 
 const LOBBY_FEATURES = [
   { icon: '👤', label: 'Tap any speaker', hint: 'PA invite · gift · hello' },
@@ -55,13 +57,30 @@ const THEME_FRAMES = {
   forest: 'mm-audio-frame--forest',
 };
 
+function isUserChatMessage(m) {
+  return m.kind !== 'join' && !m.system;
+}
+
+function AudioRoomToast({ children, className = '' }) {
+  return (
+    <div className={`mm-audio-room-toast ${className}`.trim()} role="status" aria-live="polite">
+      {children}
+    </div>
+  );
+}
+
 function LockCodeModal({ open, topic, onSubmit, onClose, onKnock }) {
   const [digits, setDigits] = useState('');
   useEffect(() => { if (open) setDigits(''); }, [open]);
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
-      <div className="mm-audio-lock-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Enter room code">
+  useEffect(() => {
+    if (!open || digits.length !== 4) return;
+    const t = setTimeout(() => onSubmit(digits), 120);
+    return () => clearTimeout(t);
+  }, [open, digits, onSubmit]);
+  if (!open || typeof document === 'undefined') return null;
+  return createPortal(
+    <div className="mm-modal-overlay z-[600]" onClick={onClose}>
+      <div className="mm-audio-room-modal mm-audio-room-modal--center text-center" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Enter room code">
         <span className="mm-audio-lock-modal__icon" aria-hidden>🔒</span>
         <h3 className="mm-audio-lock-modal__title">Locked room</h3>
         <p className="mm-audio-lock-modal__sub">{topic ? `Enter the 4-digit code for “${topic}”` : 'Enter the 4-digit admin code'}</p>
@@ -84,7 +103,8 @@ function LockCodeModal({ open, topic, onSubmit, onClose, onKnock }) {
           <button type="button" className="mm-btn mm-btn--primary flex-1" disabled={digits.length !== 4} onClick={() => onSubmit(digits)}>Join</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -93,7 +113,7 @@ function ProfileMiniCard({ member, frameClass = '' }) {
   const roleLabel = ROLE_LABEL[member.role] || member.role;
   return (
     <div className="mm-profile-mini-card">
-      <div className={`mm-profile-mini-card__avatar ${frameClass}`} style={member.nameColor ? { boxShadow: `0 0 0 2px ${member.nameColor}55` } : undefined}>
+      <div className={`mm-profile-mini-card__avatar ${frameClass}`} style={member.nameColor ? { boxShadow: `0 0 0 2px ${primaryNameColor(member.nameColor)}55` } : undefined}>
         <span>{(member.audioUsername || member.nickname || '?').slice(0, 1).toUpperCase()}</span>
         {member.isCreator && <span className="mm-profile-mini-card__badge mm-profile-mini-card__badge--creator" title="Creator">✓</span>}
         {member.verified && <span className="mm-profile-mini-card__badge mm-profile-mini-card__badge--verified" title="Verified">★</span>}
@@ -118,8 +138,8 @@ function UserActionMenu({ member, frameClass, onHello, onPa, onGift, onReport, o
     { id: 'sparkle', label: '✨ Sparkle' },
   ];
   return (
-    <div className="fixed inset-0 z-[450] flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="mm-audio-user-menu w-full max-w-xs" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+    <div className="mm-modal-overlay mm-modal-overlay--sheet z-[450]" onClick={onClose}>
+      <div className="mm-audio-room-modal mm-audio-user-menu w-full max-w-xs" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
         <ProfileMiniCard member={member} frameClass={frameClass} />
         <div className="grid grid-cols-2 gap-1 mb-2 mt-3">
           {helloTypes.map((h) => (
@@ -261,10 +281,10 @@ function PaThemeBackground({ themeId = 'hearts' }) {
 }
 
 function PaInviteModal({ invite, onAccept, onReject }) {
-  if (!invite) return null;
-  return (
-    <div className="fixed inset-0 z-[700] flex items-center justify-center p-4 mm-pa-invite-overlay">
-      <div className="mm-audio-pa-invite mm-audio-pa-invite--animated" role="dialog" aria-label="PA invite">
+  if (!invite || typeof document === 'undefined') return null;
+  return createPortal(
+    <div className="mm-pa-invite-modal mm-modal-overlay" role="dialog" aria-modal="true" aria-label="PA invite">
+      <div className="mm-audio-pa-invite mm-audio-pa-invite--animated" onClick={(e) => e.stopPropagation()}>
         <div className="mm-audio-pa-invite__glow" aria-hidden />
         <span className="mm-audio-pa-invite__icon mm-audio-pa-invite__icon--pulse">🎙</span>
         <h3 className="mm-audio-pa-invite__title">Private Audio invite</h3>
@@ -272,12 +292,25 @@ function PaInviteModal({ invite, onAccept, onReject }) {
           <strong>{invite.fromNickname}</strong> is inviting you to a PA room together
         </p>
         <p className="mm-audio-pa-invite__sub">Just you two — guests can join later with your link</p>
-        <div className="flex gap-2 mt-5">
-          <button type="button" className="mm-btn mm-btn--ghost flex-1" onClick={onReject}>Decline</button>
-          <button type="button" className="mm-btn mm-btn--primary flex-1 mm-audio-pa-invite__accept" onClick={onAccept}>Accept PA</button>
+        <div className="mm-pa-invite-actions">
+          <button
+            type="button"
+            className="mm-btn mm-btn--ghost flex-1"
+            onClick={(e) => { e.stopPropagation(); onReject?.(); }}
+          >
+            Decline
+          </button>
+          <button
+            type="button"
+            className="mm-btn mm-btn--primary flex-1 mm-audio-pa-invite__accept"
+            onClick={(e) => { e.stopPropagation(); onAccept?.(); }}
+          >
+            Accept PA
+          </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -374,7 +407,10 @@ function EntryAnimation({ event, onDone }) {
     <div className={`mm-audio-entry-overlay mm-audio-entry-overlay--${event.tier || 'grand'}`} aria-live="polite">
       <div className="mm-audio-entry-banner">
         <span className="mm-audio-entry-banner__spark">✨</span>
-        <p className="mm-audio-entry-banner__title" style={{ color: event.nameColor || '#f472b6' }}>
+        <p
+          className={`mm-audio-entry-banner__title${isGradientNameColor(event.nameColor) ? ' mm-audio-name--gradient' : ''}`}
+          style={resolveNameStyle(event.nameColor || '#f472b6')}
+        >
           @{event.username}
         </p>
         <p className="mm-audio-entry-banner__sub">Level {event.level} has entered</p>
@@ -544,6 +580,8 @@ export function GroupAudioRoom({
   const [wallpaperBusy, setWallpaperBusy] = useState(false);
   const [wallpaperMsg, setWallpaperMsg] = useState(null);
   const [uiMsg, setUiMsg] = useState(null);
+  const [joinToast, setJoinToast] = useState(null);
+  const lastJoinToastIdRef = useRef(null);
   const chatScrollRef = useRef(null);
   const chatEndRef = useRef(null);
   const wallpaperInputRef = useRef(null);
@@ -556,10 +594,14 @@ export function GroupAudioRoom({
   const [entryAnim, setEntryAnim] = useState(null);
   const [localIdentity, setLocalIdentity] = useState(audioIdentity);
   const isSignedIn = !!(audioIdentityHook?.isSignedIn && (localIdentity?.username || audioIdentity?.username));
-  const identityHydrating = !!(audioIdentityHook?.token && !isSignedIn);
+  const identityHydrating = !!(audioIdentityHook?.hydrating || (audioIdentityHook?.token && !isSignedIn));
 
   useEffect(() => { setCoinBalance(coins); }, [coins]);
   useEffect(() => { setLocalIdentity(audioIdentity); }, [audioIdentity]);
+
+  useEffect(() => {
+    if (paInvite) setUserMenu(null);
+  }, [paInvite]);
 
   useEffect(() => {
     if (!socket) return undefined;
@@ -734,6 +776,20 @@ export function GroupAudioRoom({
     const t = setTimeout(() => setUiMsg(null), 2600);
     return () => clearTimeout(t);
   }, [uiMsg]);
+
+  useEffect(() => {
+    const latestJoin = [...chatMessages].reverse().find((m) => m.kind === 'join');
+    if (!latestJoin || latestJoin.id === lastJoinToastIdRef.current) return undefined;
+    lastJoinToastIdRef.current = latestJoin.id;
+    setJoinToast(latestJoin);
+    const t = setTimeout(() => setJoinToast(null), 3200);
+    return () => clearTimeout(t);
+  }, [chatMessages]);
+
+  const visibleChatMessages = useMemo(
+    () => chatMessages.filter(isUserChatMessage),
+    [chatMessages],
+  );
 
   // Keyboard shortcuts for the live room:
   //   M / Space  toggle mic (speakers only)      Esc  leave the room
@@ -983,7 +1039,7 @@ export function GroupAudioRoom({
           <span className="mm-eyebrow">🎙️ Voice rooms</span>
           <h2 className="mm-h2 mt-3 text-white">Talk live · 6 stage seats</h2>
           <p className="mm-body mt-1.5">
-            Welcome, <strong style={{ color: localIdentity?.nameColor || '#f472b6' }}>@{localIdentity?.username || nickname}</strong>
+            Welcome, <strong className={isGradientNameColor(localIdentity?.nameColor) ? 'mm-audio-name--gradient' : ''} style={resolveNameStyle(localIdentity?.nameColor || '#f472b6')}>@{localIdentity?.username || nickname}</strong>
             {' '}· Create a room or join one below.
           </p>
         </header>
@@ -1178,10 +1234,16 @@ export function GroupAudioRoom({
         </div>
       )}
 
+      {joinToast && (
+        <AudioRoomToast className="mm-audio-room-toast--join">
+          <AudioName member={joinToast} /> <span className="text-white/50">joined the room</span>
+        </AudioRoomToast>
+      )}
+
       {uiMsg && (
-        <div className="mx-4 mb-2 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-2.5">
-          <span className="text-xs text-emerald-100 break-all">{uiMsg}</span>
-        </div>
+        <AudioRoomToast>
+          <span className="break-all">{uiMsg}</span>
+        </AudioRoomToast>
       )}
 
       {(audioBlocked || (me?.role === 'listener' || me?.role === 'cohost')) && (
@@ -1329,8 +1391,8 @@ export function GroupAudioRoom({
             <span className="text-white/35 text-[10px]">60s vanish</span>
           </div>
           <div className="mm-audio-chat-panel__messages custom-scrollbar" ref={chatScrollRef}>
-            {chatMessages.length === 0 && <p className="text-xs text-white/30 text-center py-6">Say hello…</p>}
-            {chatMessages.map((m) => (
+            {visibleChatMessages.length === 0 && <p className="text-xs text-white/30 text-center py-6">Say hello…</p>}
+            {visibleChatMessages.map((m) => (
               <AudioChatBubble key={m.id} m={m} isMe={m.socketId === socket?.id} />
             ))}
             <div ref={chatEndRef} />
@@ -1412,8 +1474,8 @@ export function GroupAudioRoom({
       </div>
 
       {adminOpen && canModerate && (
-        <div className="fixed inset-0 z-[500] flex items-end sm:items-center justify-center p-4 bg-black/75" onClick={() => setAdminOpen(false)} role="presentation">
-          <div className="w-full max-w-md max-h-[85dvh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0f121a] p-4" onClick={(e) => e.stopPropagation()} role="dialog">
+        <div className="mm-modal-overlay z-[500]" onClick={() => setAdminOpen(false)} role="presentation">
+          <div className="mm-audio-room-modal w-full max-w-md" onClick={(e) => e.stopPropagation()} role="dialog">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold">{isHost ? 'Room admin' : 'Co-taker tools'}</h3>
               <button type="button" onClick={() => setAdminOpen(false)} className="w-8 h-8 rounded-lg bg-white/5">✕</button>
@@ -1444,7 +1506,7 @@ export function GroupAudioRoom({
                 <label className="block text-[10px] font-bold uppercase text-white/40 mb-1">Room name (emoji ok)</label>
                 <div className="flex gap-2 mb-4">
                   <input value={renameValue} onChange={(e) => setRenameValue(e.target.value)} maxLength={48} className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm" />
-                  <button type="button" className="mm-btn mm-btn--primary !px-3" onClick={() => renameRoom(renameValue)}>Save</button>
+                  <button type="button" className="mm-btn mm-btn--primary !px-3" onClick={() => { renameRoom(renameValue); setUiMsg(`Room renamed to “${renameValue.trim()}”`); }}>Save</button>
                 </div>
                 <div className="flex gap-2 mb-2">
                   <button
@@ -1588,8 +1650,8 @@ export function GroupAudioRoom({
       )}
 
       {raceOpen && channel.gamesEnabled !== false && (
-        <div className="fixed inset-0 z-[500] flex items-end sm:items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setRaceOpen(false)} role="presentation">
-          <div className="mm-race-modal w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl border border-violet-400/20 bg-gradient-to-b from-[#12151f] to-[#0a0c12] p-4 shadow-[0_0_60px_rgba(139,92,246,0.15)]" onClick={(e) => e.stopPropagation()} role="dialog">
+        <div className="mm-modal-overlay z-[500]" onClick={() => setRaceOpen(false)} role="presentation">
+          <div className="mm-audio-room-modal mm-audio-room-modal--wide w-full max-w-lg max-h-[90dvh]" onClick={(e) => e.stopPropagation()} role="dialog">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-sm font-black uppercase tracking-wider text-white">Highway Heist</h3>

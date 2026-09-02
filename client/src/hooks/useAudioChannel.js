@@ -434,13 +434,18 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     };
 
     const onPaInviteResult = (payload) => {
+      setPaInvite(null);
       if (!payload.accepted) {
-        setError(payload.reason === 'left'
-          ? 'PA invite failed — they left the room.'
-          : `${payload.targetNickname || 'User'} declined your PA invite.`);
+        if (payload.reason === 'left') {
+          setError('PA invite failed — they left the room.');
+        } else if (payload.targetNickname) {
+          setError(`${payload.targetNickname} declined your PA invite.`);
+        }
         return;
       }
-      setPaInvite(null);
+      if (payload.channelId) {
+        setError(null);
+      }
     };
 
     const onSticker = (payload) => {
@@ -924,6 +929,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
 
   const respondPa = useCallback(
     (inviteId, accept) => {
+      if (!inviteId) return;
       socket?.emit('audio:pa-respond', { inviteId, accept });
       setPaInvite(null);
     },

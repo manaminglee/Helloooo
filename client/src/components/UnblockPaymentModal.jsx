@@ -30,8 +30,8 @@ export function UnblockPaymentModal({ open, onClose, onSuccess }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[3000] flex items-center justify-center p-4 bg-black/80">
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#161a22] p-6">
+    <div className="mm-modal-overlay z-[3000]">
+      <div className="mm-modal-surface max-w-md">
         <h3 className="text-lg font-semibold text-white mb-2">Unblock your access</h3>
         <p className="text-sm text-white/50 mb-4">
           Pay the verification fee to restore access. Test mode available when configured — no real charge in dev.

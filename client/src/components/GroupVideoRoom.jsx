@@ -2349,7 +2349,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       />
 
       {showProfileHandle && (
-        <div className="fixed inset-0 z-[3000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md" onClick={() => setShowProfileHandle(null)}>
+        <div className="mm-modal-overlay z-[3000]" onClick={() => setShowProfileHandle(null)}>
           <div onClick={(e) => e.stopPropagation()}>
             <CreatorProfilePopup handle={showProfileHandle} onClose={() => setShowProfileHandle(null)} />
           </div>

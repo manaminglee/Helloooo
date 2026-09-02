@@ -1175,7 +1175,7 @@ export function AdminDashboard({ onJoinRoom }) {
               </div>
 
               {modAction && (
-                <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                <div className="mm-modal-overlay z-[300]">
                   <div className="w-full max-w-md rounded-[32px] bg-zinc-950 border border-white/10 p-8 shadow-2xl">
                     <h3 className="text-lg font-black uppercase italic text-white mb-1">
                       {modAction.type === 'warn' ? '⚠️ Send warning' : '💥 Terminate user'}

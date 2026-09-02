@@ -93,12 +93,12 @@ export function SettingsPanel({ onClose }) {
         type="button"
         aria-label="Close settings"
         onClick={onClose}
-        className="absolute inset-0 h-full w-full cursor-default bg-black/60 backdrop-blur-sm animate-fade-in"
+        className="absolute inset-0 h-full w-full cursor-default bg-[#04050a] animate-fade-in"
         tabIndex={-1}
       />
 
       {/* Panel */}
-      <aside className="absolute right-0 top-0 flex h-full w-full max-w-sm flex-col border-l border-white/10 bg-[#0a0a10]/95 backdrop-blur-2xl shadow-[-24px_0_80px_rgba(0,0,0,0.6)] animate-drawer-in mm-mobile-safe">
+      <aside className="absolute right-0 top-0 flex h-full w-full max-w-sm flex-col border-l border-white/10 bg-[#0a0a10] shadow-[-24px_0_80px_rgba(0,0,0,0.6)] animate-drawer-in mm-mobile-safe">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/[0.06] px-6 py-5">
           <div>

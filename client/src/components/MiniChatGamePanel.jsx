@@ -47,12 +47,12 @@ export function MiniChatGameModal({ open, onClose, onSendPrompt }) {
 
   return (
     <div
-      className="fixed inset-0 z-[520] flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      className="mm-modal-overlay mm-modal-overlay--sheet z-[520]"
       onClick={onClose}
       role="presentation"
     >
       <div
-        className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#0f121a] p-5 shadow-2xl animate-fade-in"
+        className="mm-modal-surface max-w-sm animate-fade-in"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

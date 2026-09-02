@@ -87,7 +87,7 @@ export function ProFeaturesMenu({ isProUser = false, onActivated }) {
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-[150]" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 z-[150] bg-[#04050a]/90" onClick={() => setOpen(false)} />
           <div className="absolute bottom-full right-0 mb-2 z-[151] w-72 p-4 rounded-2xl bg-[#0d0f1c] border border-indigo-500/20 shadow-2xl animate-slide-in-up">
             <div className="flex items-center justify-between mb-3">
               <h4 className="text-xs font-bold text-white uppercase tracking-wider">Pro Features</h4>

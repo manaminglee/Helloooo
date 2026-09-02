@@ -5,29 +5,113 @@
  */
 const crypto = require('crypto');
 const { displayLevel, levelFromXp, levelBadgeLabel, levelPerks, xpToNextLevel } = require('./audioLevels');
+const { NAME_COLORS, NAME_GRADIENTS, isValidNameColor, pickNameColor } = require('./audioNameStyle');
 
-const USERNAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{2,19}$/;
+const USERNAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.\-!?@#$%&*]{2,19}$/;
 const PIN_RE = /^\d{4}$/;
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const IP_SESSION_TTL_MS = 30 * 60 * 1000;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 8;
-
-const NAME_COLORS = [
-  '#f472b6', '#a78bfa', '#34d399', '#38bdf8', '#fbbf24',
-  '#fb7185', '#22d3ee', '#e879f9', '#4ade80', '#f97316',
-];
+const PIN_FINGERPRINT_SALT = 'mm_audio_pin_fp_v1';
+const WEAK_PINS = new Set([
+  '0000', '1111', '2222', '3333', '4444', '5555', '6666', '7777', '8888', '9999',
+  '1234', '4321', '1212', '1010', '2580',
+]);
 
 function registerAudioIdentity(app, io, deps) {
   const { saveLocalDb, localDb, audit, supabase } = deps;
 
   const identities = new Map();
   const sessions = new Map();
+  const ipSessions = new Map();
+  const pinFingerprints = new Map();
   const loginAttempts = new Map();
   const locks = new Map();
   let hydrated = false;
 
   function ensureShape() {
     if (!localDb.audio_identities) localDb.audio_identities = {};
+    if (!localDb.audio_ip_sessions) localDb.audio_ip_sessions = {};
+  }
+
+  function loadIpSessions() {
+    ensureShape();
+    const now = Date.now();
+    for (const [ip, row] of Object.entries(localDb.audio_ip_sessions || {})) {
+      if (!row?.expiresAt || row.expiresAt < now) continue;
+      if (!row.token || !row.usernameKey) continue;
+      if (!getSession(row.token)) continue;
+      ipSessions.set(ip, row);
+    }
+  }
+
+  function saveIpSessions() {
+    ensureShape();
+    const out = {};
+    const now = Date.now();
+    for (const [ip, row] of ipSessions.entries()) {
+      if (row.expiresAt >= now) out[ip] = row;
+    }
+    localDb.audio_ip_sessions = out;
+    saveLocalDb?.();
+  }
+
+  function pinFingerprint(pinStr) {
+    return crypto.scryptSync(pinStr, PIN_FINGERPRINT_SALT, 16).toString('hex');
+  }
+
+  function registerPinFingerprint(usernameKey, pinStr) {
+    const fp = pinFingerprint(pinStr);
+    pinFingerprints.set(fp, usernameKey);
+    const rec = identities.get(usernameKey);
+    if (rec) rec.pinFingerprint = fp;
+    return fp;
+  }
+
+  function isPinTaken(pinStr, exceptKey = null) {
+    const fp = pinFingerprint(pinStr);
+    const owner = pinFingerprints.get(fp);
+    if (!owner) return false;
+    if (exceptKey && owner === exceptKey) return false;
+    return true;
+  }
+
+  function indexPinFingerprints() {
+    pinFingerprints.clear();
+    for (const [key, rec] of identities.entries()) {
+      if (rec.pinFingerprint) pinFingerprints.set(rec.pinFingerprint, key);
+    }
+  }
+
+  function bindIpSession(ip, usernameKey, token) {
+    if (!ip || !usernameKey || !token) return;
+    const row = {
+      usernameKey,
+      token,
+      expiresAt: Date.now() + IP_SESSION_TTL_MS,
+    };
+    ipSessions.set(ip, row);
+    saveIpSessions();
+  }
+
+  function touchIpSession(ip) {
+    if (!ip) return null;
+    const row = ipSessions.get(ip);
+    if (!row || row.expiresAt < Date.now()) {
+      ipSessions.delete(ip);
+      saveIpSessions();
+      return null;
+    }
+    if (!getSession(row.token)) {
+      ipSessions.delete(ip);
+      saveIpSessions();
+      return null;
+    }
+    row.expiresAt = Date.now() + IP_SESSION_TTL_MS;
+    ipSessions.set(ip, row);
+    saveIpSessions();
+    return row;
   }
 
   function rowToRecord(row) {
@@ -35,6 +119,7 @@ function registerAudioIdentity(app, io, deps) {
       username: row.username,
       pinSalt: row.pin_salt,
       pinHash: row.pin_hash,
+      pinFingerprint: row.pin_fingerprint || row.pinFingerprint || null,
       nameColor: row.name_color,
       coins: row.coins,
       xp: row.xp,
@@ -69,6 +154,8 @@ function registerAudioIdentity(app, io, deps) {
       const k = String(key).toLowerCase();
       if (!identities.has(k)) identities.set(k, normalizeRecord(row));
     }
+    loadIpSessions();
+    indexPinFingerprints();
   }
 
   async function hydrateFromSupabase() {
@@ -83,6 +170,7 @@ function registerAudioIdentity(app, io, deps) {
         const k = String(row.username_key || row.username || '').toLowerCase();
         if (k) identities.set(k, rowToRecord(row));
       }
+      indexPinFingerprints();
       hydrated = true;
       console.log(`[audioIdentity] Loaded ${data?.length || 0} identities from Supabase`);
     } catch (e) {
@@ -105,7 +193,8 @@ function registerAudioIdentity(app, io, deps) {
       usernameKey: String(row.username || '').toLowerCase(),
       pinSalt: row.pinSalt,
       pinHash: row.pinHash,
-      nameColor: NAME_COLORS.includes(row?.nameColor) ? row.nameColor : NAME_COLORS[0],
+      pinFingerprint: row.pinFingerprint || null,
+      nameColor: isValidNameColor(row?.nameColor) ? row.nameColor : NAME_COLORS[0],
       coins,
       xp,
       peakXp,
@@ -140,6 +229,7 @@ function registerAudioIdentity(app, io, deps) {
       username: rec.username,
       pinSalt: rec.pinSalt,
       pinHash: rec.pinHash,
+      pinFingerprint: rec.pinFingerprint || null,
       nameColor: rec.nameColor,
       coins: rec.coins,
       xp: rec.xp,
@@ -162,6 +252,23 @@ function registerAudioIdentity(app, io, deps) {
 
   function hashPin(pin, salt) {
     return crypto.scryptSync(pin, salt, 32).toString('hex');
+  }
+
+  function verifyPin(pinStr, rec) {
+    if (!rec?.pinHash || !rec?.pinSalt) return false;
+    const hash = hashPin(pinStr, rec.pinSalt);
+    try {
+      const a = Buffer.from(hash);
+      const b = Buffer.from(rec.pinHash);
+      if (a.length !== b.length) return false;
+      return crypto.timingSafeEqual(a, b);
+    } catch {
+      return false;
+    }
+  }
+
+  function isWeakPin(pinStr) {
+    return WEAK_PINS.has(pinStr);
   }
 
   function publicView(rec) {
@@ -201,10 +308,20 @@ function registerAudioIdentity(app, io, deps) {
     return b.count <= LOGIN_MAX_ATTEMPTS;
   }
 
-  function createSession(usernameKey) {
+  function createSession(usernameKey, ip) {
     const token = crypto.randomBytes(32).toString('hex');
     sessions.set(token, { username: usernameKey, expiresAt: Date.now() + SESSION_TTL_MS });
+    bindIpSession(ip, usernameKey, token);
     return token;
+  }
+
+  async function restoreByIp(ip) {
+    await ensureHydrated();
+    const row = touchIpSession(ip);
+    if (!row) return { ok: false, error: 'No recent session on this connection.' };
+    const rec = identities.get(row.usernameKey);
+    if (!rec) return { ok: false, error: 'Identity not found.' };
+    return { ok: true, token: row.token, identity: publicView(rec) };
   }
 
   function getSession(token) {
@@ -239,12 +356,14 @@ function registerAudioIdentity(app, io, deps) {
     const name = String(username || '').trim();
     const pinStr = String(pin || '').trim();
     if (!USERNAME_RE.test(name)) {
-      return { ok: false, error: 'Username: 3–20 chars, letters/numbers/underscore, start with a letter.' };
+      return { ok: false, error: 'Username: 3–20 chars, start with a letter or number. You can use _ . - ! ? @ # $ % & *' };
     }
     if (!PIN_RE.test(pinStr)) return { ok: false, error: 'PIN must be exactly 4 digits.' };
+    if (isWeakPin(pinStr)) return { ok: false, error: 'Pick a less obvious PIN — avoid 1234, 1111, etc.' };
     const key = name.toLowerCase();
 
     if (identities.has(key)) return { ok: false, error: 'Username taken — try another.' };
+    if (isPinTaken(pinStr)) return { ok: false, error: 'That PIN is already in use — pick a different 4-digit PIN.' };
     if (supabase) {
       const { data: existing } = await supabase
         .from('mm_audio_identities')
@@ -254,7 +373,7 @@ function registerAudioIdentity(app, io, deps) {
       if (existing) return { ok: false, error: 'Username taken — try another.' };
     }
 
-    const color = NAME_COLORS.includes(nameColor) ? nameColor : NAME_COLORS[Math.floor(Math.random() * NAME_COLORS.length)];
+    const color = pickNameColor(nameColor);
     const pinSalt = crypto.randomBytes(16).toString('hex');
     const rec = normalizeRecord({
       username: name,
@@ -270,9 +389,10 @@ function registerAudioIdentity(app, io, deps) {
       updatedAt: Date.now(),
     });
     identities.set(key, rec);
+    registerPinFingerprint(key, pinStr);
     await persist(key, { registerIp: ip });
     await journalLedger(key, 25, 'registration_bonus', rec.coins, { ip });
-    const token = createSession(key);
+    const token = createSession(key, ip);
     audit?.('audio_identity_register', { username: name, ip });
     return { ok: true, token, identity: publicView(rec) };
   }
@@ -292,11 +412,10 @@ function registerAudioIdentity(app, io, deps) {
     if (!rec) return { ok: false, error: 'Unknown username — create a new identity?' };
     const pinStr = String(pin || '').trim();
     if (!PIN_RE.test(pinStr)) return { ok: false, error: 'Enter your 4-digit PIN.' };
-    const hash = hashPin(pinStr, rec.pinSalt);
-    const ok = crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(rec.pinHash));
+    const ok = verifyPin(pinStr, rec);
     if (!ok) return { ok: false, error: 'Wrong PIN.' };
     await persist(key, { loginIp: ip });
-    const token = createSession(key);
+    const token = createSession(key, ip);
     audit?.('audio_identity_login', { username: rec.username, ip });
     return { ok: true, token, identity: publicView(rec) };
   }
@@ -434,16 +553,32 @@ function registerAudioIdentity(app, io, deps) {
 
   app.get('/api/audio-identity/me', async (req, res) => {
     await ensureHydrated();
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
     const token = String(req.headers['x-audio-session'] || req.query?.token || '');
     const session = getSession(token);
     if (!session) return res.status(401).json({ ok: false, error: 'Not signed in' });
+    touchIpSession(ip);
     const rec = identities.get(session.username);
     if (!rec) return res.status(404).json({ ok: false, error: 'Identity not found' });
     res.json({ ok: true, identity: publicView(rec) });
   });
 
+  app.get('/api/audio-identity/restore-ip', async (req, res) => {
+    try {
+      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+      const result = await restoreByIp(ip);
+      if (!result.ok) return res.status(401).json(result);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message || 'Restore failed' });
+    }
+  });
+
   app.get('/api/audio-identity/colors', (_req, res) => {
-    res.json({ colors: NAME_COLORS });
+    res.json({
+      colors: NAME_COLORS,
+      gradients: NAME_GRADIENTS.map(({ id, label, css }) => ({ id, label, css })),
+    });
   });
 
   return {
@@ -460,8 +595,8 @@ function registerAudioIdentity(app, io, deps) {
     resolveWalletKey,
     publicView,
     attachSocketHandlers,
-    ensureHydrated,
-    NAME_COLORS,
+    restoreByIp,
+    bindIpSession,
   };
 }
 

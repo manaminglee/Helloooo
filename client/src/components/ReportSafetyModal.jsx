@@ -69,7 +69,7 @@ export function ReportSafetyModal({
 
   return (
     <div
-      className="fixed inset-0 z-[5000] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl"
+      className="mm-modal-overlay z-[5000]"
       onClick={handleClose}
       role="presentation"
     >
@@ -78,7 +78,7 @@ export function ReportSafetyModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="report-modal-title"
-        className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0c0e14] p-6 shadow-2xl"
+        className="mm-modal-surface max-w-md rounded-3xl"
         onClick={(e) => e.stopPropagation()}
       >
         {phase === 'form' ? (

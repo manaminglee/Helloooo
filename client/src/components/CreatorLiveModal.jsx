@@ -55,9 +55,9 @@ export function CreatorLiveModal({ open, onClose, isLive, onStart, onStop }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[2500] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md" onClick={onClose}>
+    <div className="mm-modal-overlay z-[2500]" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0a0c14] p-6 shadow-2xl"
+        className="mm-modal-surface max-w-md rounded-3xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 mb-4">

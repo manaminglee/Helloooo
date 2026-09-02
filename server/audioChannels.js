@@ -98,6 +98,7 @@ function registerAudioChannels(app, io, deps) {
   const signalRates = new Map();
   /** inviteId -> { fromSocketId, toSocketId, sourceChannelId, fromNickname, at } */
   const paInvites = new Map();
+  const PA_INVITE_TTL_MS = 5 * 60 * 1000;
   const paCloseTimers = new Map();
   const paSessionTimers = new Map();
   const paDestroyTimers = new Map();
@@ -1180,6 +1181,10 @@ function registerAudioChannels(app, io, deps) {
       const invite = paInvites.get(inviteId);
       if (!invite || invite.toSocketId !== socket.id) {
         return socket.emit('audio:error', { message: 'Invite expired or invalid.' });
+      }
+      if (Date.now() - invite.at > PA_INVITE_TTL_MS) {
+        paInvites.delete(inviteId);
+        return socket.emit('audio:error', { message: 'PA invite expired — ask them to send again.' });
       }
       paInvites.delete(inviteId);
 
