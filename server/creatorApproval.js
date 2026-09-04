@@ -83,14 +83,43 @@ async function applyCreatorStatus(deps, { creatorId, status, reason = '' }) {
 
   if (supabase) {
     try {
-      // Drop columns that may not exist yet
-      const payload = { ...updates };
-      const { error } = await supabase.from('creators').update(payload).eq('id', creatorId);
-      if (error && String(error.message || '').includes('approved_at')) {
-        delete payload.approved_at;
-        await supabase.from('creators').update(payload).eq('id', creatorId);
-      } else if (error) {
-        console.warn('[CREATOR_APPROVE] supabase update:', error.message);
+      let payload = { ...updates };
+      // Retry without unknown columns (migrations may lag on Render)
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const { error } = await supabase.from('creators').update(payload).eq('id', creatorId);
+        if (!error) break;
+        const msg = String(error.message || error.details || '');
+        const colMatch =
+          msg.match(/Could not find the ['"](\w+)['"] column/i) ||
+          msg.match(/column ["'](\w+)["'] of relation/i) ||
+          msg.match(/['"](\w+)['"] column/i);
+        if (colMatch && Object.prototype.hasOwnProperty.call(payload, colMatch[1])) {
+          console.warn(`[CREATOR_APPROVE] dropping column ${colMatch[1]}:`, msg);
+          delete payload[colMatch[1]];
+          continue;
+        }
+        console.warn('[CREATOR_APPROVE] supabase update:', msg);
+        break;
+      }
+
+      // Verify Supabase actually has the new status (login reads Supabase)
+      const { data: verified } = await supabase
+        .from('creators')
+        .select('id, status')
+        .eq('id', creatorId)
+        .maybeSingle();
+      if (verified && verified.status !== status) {
+        console.error('[CREATOR_APPROVE] status mismatch after update', {
+          expected: status,
+          got: verified.status,
+          creatorId,
+        });
+        // Force minimal status-only write
+        const { error: forceErr } = await supabase
+          .from('creators')
+          .update({ status })
+          .eq('id', creatorId);
+        if (forceErr) console.error('[CREATOR_APPROVE] force status failed:', forceErr.message);
       }
 
       await supabase.from('admin_history').insert({

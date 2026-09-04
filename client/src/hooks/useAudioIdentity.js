@@ -108,6 +108,17 @@ export function useAudioIdentity(socket) {
       setHydrating(true);
       setCreatorLinkFailed(false);
       try {
+        // Approved creator session → skip PIN restore noise; go straight to linked identity
+        if (getCreatorSessionToken()) {
+          setHasCreatorSession(true);
+          const ok = await loginFromCreator();
+          if (!cancelled) {
+            if (ok) return;
+            setCreatorLinkFailed(true);
+          }
+          // Fall through to normal audio restore if creator link failed
+        }
+
         if (token) {
           const res = await fetch(`${API_BASE}/api/audio-identity/me`, {
             headers: { 'x-audio-session': token },
@@ -133,13 +144,6 @@ export function useAudioIdentity(socket) {
             attachSocket(data.token);
             return;
           }
-        }
-        // Creator already logged in — skip PIN / access-code gate
-        if (!cancelled && getCreatorSessionToken()) {
-          setHasCreatorSession(true);
-          const ok = await loginFromCreator();
-          if (ok) return;
-          if (!cancelled) setCreatorLinkFailed(true);
         }
         if (token && socket) attachSocket(token);
       } catch {

@@ -163,6 +163,13 @@ export function useCreators() {
         emitCreatorAuth(result.sessionToken);
         return { success: true };
       }
+      if (res.status === 403) {
+        return {
+          success: false,
+          error: result.error || 'Application still pending approval.',
+          status: result.status || 'pending',
+        };
+      }
       return { success: false, error: result.error || 'Invalid handle or password', status: result.status };
     } catch (e) {
       return { success: false, error: 'Network failure' };

@@ -167,7 +167,16 @@ export default function CreatorVerifyModal({
     const res = await login(loginForm.id, loginForm.password);
     setBusy(false);
     if (!res.success) {
-      setError(res.error || 'Login failed');
+      if (res.status === 'pending') {
+        setError(res.error || 'Still pending approval — use the Status tab, or ask admin to approve you.');
+        setTab('status');
+        setStatusQuery(loginForm.id);
+      } else if (res.status === 'rejected') {
+        setError(res.error || 'Application was rejected.');
+        setTab('status');
+      } else {
+        setError(res.error || 'Login failed');
+      }
       return;
     }
     showAlert?.('Welcome back', 'Creator session secured.');

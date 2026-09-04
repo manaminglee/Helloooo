@@ -1414,30 +1414,54 @@ app.post('/api/creators/login', creatorLoginLimiter, async (req, res) => {
       creator = data;
     }
 
+    // Merge fresher local status (approve writes local first; Supabase can lag)
+    if (creator?.id) {
+      const local = (localDb.creators || []).find((c) => c.id === creator.id);
+      if (local?.status === 'approved' && creator.status !== 'approved') {
+        creator = { ...creator, ...local, status: 'approved' };
+        // Heal Supabase so future logins don't 403
+        supabase.from('creators').update({ status: 'approved' }).eq('id', creator.id)
+          .then(({ error }) => {
+            if (error) console.warn('[CREATORS] heal approved status failed:', error.message);
+          });
+      }
+    } else {
+      // Supabase miss — try local by handle/email
+      const local = (localDb.creators || []).find((c) => {
+        if (creatorQueryEmail) return String(c.email || '').toLowerCase() === creatorQueryEmail;
+        return String(c.handle_name || '').toLowerCase() === String(creatorQueryHandle || '').toLowerCase();
+      });
+      if (local) creator = local;
+    }
+
     const valid = creator ? await creatorSecurity.verifyPassword(passCheck.password, creator) : false;
     if (!creator || !valid) {
       creatorSecurity.recordLoginFailure(lock.key);
-      await supabase.from('creator_logins').insert({
-        handle: creatorQueryHandle || creatorQueryEmail,
-        ip: currentIp,
-        success: false,
-        reason: 'invalid_credentials',
-      });
+      try {
+        await supabase.from('creator_logins').insert({
+          handle: creatorQueryHandle || creatorQueryEmail,
+          ip: currentIp,
+          success: false,
+          reason: 'invalid_credentials',
+        });
+      } catch { /* ignore log failures */ }
       return res.status(401).json({ error: 'Invalid handle/email or password.' });
     }
 
     if (creator.status !== 'approved') {
-      await supabase.from('creator_logins').insert({
-        handle: creator.handle_name,
-        creator_id: creator.id,
-        ip: currentIp,
-        success: false,
-        reason: 'pending_review',
-      });
+      try {
+        await supabase.from('creator_logins').insert({
+          handle: creator.handle_name,
+          creator_id: creator.id,
+          ip: currentIp,
+          success: false,
+          reason: 'pending_review',
+        });
+      } catch { /* ignore */ }
       return res.status(403).json({
         error: creator.status === 'rejected'
-          ? 'Application was rejected. Contact support.'
-          : 'Application pending review. You can check status anytime.',
+          ? 'Application was rejected. Contact support or re-apply from Status.'
+          : 'Still pending admin approval. Open Status tab or wait for approval, then log in again.',
         status: creator.status,
       });
     }
