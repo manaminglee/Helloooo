@@ -482,8 +482,15 @@ function registerLiveStreams(app, io, deps) {
         return;
       }
       const userData = users.get(socket.id);
-      if (asHost && session.hostSocketId && session.hostSocketId !== socket.id) {
-        // Allow rebind if creator reconnects
+      if (asHost) {
+        const isSameHost = session.hostSocketId === socket.id;
+        const isCreatorHost = !!(userData?.isCreator && userData?.creatorData?.id === session.creatorId);
+        if (!isSameHost && !isCreatorHost) {
+          const err = { ok: false, error: 'Only the host creator can publish' };
+          if (typeof cb === 'function') cb(err);
+          else socket.emit('live:error', err);
+          return;
+        }
         session.hostSocketId = socket.id;
       }
       try {

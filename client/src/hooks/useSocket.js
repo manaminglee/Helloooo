@@ -64,8 +64,25 @@ async function ensureSocket() {
     patchState({ socket: s });
     window.socket = s;
 
-    s.on('connect', () => patchState({ connected: true, isBlocked: false }));
+    s.on('connect', () => {
+      patchState({ connected: true, isBlocked: false });
+      try {
+        const tok = window.localStorage?.getItem?.('mm_creator_session');
+        if (tok && String(tok).startsWith('cs_')) {
+          s.emit('creator:auth', { creatorToken: tok }, (res) => {
+            if (res?.ok) {
+              patchState({ isCreator: true, nickname: res.handle || state.nickname });
+            }
+          });
+        }
+      } catch { /* ignore */ }
+    });
     s.on('disconnect', () => patchState({ connected: false }));
+    s.on('creator:ready', (data) => {
+      if (data?.isCreator) {
+        patchState({ isCreator: true, nickname: data.handle || state.nickname });
+      }
+    });
     s.on('connect_error', (err) => {
       mmDebug('socket.error', err.message);
       patchState({ connected: false });
@@ -181,4 +198,15 @@ export function useSocket() {
   }, []);
 
   return state;
+}
+
+/** Re-bind creator session to the current socket after login. */
+export function emitCreatorAuth(token) {
+  const tok = String(token || '').trim();
+  if (!tok || !socket?.connected) return;
+  socket.emit('creator:auth', { creatorToken: tok }, (res) => {
+    if (res?.ok) {
+      patchState({ isCreator: true, nickname: res.handle || state.nickname });
+    }
+  });
 }

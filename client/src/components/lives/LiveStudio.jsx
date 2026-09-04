@@ -3,6 +3,7 @@ import { API_BASE } from '../../config/apiBase';
 import { getCreatorAuthHeaders, getCreatorSessionToken } from '../../utils/creatorAuth';
 import { useLiveKitLive } from '../../hooks/useLiveKitLive';
 import CreatorVerifyModal from '../CreatorVerifyModal';
+import { emitCreatorAuth } from '../../hooks/useSocket';
 
 function validateLiveTitle(raw) {
   const t = String(raw || '').trim();
@@ -41,12 +42,18 @@ export default function LiveStudio({
   });
 
   useEffect(() => {
+    const tok = getCreatorSessionToken();
+    if (tok) emitCreatorAuth(tok);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       if (!getCreatorSessionToken()) {
         setNeedLogin(true);
         return;
       }
+      emitCreatorAuth(getCreatorSessionToken());
       try {
         const res = await fetch(`${API_BASE}/api/creators/status`, {
           headers: { ...getCreatorAuthHeaders() },
@@ -149,6 +156,7 @@ export default function LiveStudio({
     setBusy(true);
     setError('');
     try {
+      emitCreatorAuth(getCreatorSessionToken());
       const res = await fetch(`${API_BASE}/api/lives/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },

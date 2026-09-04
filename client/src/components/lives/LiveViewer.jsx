@@ -163,7 +163,7 @@ export default function LiveViewer({
   initialLiveId = null,
   onExit,
 }) {
-  const { identity, isSignedIn, hydrating, loginFromCreator } = identityHook;
+  const { identity, isSignedIn, hydrating, loginFromCreator, creatorLinkFailed } = identityHook;
   const { lives, loading, refresh } = useLivesList(10000);
   const [index, setIndex] = useState(0);
   const [creatorLinking, setCreatorLinking] = useState(false);
@@ -179,7 +179,7 @@ export default function LiveViewer({
   }, [initialLiveId, ordered]);
 
   useEffect(() => {
-    if (isSignedIn || !creatorSession || hydrating) return undefined;
+    if (isSignedIn || !creatorSession || hydrating || creatorLinkFailed) return undefined;
     let cancelled = false;
     setCreatorLinking(true);
     (async () => {
@@ -188,7 +188,7 @@ export default function LiveViewer({
       if (ok) refresh?.();
     })();
     return () => { cancelled = true; };
-  }, [isSignedIn, creatorSession, hydrating, loginFromCreator, refresh]);
+  }, [isSignedIn, creatorSession, hydrating, loginFromCreator, refresh, creatorLinkFailed]);
 
   const onTouchStart = (e) => {
     touchY.current = e.touches[0].clientY;
@@ -211,7 +211,7 @@ export default function LiveViewer({
     );
   }
 
-  if (hydrating || creatorLinking || (creatorSession && !isSignedIn)) {
+  if ((hydrating || creatorLinking) && !creatorLinkFailed && !isSignedIn) {
     return (
       <div className="mm-live-shell mm-live-shell--center">
         <p className="text-white/70 text-sm">Signing in with your creator account…</p>

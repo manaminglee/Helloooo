@@ -3341,6 +3341,30 @@ io.on('connection', (socket) => {
   // async handler logs and emits `error` instead of an unhandled rejection.
   const on = (eventName, fn) => socket.on(eventName, wrapSocketHandler(socket, eventName, fn));
 
+  // Bind approved creator session to this socket (Lives / voice / video).
+  on('creator:auth', async (data, ack) => {
+    const userData = users.get(socket.id);
+    if (!userData) {
+      if (typeof ack === 'function') ack({ ok: false, error: 'No socket user' });
+      return;
+    }
+    await resolveCreatorIdentity(userData, {
+      creatorToken: data?.creatorToken || data?.creatorSession || data?.token,
+      referralCode: data?.referralCode,
+    }, ip);
+    if (userData.isCreator) {
+      socket.emit('creator:ready', {
+        handle: userData.nickname,
+        isCreator: true,
+      });
+      if (typeof ack === 'function') {
+        ack({ ok: true, handle: userData.nickname, isCreator: true });
+      }
+    } else if (typeof ack === 'function') {
+      ack({ ok: false, error: 'Creator session invalid or not approved' });
+    }
+  });
+
   // Per-socket pacing state for accumulate-activity heartbeats.
   let lastActivityAcceptedAt = 0;
 

@@ -16,7 +16,7 @@ export default function LivesFeed({
   isCreator = false,
   canCreateLive = false,
 }) {
-  const { isSignedIn, hydrating, loginFromCreator } = identityHook;
+  const { isSignedIn, hydrating, loginFromCreator, creatorLinkFailed } = identityHook;
   const { lives, loading, error, refresh, livekit } = useLivesList(6000);
   const [gate, setGate] = useState(false);
   const [creatorLinking, setCreatorLinking] = useState(false);
@@ -29,18 +29,16 @@ export default function LivesFeed({
   }, []);
 
   useEffect(() => {
-    if (isSignedIn || !creatorSession || hydrating) return undefined;
+    if (isSignedIn || !creatorSession || hydrating || creatorLinkFailed) return undefined;
     let cancelled = false;
     setCreatorLinking(true);
     (async () => {
       const ok = await loginFromCreator?.();
-      if (!cancelled) {
-        setCreatorLinking(false);
-        if (ok) setGate(false);
-      }
+      if (!cancelled) setCreatorLinking(false);
+      if (ok) setGate(false);
     })();
     return () => { cancelled = true; };
-  }, [isSignedIn, creatorSession, hydrating, loginFromCreator]);
+  }, [isSignedIn, creatorSession, hydrating, loginFromCreator, creatorLinkFailed]);
 
   if (!isMobileLiveDevice()) {
     return (
@@ -58,7 +56,7 @@ export default function LivesFeed({
     );
   }
 
-  if (hydrating || creatorLinking || (creatorSession && !isSignedIn)) {
+  if ((hydrating || creatorLinking) && !creatorLinkFailed && !isSignedIn) {
     return (
       <div className="mm-live-shell mm-live-shell--center">
         <p className="text-white/70 text-sm">

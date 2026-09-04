@@ -19,8 +19,20 @@ function ensureLocalShape(localDb) {
   if (!localDb.creator_sessions) localDb.creator_sessions = [];
 }
 
+function findLocalSession(localDb, tokenHash) {
+  ensureLocalShape(localDb);
+  return (localDb.creator_sessions || []).find(
+    (s) => s.token_hash === tokenHash && !s.revoked_at
+  ) || null;
+}
+
+function findLocalCreator(localDb, creatorId) {
+  return (localDb.creators || []).find((c) => c.id === creatorId) || null;
+}
+
 /**
  * Create a session for an approved creator. Returns { token, expiresAt, sessionId }.
+ * Always mirrors to localDb so resolve works even if Supabase insert fails/lags.
  */
 async function createSession({ supabase, localDb, saveLocalDb, creatorId, ip, userAgent }) {
   const raw = mintRawToken();
@@ -38,23 +50,18 @@ async function createSession({ supabase, localDb, saveLocalDb, creatorId, ip, us
     revoked_at: null,
   };
 
+  ensureLocalShape(localDb);
+  localDb.creator_sessions.push(row);
+  if (localDb.creator_sessions.length > 5000) {
+    localDb.creator_sessions = localDb.creator_sessions.slice(-2500);
+  }
+  saveLocalDb?.();
+
   if (supabase) {
     const { error } = await supabase.from('creator_sessions').insert(row);
     if (error) {
-      // Table missing — fall through to local so login still works
       console.warn('[CREATOR_SESSIONS] supabase insert failed, using local:', error.message);
-      ensureLocalShape(localDb);
-      localDb.creator_sessions.push(row);
-      saveLocalDb?.();
     }
-  } else {
-    ensureLocalShape(localDb);
-    localDb.creator_sessions.push(row);
-    // Cap local sessions
-    if (localDb.creator_sessions.length > 5000) {
-      localDb.creator_sessions = localDb.creator_sessions.slice(-2500);
-    }
-    saveLocalDb?.();
   }
 
   return { token: raw, expiresAt, sessionId: id };
@@ -63,6 +70,7 @@ async function createSession({ supabase, localDb, saveLocalDb, creatorId, ip, us
 /**
  * Resolve creator from Authorization / X-Creator-Session / X-Creator-Token (session).
  * Does NOT accept referral_code as a session.
+ * Falls back to localDb when Supabase has no row (e.g. insert failed / migration lag).
  */
 async function resolveSessionCreator({ supabase, localDb, saveLocalDb, token, requireApproved = true }) {
   const raw = String(token || '').trim();
@@ -73,18 +81,21 @@ async function resolveSessionCreator({ supabase, localDb, saveLocalDb, token, re
   let session = null;
 
   if (supabase) {
-    const { data } = await supabase
-      .from('creator_sessions')
-      .select('*')
-      .eq('token_hash', tokenHash)
-      .is('revoked_at', null)
-      .maybeSingle();
-    session = data;
-  } else {
-    ensureLocalShape(localDb);
-    session = (localDb.creator_sessions || []).find(
-      (s) => s.token_hash === tokenHash && !s.revoked_at
-    );
+    try {
+      const { data } = await supabase
+        .from('creator_sessions')
+        .select('*')
+        .eq('token_hash', tokenHash)
+        .is('revoked_at', null)
+        .maybeSingle();
+      session = data;
+    } catch (e) {
+      console.warn('[CREATOR_SESSIONS] supabase resolve failed:', e.message);
+    }
+  }
+
+  if (!session) {
+    session = findLocalSession(localDb, tokenHash);
   }
 
   if (!session) return null;
@@ -95,10 +106,15 @@ async function resolveSessionCreator({ supabase, localDb, saveLocalDb, token, re
 
   let creator = null;
   if (supabase) {
-    const { data } = await supabase.from('creators').select('*').eq('id', session.creator_id).maybeSingle();
-    creator = data;
-  } else {
-    creator = (localDb.creators || []).find((c) => c.id === session.creator_id);
+    try {
+      const { data } = await supabase.from('creators').select('*').eq('id', session.creator_id).maybeSingle();
+      creator = data;
+    } catch (e) {
+      console.warn('[CREATOR_SESSIONS] creator lookup failed:', e.message);
+    }
+  }
+  if (!creator) {
+    creator = findLocalCreator(localDb, session.creator_id);
   }
   if (!creator) return null;
   if (requireApproved && creator.status !== 'approved') return null;
@@ -109,10 +125,14 @@ async function resolveSessionCreator({ supabase, localDb, saveLocalDb, token, re
 async function revokeSession({ supabase, localDb, saveLocalDb, sessionId, tokenHash }) {
   const now = new Date().toISOString();
   if (supabase) {
-    if (sessionId) {
-      await supabase.from('creator_sessions').update({ revoked_at: now }).eq('id', sessionId);
-    } else if (tokenHash) {
-      await supabase.from('creator_sessions').update({ revoked_at: now }).eq('token_hash', tokenHash);
+    try {
+      if (sessionId) {
+        await supabase.from('creator_sessions').update({ revoked_at: now }).eq('id', sessionId);
+      } else if (tokenHash) {
+        await supabase.from('creator_sessions').update({ revoked_at: now }).eq('token_hash', tokenHash);
+      }
+    } catch (e) {
+      console.warn('[CREATOR_SESSIONS] revoke supabase failed:', e.message);
     }
   }
   ensureLocalShape(localDb);
@@ -127,11 +147,15 @@ async function revokeSession({ supabase, localDb, saveLocalDb, sessionId, tokenH
 async function revokeAllForCreator({ supabase, localDb, saveLocalDb, creatorId }) {
   const now = new Date().toISOString();
   if (supabase) {
-    await supabase
-      .from('creator_sessions')
-      .update({ revoked_at: now })
-      .eq('creator_id', creatorId)
-      .is('revoked_at', null);
+    try {
+      await supabase
+        .from('creator_sessions')
+        .update({ revoked_at: now })
+        .eq('creator_id', creatorId)
+        .is('revoked_at', null);
+    } catch (e) {
+      console.warn('[CREATOR_SESSIONS] revokeAll supabase failed:', e.message);
+    }
   }
   ensureLocalShape(localDb);
   for (const s of localDb.creator_sessions || []) {

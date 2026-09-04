@@ -19,6 +19,9 @@ export function setCreatorSessionToken(token) {
     } else {
       localStorage.removeItem(SESSION_KEY);
     }
+    try {
+      window.dispatchEvent(new CustomEvent('mm-creator-session', { detail: { token: token || '' } }));
+    } catch { /* ignore */ }
   } catch { /* ignore */ }
 }
 
@@ -27,6 +30,9 @@ export function clearCreatorSession() {
     localStorage.removeItem(SESSION_KEY);
     localStorage.removeItem(LEGACY_REF_KEY);
     localStorage.setItem('mm_logout_flag', '1');
+    try {
+      window.dispatchEvent(new CustomEvent('mm-creator-session', { detail: { token: '' } }));
+    } catch { /* ignore */ }
   } catch { /* ignore */ }
 }
 

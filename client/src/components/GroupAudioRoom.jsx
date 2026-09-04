@@ -602,7 +602,7 @@ export function GroupAudioRoom({
   useEffect(() => {
     if (isSignedIn || !audioIdentityHook) return undefined;
     const hasCreator = !!audioIdentityHook.hasCreatorSession;
-    if (!hasCreator || audioIdentityHook.hydrating) return undefined;
+    if (!hasCreator || audioIdentityHook.hydrating || audioIdentityHook.creatorLinkFailed) return undefined;
     let cancelled = false;
     void (async () => {
       const ok = await audioIdentityHook.loginFromCreator?.();
@@ -613,7 +613,7 @@ export function GroupAudioRoom({
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSignedIn, audioIdentityHook?.hasCreatorSession, audioIdentityHook?.hydrating]);
+  }, [isSignedIn, audioIdentityHook?.hasCreatorSession, audioIdentityHook?.hydrating, audioIdentityHook?.creatorLinkFailed]);
 
   useEffect(() => {
     if (paInvite) setUserMenu(null);
@@ -1022,8 +1022,9 @@ export function GroupAudioRoom({
 
   if (!channel) {
     const creatorSession = !!audioIdentityHook?.hasCreatorSession;
+    const linkFailed = !!audioIdentityHook?.creatorLinkFailed;
 
-    if (!isSignedIn && audioIdentityHook && (audioIdentityHook.hydrating || creatorSession)) {
+    if (!isSignedIn && audioIdentityHook && (audioIdentityHook.hydrating || (creatorSession && !linkFailed))) {
       return (
         <div className="mm-shell mm-section mm-voice-lobby mm-voice-lobby--locked flex items-center justify-center min-h-[50dvh]">
           <p className="mm-body text-white/60">
@@ -1034,7 +1035,7 @@ export function GroupAudioRoom({
     }
 
     if (!isSignedIn && audioIdentityHook) {
-      if (identityHydrating) {
+      if (identityHydrating && !linkFailed) {
         return (
           <div className="mm-shell mm-section mm-voice-lobby mm-voice-lobby--locked flex items-center justify-center min-h-[50dvh]">
             <p className="mm-body text-white/60">Restoring your voice identity…</p>

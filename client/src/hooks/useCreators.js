@@ -7,6 +7,7 @@ import {
 } from '../utils/creatorAuth';
 import { API_BASE } from '../config/apiBase';
 import { mmDebug } from '../utils/mmDebug';
+import { emitCreatorAuth } from './useSocket';
 import {
   validateCreatorHandle,
   validateCreatorPlatform,
@@ -159,6 +160,7 @@ export function useCreators() {
         setCreatorSessionToken(result.sessionToken);
         try { localStorage.removeItem('mm_creatorId'); } catch { /* */ }
         setCreatorStatus(result.data);
+        emitCreatorAuth(result.sessionToken);
         return { success: true };
       }
       return { success: false, error: result.error || 'Invalid handle or password', status: result.status };

@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { API_BASE } from '../config/apiBase';
 import { getCreatorAuthHeaders, getCreatorSessionToken } from '../utils/creatorAuth';
+import { emitCreatorAuth } from './useSocket';
 
 const STORAGE_KEY = 'mm_audio_session';
 const USERNAME_KEY = 'mm_audio_username';
+const CREATOR_SESSION_KEY = 'mm_creator_session';
 
 function readSavedUsername() {
   try { return localStorage.getItem(USERNAME_KEY) || ''; }
@@ -26,6 +28,8 @@ export function useAudioIdentity(socket) {
   const [loading, setLoading] = useState(false);
   const [hydrating, setHydrating] = useState(true);
   const [error, setError] = useState('');
+  const [hasCreatorSession, setHasCreatorSession] = useState(() => !!getCreatorSessionToken());
+  const [creatorLinkFailed, setCreatorLinkFailed] = useState(false);
 
   const attachSocket = useCallback((sessionToken) => {
     if (!socket || !sessionToken) return;
@@ -37,6 +41,7 @@ export function useAudioIdentity(socket) {
   const persistSession = useCallback((sessionToken, id) => {
     setToken(sessionToken);
     setIdentity(id);
+    setCreatorLinkFailed(false);
     try { sessionStorage.setItem(STORAGE_KEY, sessionToken); } catch { /* ignore */ }
     if (id?.username) persistUsername(id.username);
     attachSocket(sessionToken);
@@ -44,26 +49,64 @@ export function useAudioIdentity(socket) {
 
   /** Approved creator session → voice/Lives identity without PIN. */
   const loginFromCreator = useCallback(async () => {
-    if (!getCreatorSessionToken()) return false;
+    const creatorTok = getCreatorSessionToken();
+    if (!creatorTok) {
+      setHasCreatorSession(false);
+      return false;
+    }
+    setHasCreatorSession(true);
     try {
+      emitCreatorAuth(creatorTok);
       const res = await fetch(`${API_BASE}/api/audio-identity/from-creator`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },
         credentials: 'include',
       });
-      const data = await res.json();
-      if (!res.ok || !data.ok || !data.token || !data.identity) return false;
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok || !data.token || !data.identity) {
+        setCreatorLinkFailed(true);
+        setError(data.error || 'Could not sign in with creator account');
+        return false;
+      }
       persistSession(data.token, data.identity);
+      setCreatorLinkFailed(false);
+      setError('');
       return true;
     } catch {
+      setCreatorLinkFailed(true);
+      setError('Network error linking creator account');
       return false;
     }
   }, [persistSession]);
+
+  // Keep hasCreatorSession in sync across tabs / after login elsewhere
+  useEffect(() => {
+    const sync = () => {
+      const tok = getCreatorSessionToken();
+      setHasCreatorSession(!!tok);
+    };
+    const onStorage = (e) => {
+      if (!e.key || e.key === CREATOR_SESSION_KEY) sync();
+    };
+    const onCustom = () => sync();
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', sync);
+    window.addEventListener('mm-creator-session', onCustom);
+    const t = setInterval(sync, 4000);
+    sync();
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', sync);
+      window.removeEventListener('mm-creator-session', onCustom);
+      clearInterval(t);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     async function bootstrap() {
       setHydrating(true);
+      setCreatorLinkFailed(false);
       try {
         if (token) {
           const res = await fetch(`${API_BASE}/api/audio-identity/me`, {
@@ -93,8 +136,10 @@ export function useAudioIdentity(socket) {
         }
         // Creator already logged in — skip PIN / access-code gate
         if (!cancelled && getCreatorSessionToken()) {
+          setHasCreatorSession(true);
           const ok = await loginFromCreator();
           if (ok) return;
+          if (!cancelled) setCreatorLinkFailed(true);
         }
         if (token && socket) attachSocket(token);
       } catch {
@@ -115,6 +160,17 @@ export function useAudioIdentity(socket) {
     attachSocket(token);
     return () => socket.off('audio-identity:ready', onReady);
   }, [socket, token, attachSocket, identity]);
+
+  // If creator session appears after bootstrap (login from hub), auto-link once
+  useEffect(() => {
+    if (hydrating || identity?.username || !hasCreatorSession || creatorLinkFailed) return undefined;
+    let cancelled = false;
+    void (async () => {
+      const ok = await loginFromCreator();
+      if (!cancelled && !ok) setCreatorLinkFailed(true);
+    })();
+    return () => { cancelled = true; };
+  }, [hasCreatorSession, hydrating, identity?.username, creatorLinkFailed, loginFromCreator]);
 
   const register = async ({ username, pin, nameColor }) => {
     setLoading(true);
@@ -222,6 +278,7 @@ export function useAudioIdentity(socket) {
     savedUsername: readSavedUsername(),
     hydrating,
     isSignedIn: !!identity?.username,
-    hasCreatorSession: !!getCreatorSessionToken(),
+    hasCreatorSession,
+    creatorLinkFailed,
   };
 }
