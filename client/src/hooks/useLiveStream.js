@@ -32,13 +32,14 @@ export function useLivesList(pollMs = 8000) {
   return { lives, livekit, loading, error, refresh };
 }
 
-export function useLiveSession(socket, liveId) {
+export function useLiveSession(socket, liveId, { isHost = false } = {}) {
   const [comments, setComments] = useState([]);
   const [gifts, setGifts] = useState([]);
   const [viewerCount, setViewerCount] = useState(0);
   const [battle, setBattle] = useState(null);
   const [ended, setEnded] = useState(false);
   const [notice, setNotice] = useState('');
+  const [kicked, setKicked] = useState(false);
 
   useEffect(() => {
     if (!socket || !liveId) return undefined;
@@ -46,8 +47,14 @@ export function useLiveSession(socket, liveId) {
     setGifts([]);
     setEnded(false);
     setBattle(null);
+    setKicked(false);
 
     socket.emit('live:join', { liveId }, (res) => {
+      if (res?.ok === false) {
+        setNotice(res.error || 'Could not join');
+        setKicked(true);
+        return;
+      }
       if (res?.live) setViewerCount(res.live.viewerCount || 0);
     });
 
@@ -55,10 +62,11 @@ export function useLiveSession(socket, liveId) {
       if (msg.liveId !== liveId) return;
       setComments((c) => [...c.slice(-40), msg]);
     };
+    const onCommentDeleted = ({ liveId: id, commentId }) => {
+      if (id !== liveId) return;
+      setComments((c) => c.filter((x) => x.id !== commentId));
+    };
     const onGift = (payload) => {
-      if (payload.liveId !== liveId && !payload.fromBattle) {
-        // still show if battle shared
-      }
       setGifts((g) => [...g.slice(-8), payload]);
       setTimeout(() => {
         setGifts((g) => g.filter((x) => x !== payload));
@@ -80,8 +88,21 @@ export function useLiveSession(socket, liveId) {
       setNotice(message || 'Error');
       setTimeout(() => setNotice(''), 3000);
     };
+    const onKicked = ({ liveId: id, reason }) => {
+      if (id !== liveId) return;
+      setKicked(true);
+      setEnded(true);
+      setNotice(reason || 'Removed by host');
+    };
+    const onBlocked = ({ liveId: id, reason }) => {
+      if (id !== liveId) return;
+      setKicked(true);
+      setEnded(true);
+      setNotice(reason || 'Blocked by host');
+    };
 
     socket.on('live:comment', onComment);
+    socket.on('live:comment:deleted', onCommentDeleted);
     socket.on('live:gift', onGift);
     socket.on('live:viewers', onViewers);
     socket.on('live:ended', onEnded);
@@ -89,10 +110,13 @@ export function useLiveSession(socket, liveId) {
     socket.on('live:battle:score', onBattleScore);
     socket.on('live:battle:end', onBattleEnd);
     socket.on('live:error', onErr);
+    socket.on('live:kicked', onKicked);
+    socket.on('live:blocked', onBlocked);
 
     return () => {
       socket.emit('live:leave', { liveId });
       socket.off('live:comment', onComment);
+      socket.off('live:comment:deleted', onCommentDeleted);
       socket.off('live:gift', onGift);
       socket.off('live:viewers', onViewers);
       socket.off('live:ended', onEnded);
@@ -100,18 +124,35 @@ export function useLiveSession(socket, liveId) {
       socket.off('live:battle:score', onBattleScore);
       socket.off('live:battle:end', onBattleEnd);
       socket.off('live:error', onErr);
+      socket.off('live:kicked', onKicked);
+      socket.off('live:blocked', onBlocked);
     };
   }, [socket, liveId]);
 
-  const sendComment = useCallback((text) => {
+  const sendComment = useCallback((text, mention = null) => {
     if (!socket || !liveId || !text?.trim()) return;
-    socket.emit('live:comment', { liveId, text });
+    socket.emit('live:comment', { liveId, text, mention });
   }, [socket, liveId]);
 
   const sendGift = useCallback((giftId, targetSide = 'A') => {
     if (!socket || !liveId || !giftId) return;
     socket.emit('live:gift', { liveId, giftId, targetSide });
   }, [socket, liveId]);
+
+  const deleteComment = useCallback((commentId) => {
+    if (!socket || !liveId || !commentId || !isHost) return;
+    socket.emit('live:delete-comment', { liveId, commentId });
+  }, [socket, liveId, isHost]);
+
+  const kickUser = useCallback((targetSocketId) => {
+    if (!socket || !liveId || !targetSocketId || !isHost) return;
+    socket.emit('live:kick', { liveId, targetSocketId });
+  }, [socket, liveId, isHost]);
+
+  const blockUser = useCallback((targetSocketId) => {
+    if (!socket || !liveId || !targetSocketId || !isHost) return;
+    socket.emit('live:block', { liveId, targetSocketId });
+  }, [socket, liveId, isHost]);
 
   return {
     comments,
@@ -120,7 +161,12 @@ export function useLiveSession(socket, liveId) {
     battle,
     ended,
     notice,
+    kicked,
     sendComment,
     sendGift,
+    deleteComment,
+    kickUser,
+    blockUser,
+    isHost,
   };
 }

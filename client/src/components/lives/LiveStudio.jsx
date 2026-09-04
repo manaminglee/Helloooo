@@ -1,20 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_BASE } from '../../config/apiBase';
 import { getCreatorAuthHeaders, getCreatorSessionToken } from '../../utils/creatorAuth';
 import { useLiveKitLive } from '../../hooks/useLiveKitLive';
+import { useLiveSession } from '../../hooks/useLiveStream';
 import CreatorVerifyModal from '../CreatorVerifyModal';
 import { emitCreatorAuth } from '../../hooks/useSocket';
+import { AudioName } from '../AudioIdentityGate';
 
 function validateLiveTitle(raw) {
   const t = String(raw || '').trim();
-  if (!t) return { ok: true, title: '' }; // optional — server fills default
+  if (!t) return { ok: true, title: '' };
   if (t.length < 2) return { ok: false, error: 'Title is too short.' };
   if (t.length > 80) return { ok: false, error: 'Title max 80 characters.' };
   return { ok: true, title: t };
 }
 
 /**
- * Creator go-live studio — requires secure creator session + LiveKit publish.
+ * Creator go-live studio — mirrored camera, handle badge, host moderation.
  */
 export default function LiveStudio({
   socket,
@@ -24,22 +26,50 @@ export default function LiveStudio({
 }) {
   const videoRef = useRef(null);
   const fileRef = useRef(null);
+  const inputRef = useRef(null);
   const [title, setTitle] = useState('');
   const [wallpaperUrl, setWallpaperUrl] = useState('');
   const [liveId, setLiveId] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [viewerCount, setViewerCount] = useState(0);
   const [needLogin, setNeedLogin] = useState(!getCreatorSessionToken());
   const [creatorHandle, setCreatorHandle] = useState('');
+  const [text, setText] = useState('');
+  const [sheetUser, setSheetUser] = useState(null);
 
-  const { connected, error: mediaError } = useLiveKitLive({
+  const endLiveHttp = useCallback(async (id) => {
+    if (!id) return;
+    try {
+      await fetch(`${API_BASE}/api/lives/${id}/end`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },
+        credentials: 'include',
+      });
+    } catch { /* */ }
+  }, []);
+
+  const onClarityTimeout = useCallback(() => {
+    const id = liveId;
+    setError('No clear video/audio for 20s — ending live');
+    void endLiveHttp(id);
+    setLiveId(null);
+    setTimeout(() => onExit?.(), 1200);
+  }, [liveId, endLiveHttp, onExit]);
+
+  const { connected, hasMedia, connecting, error: mediaError } = useLiveKitLive({
     enabled: !!liveId,
     socket,
     liveId,
     asHost: true,
     videoElRef: videoRef,
+    mirrorLocal: true,
+    onClarityTimeout,
   });
+
+  const {
+    comments, viewerCount, notice,
+    sendComment, deleteComment, kickUser, blockUser,
+  } = useLiveSession(liveId ? socket : null, liveId, { isHost: true });
 
   useEffect(() => {
     const tok = getCreatorSessionToken();
@@ -80,21 +110,14 @@ export default function LiveStudio({
 
   useEffect(() => {
     if (!socket || !liveId) return undefined;
-    const onViewers = ({ liveId: id, count }) => {
-      if (id === liveId) setViewerCount(count);
-    };
     const onEnded = ({ liveId: id }) => {
       if (id === liveId) {
         setLiveId(null);
         setError('Live ended.');
       }
     };
-    socket.on('live:viewers', onViewers);
     socket.on('live:ended', onEnded);
-    return () => {
-      socket.off('live:viewers', onViewers);
-      socket.off('live:ended', onEnded);
-    };
+    return () => socket.off('live:ended', onEnded);
   }, [socket, liveId]);
 
   const saveWallpaper = async (dataUrl) => {
@@ -188,16 +211,16 @@ export default function LiveStudio({
       return;
     }
     setBusy(true);
-    try {
-      await fetch(`${API_BASE}/api/lives/${liveId}/end`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },
-        credentials: 'include',
-      });
-    } catch { /* */ }
+    await endLiveHttp(liveId);
     setLiveId(null);
     setBusy(false);
     onExit?.();
+  };
+
+  const mentionUser = (username) => {
+    const tag = `@${username} `;
+    setText((t) => (t.includes(tag) ? t : `${tag}${t}`.slice(0, 120)));
+    inputRef.current?.focus();
   };
 
   if (needLogin && creatorsHook) {
@@ -234,24 +257,41 @@ export default function LiveStudio({
   return (
     <div className="mm-live-studio mm-live-nocapture">
       <div className="mm-live-studio__preview">
-        {wallpaperUrl && !connected && (
+        {wallpaperUrl && !hasMedia && (
           <div className="mm-live-slide__wallpaper" style={{ backgroundImage: `url(${wallpaperUrl})` }} />
         )}
-        <video ref={videoRef} className="mm-live-slide__video" playsInline muted autoPlay />
+        <video
+          ref={videoRef}
+          className="mm-live-slide__video mm-live-slide__video--mirror"
+          playsInline
+          muted
+          autoPlay
+        />
+        {liveId && connecting && (
+          <div className="mm-live-connecting">
+            <div className="mm-live-connecting__pulse" />
+            <p>{connected ? 'Improving clarity…' : 'Going live…'}</p>
+            <span>Ends automatically if no clear feed in 20s</span>
+          </div>
+        )}
       </div>
 
-      <div className="mm-live-studio__panel">
-        <header className="flex items-center justify-between gap-2">
-          <button type="button" className="mm-live-icon-btn" onClick={end}>←</button>
-          <h1 className="text-white font-black text-sm">
-            {liveId ? 'You are LIVE' : 'Create Live'}
-            {creatorHandle ? ` · @${creatorHandle}` : ''}
-          </h1>
-          {liveId ? <span className="text-xs text-white/50">{viewerCount} watching</span> : <span />}
-        </header>
+      {/* Handle top-left */}
+      <div className="mm-live-studio__host-badge">
+        <strong>@{creatorHandle || 'creator'}</strong>
+        {liveId ? (
+          <span className="mm-live-studio__live-dot">LIVE · {viewerCount}</span>
+        ) : (
+          <span>Preview</span>
+        )}
+      </div>
 
-        {!liveId ? (
-          <div className="space-y-3 mt-4">
+      <button type="button" className="mm-live-studio__close" onClick={end} aria-label="Close">✕</button>
+
+      {!liveId ? (
+        <div className="mm-live-studio__panel">
+          <h1 className="text-white font-black text-sm mb-3">Create Live</h1>
+          <div className="space-y-3">
             <label className="mm-audio-id-label">
               Live title
               <input
@@ -273,20 +313,88 @@ export default function LiveStudio({
             <button type="button" className="mm-btn mm-btn--primary w-full" disabled={busy || !socket?.connected} onClick={start}>
               {busy ? 'Starting…' : 'Start live now'}
             </button>
-            <p className="text-[10px] text-white/35 text-center">
-              Requires approved creator session + LiveKit. Viewers gift Nuts to you.
-            </p>
           </div>
-        ) : (
-          <div className="space-y-3 mt-4">
-            <p className="text-center text-rose-300 font-bold text-sm animate-pulse">● Broadcasting</p>
-            {(error || mediaError) && <p className="mm-audio-id-error">{error || mediaError}</p>}
-            <button type="button" className="mm-btn mm-btn--ghost w-full border-rose-400/40 text-rose-200" disabled={busy} onClick={end}>
-              End live
+        </div>
+      ) : (
+        <>
+          <div className="mm-live-comments mm-live-comments--host">
+            {comments.map((c) => (
+              <div key={c.id} className="mm-live-comment">
+                <button
+                  type="button"
+                  className="mm-live-comment__user"
+                  onClick={() => setSheetUser({
+                    username: c.username,
+                    socketId: c.socketId,
+                    commentId: c.id,
+                  })}
+                >
+                  <AudioName
+                    member={{
+                      audioUsername: c.username,
+                      nameColor: c.nameColor,
+                      levelBadge: c.levelBadge,
+                      displayLevel: c.displayLevel,
+                    }}
+                  />
+                </button>
+                <span>{c.text}</span>
+              </div>
+            ))}
+          </div>
+
+          <form
+            className="mm-live-composer"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const m = text.match(/@([a-zA-Z0-9_]{2,30})/);
+              sendComment(text, m?.[1] || null);
+              setText('');
+            }}
+          >
+            <input
+              ref={inputRef}
+              className="mm-live-composer__input"
+              value={text}
+              onChange={(e) => setText(e.target.value.slice(0, 120))}
+              placeholder="Reply or @mention…"
+            />
+            <button type="submit" className="mm-live-icon-btn" disabled={!text.trim()}>➤</button>
+            <button type="button" className="mm-live-icon-btn mm-live-icon-btn--end" onClick={end} disabled={busy}>
+              End
             </button>
-          </div>
-        )}
-      </div>
+          </form>
+
+          {(error || mediaError || notice) && (
+            <div className="mm-live-toast">{error || mediaError || notice}</div>
+          )}
+
+          {sheetUser && (
+            <div className="mm-live-user-sheet" onClick={() => setSheetUser(null)}>
+              <div className="mm-live-user-sheet__panel" onClick={(e) => e.stopPropagation()}>
+                <p className="mm-live-user-sheet__name">@{sheetUser.username}</p>
+                <button type="button" onClick={() => { mentionUser(sheetUser.username); setSheetUser(null); }}>
+                  Mention @{sheetUser.username}
+                </button>
+                <button type="button" onClick={() => { deleteComment(sheetUser.commentId); setSheetUser(null); }}>
+                  Delete comment
+                </button>
+                {sheetUser.socketId && (
+                  <>
+                    <button type="button" className="warn" onClick={() => { kickUser(sheetUser.socketId); setSheetUser(null); }}>
+                      Kick out
+                    </button>
+                    <button type="button" className="danger" onClick={() => { blockUser(sheetUser.socketId); setSheetUser(null); }}>
+                      Block user
+                    </button>
+                  </>
+                )}
+                <button type="button" className="ghost" onClick={() => setSheetUser(null)}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

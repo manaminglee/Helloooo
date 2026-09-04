@@ -120,6 +120,10 @@ function registerLiveStreams(app, io, deps) {
       title: String(title || `${creator.handle_name} Live`).slice(0, 80),
       wallpaperUrl: wall,
       viewers: new Set(),
+      comments: [],
+      blockedSocketIds: new Set(),
+      kickedSocketIds: new Set(),
+      blockedIps: new Set(),
       startedAt: Date.now(),
       status: 'live',
       battleId: null,
@@ -167,6 +171,13 @@ function registerLiveStreams(app, io, deps) {
   function joinViewer(liveId, socketId) {
     const session = getLive(liveId);
     if (!session || session.status !== 'live') return { ok: false, error: 'Live is offline' };
+    if (session.blockedSocketIds?.has(socketId) || session.kickedSocketIds?.has(socketId)) {
+      return { ok: false, error: 'You cannot join this live' };
+    }
+    const u = users?.get?.(socketId);
+    if (u?.ip && session.blockedIps?.has(u.ip)) {
+      return { ok: false, error: 'You are blocked from this live' };
+    }
     session.viewers.add(socketId);
     io.to(`live:${liveId}`).emit('live:viewers', { liveId, count: session.viewers.size });
     return { ok: true, live: publicLive(session) };
@@ -365,28 +376,145 @@ function registerLiveStreams(app, io, deps) {
       const liveId = String(payload?.liveId || '');
       const session = getLive(liveId);
       if (!session || session.status !== 'live') return;
-      const ip = socket.handshake.address || socket.id;
+      if (session.blockedSocketIds?.has(socket.id) || session.kickedSocketIds?.has(socket.id)) {
+        socket.emit('live:error', { message: 'You cannot comment in this live' });
+        return;
+      }
+      const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0]?.trim()
+        || socket.handshake.address
+        || socket.id;
+      if (session.blockedIps?.has(ip)) {
+        socket.emit('live:error', { message: 'You are blocked from this live' });
+        return;
+      }
       if (!rateOk(commentBuckets, `${liveId}:${ip}`, COMMENT_RATE)) {
         socket.emit('live:error', { message: 'Slow down comments' });
         return;
       }
       const userData = users.get(socket.id);
       const identity = userData?.audioIdentity;
-      const text = sanitize
+      let text = sanitize
         ? sanitize(String(payload?.text || '').slice(0, COMMENT_MAX))
         : String(payload?.text || '').slice(0, COMMENT_MAX).replace(/[<>]/g, '');
-      if (!text.trim()) return;
+      text = String(text || '').trim();
+      if (!text) return;
+      const mention = String(payload?.mention || '').trim().replace(/^@/, '').slice(0, 30);
       const msg = {
-        id: crypto.randomBytes(4).toString('hex'),
+        id: crypto.randomBytes(6).toString('hex'),
         liveId,
-        text: text.trim(),
+        text,
         username: identity?.username || userData?.nickname || 'Guest',
         nameColor: identity?.nameColor || '#e2e8f0',
         levelBadge: identity?.levelBadge || null,
         displayLevel: identity?.level || 0,
+        mention: mention || null,
+        socketId: socket.id,
         at: Date.now(),
       };
+      if (!session.comments) session.comments = [];
+      session.comments.push(msg);
+      if (session.comments.length > 200) session.comments = session.comments.slice(-120);
       io.to(`live:${liveId}`).emit('live:comment', msg);
+    });
+
+    on('live:delete-comment', async (payload, cb) => {
+      const liveId = String(payload?.liveId || '');
+      const commentId = String(payload?.commentId || '');
+      const session = getLive(liveId);
+      const userData = users.get(socket.id);
+      if (!session || session.status !== 'live') {
+        if (typeof cb === 'function') cb({ ok: false, error: 'Live offline' });
+        return;
+      }
+      const isHost = session.hostSocketId === socket.id
+        || (userData?.isCreator && userData?.creatorData?.id === session.creatorId);
+      if (!isHost) {
+        if (typeof cb === 'function') cb({ ok: false, error: 'Host only' });
+        return;
+      }
+      if (session.comments) {
+        session.comments = session.comments.filter((c) => c.id !== commentId);
+      }
+      io.to(`live:${liveId}`).emit('live:comment:deleted', { liveId, commentId });
+      if (typeof cb === 'function') cb({ ok: true });
+    });
+
+    on('live:kick', async (payload, cb) => {
+      const liveId = String(payload?.liveId || '');
+      const targetSocketId = String(payload?.targetSocketId || '');
+      const session = getLive(liveId);
+      const userData = users.get(socket.id);
+      if (!session || session.status !== 'live') {
+        if (typeof cb === 'function') cb({ ok: false, error: 'Live offline' });
+        return;
+      }
+      const isHost = session.hostSocketId === socket.id
+        || (userData?.isCreator && userData?.creatorData?.id === session.creatorId);
+      if (!isHost) {
+        if (typeof cb === 'function') cb({ ok: false, error: 'Host only' });
+        return;
+      }
+      if (!targetSocketId || targetSocketId === socket.id) {
+        if (typeof cb === 'function') cb({ ok: false, error: 'Invalid target' });
+        return;
+      }
+      if (!session.kickedSocketIds) session.kickedSocketIds = new Set();
+      session.kickedSocketIds.add(targetSocketId);
+      leaveViewer(liveId, targetSocketId);
+      try {
+        const target = io.sockets.sockets.get(targetSocketId);
+        target?.leave(`live:${liveId}`);
+        target?.emit('live:kicked', { liveId, reason: 'Removed by host' });
+      } catch { /* */ }
+      io.to(`live:${liveId}`).emit('live:moderation', {
+        liveId,
+        action: 'kick',
+        targetSocketId,
+      });
+      if (typeof cb === 'function') cb({ ok: true });
+    });
+
+    on('live:block', async (payload, cb) => {
+      const liveId = String(payload?.liveId || '');
+      const targetSocketId = String(payload?.targetSocketId || '');
+      const session = getLive(liveId);
+      const userData = users.get(socket.id);
+      if (!session || session.status !== 'live') {
+        if (typeof cb === 'function') cb({ ok: false, error: 'Live offline' });
+        return;
+      }
+      const isHost = session.hostSocketId === socket.id
+        || (userData?.isCreator && userData?.creatorData?.id === session.creatorId);
+      if (!isHost) {
+        if (typeof cb === 'function') cb({ ok: false, error: 'Host only' });
+        return;
+      }
+      if (!targetSocketId || targetSocketId === socket.id) {
+        if (typeof cb === 'function') cb({ ok: false, error: 'Invalid target' });
+        return;
+      }
+      const targetUser = users.get(targetSocketId);
+      const targetIp = targetUser?.ip
+        || io.sockets.sockets.get(targetSocketId)?.handshake?.headers?.['x-forwarded-for']?.split(',')[0]?.trim()
+        || io.sockets.sockets.get(targetSocketId)?.handshake?.address;
+      if (!session.blockedSocketIds) session.blockedSocketIds = new Set();
+      if (!session.blockedIps) session.blockedIps = new Set();
+      if (!session.kickedSocketIds) session.kickedSocketIds = new Set();
+      session.blockedSocketIds.add(targetSocketId);
+      session.kickedSocketIds.add(targetSocketId);
+      if (targetIp) session.blockedIps.add(String(targetIp));
+      leaveViewer(liveId, targetSocketId);
+      try {
+        const target = io.sockets.sockets.get(targetSocketId);
+        target?.leave(`live:${liveId}`);
+        target?.emit('live:blocked', { liveId, reason: 'Blocked by host' });
+      } catch { /* */ }
+      io.to(`live:${liveId}`).emit('live:moderation', {
+        liveId,
+        action: 'block',
+        targetSocketId,
+      });
+      if (typeof cb === 'function') cb({ ok: true });
     });
 
     on('live:gift', async (payload) => {
