@@ -22,6 +22,7 @@ const { registerUniqueFeatures } = require('./uniqueFeatures');
 const { createPersistence } = require('./persistence');
 const { registerPayments } = require('./payments');
 const creatorSecurity = require('./creatorSecurity');
+const clientIp = require('./clientIp');
 const creatorEmail = require('./creatorEmail');
 const creatorNotifications = require('./creatorNotifications');
 const creatorSessions = require('./creatorSessions');
@@ -521,20 +522,23 @@ function sanitize(str, max = 50) {
 }
 
 function getClientIp(req) {
-  const xf = req.headers['x-forwarded-for'];
-  if (typeof xf === 'string' && xf.trim()) return xf.split(',')[0].trim();
-  const ip = req.ip || req.connection?.remoteAddress || '';
-  return ip === '::1' ? '127.0.0.1' : ip;
+  return clientIp.httpClientIp(req);
 }
 
 const MIN_CREATOR_WITHDRAWAL_COINS = 2000;
+
+// A creator still carrying only the old access code needs to know to log in
+// again rather than seeing a bare "Unauthorized".
+const SECURE_LOGIN_REQUIRED = {
+  legacy_refused: 'Please log in with your handle and password again — your access code alone can no longer approve payouts.',
+};
 
 /**
  * Resolve creator by secure session token (preferred).
  * Legacy: referral_code via X-Creator-Referral only (not X-Creator-Token).
  * IP auth is soft-disabled for privileged actions — session required for approved ops.
  */
-async function getApprovedCreatorForRequest(req) {
+async function getApprovedCreatorForRequest(req, { requireSession = false } = {}) {
   const ip = getClientIp(req);
   const sessionTok = creatorSessions.extractSessionToken(req);
 
@@ -549,7 +553,15 @@ async function getApprovedCreatorForRequest(req) {
     if (resolved?.creator) return { creator: resolved.creator, ip, via: 'session', session: resolved.session };
   }
 
-  // Legacy referral header only (not the primary token header)
+  // Legacy referral header only (not the primary token header). Refused where
+  // the caller can move money or change payout details: the code is long-lived,
+  // cannot be rotated or revoked, and is shared as a referral link. Reported
+  // distinctly so the route can tell the user to log in again.
+  if (requireSession) {
+    const attempted = String(req.headers['x-creator-referral'] || '').trim();
+    return { creator: null, ip, via: attempted ? 'legacy_refused' : null };
+  }
+
   const legacyRef = String(req.headers['x-creator-referral'] || '').trim();
   if (legacyRef && !legacyRef.startsWith(creatorSessions.SESSION_PREFIX)) {
     let c = null;
@@ -900,7 +912,7 @@ function emitOnlineCount() {
 
 // Express app
 const app = express();
-app.set('trust proxy', 1);
+app.set('trust proxy', clientIp.TRUST_PROXY_HOPS);
 
 // CSP was previously off entirely. The directives below are derived from what
 // the client actually loads, so an injected <script src> pointing at an
@@ -1715,8 +1727,10 @@ app.post('/api/creators/update-profile', async (req, res) => {
   const { bio, avatar_url, preferred_upi } = req.body || {};
 
   try {
-    const { creator, ip } = await getApprovedCreatorForRequest(req);
-    if (!creator || creator.status !== 'approved') return res.status(403).json({ error: 'Unauthorized' });
+    const { creator, ip, via } = await getApprovedCreatorForRequest(req, { requireSession: true });
+    if (!creator || creator.status !== 'approved') {
+      return res.status(403).json({ error: SECURE_LOGIN_REQUIRED[via] || 'Unauthorized' });
+    }
     await linkCreatorIpIfNeeded(creator, ip);
 
     let nextAvatar = avatar_url != null && avatar_url !== '' ? String(avatar_url) : creator.avatar_url;
@@ -1772,6 +1786,9 @@ app.get('/api/creators/status', async (req, res) => {
     }
 
     let creator = null;
+    // A handle is public, but referral_code authenticates. Echo the code back
+    // only to a caller that already supplied it, never to a handle lookup.
+    let suppliedReferralCode = false;
     const isHandleLookup = id && String(id).startsWith('handle:');
     const handleFromId = isHandleLookup ? String(id).replace(/^handle:/, '').trim() : null;
 
@@ -1787,16 +1804,21 @@ app.get('/api/creators/status', async (req, res) => {
       const { data } = await supabase.from('creators').select('*').ilike('handle_name', handle).maybeSingle();
       creator = data;
     } else if (id) {
-      // Public status check by referral code OR handle (no secrets returned)
+      // Public status check by referral code OR handle
       const { data: byCode } = await supabase.from('creators').select('*').eq('referral_code', id).maybeSingle();
       creator = byCode;
+      suppliedReferralCode = !!byCode;
       if (!creator) {
         const { data: byHandle } = await supabase.from('creators').select('*').ilike('handle_name', id).maybeSingle();
         creator = byHandle;
       }
     }
 
-    res.json({ data: creator ? creatorSecurity.stripCreatorSecrets(creator) : null });
+    if (!creator) return res.json({ data: null });
+    const view = creatorSecurity.publicCreatorView(creator);
+    // The pending-approval poll matches this against the code it already holds.
+    if (suppliedReferralCode) view.referral_code = creator.referral_code;
+    res.json({ data: view });
   } catch (e) { res.json({ data: null }); }
 });
 
@@ -1833,8 +1855,10 @@ app.post('/api/creators/withdraw', async (req, res) => {
   const upiCheck = creatorSecurity.validateUpi(upi);
   if (!upiCheck.ok) return res.status(400).json({ error: upiCheck.error });
   try {
-    const { creator, ip } = await getApprovedCreatorForRequest(req);
-    if (!creator || creator.status !== 'approved') return res.status(403).json({ error: 'Unauthorized' });
+    const { creator, ip, via } = await getApprovedCreatorForRequest(req, { requireSession: true });
+    if (!creator || creator.status !== 'approved') {
+      return res.status(403).json({ error: SECURE_LOGIN_REQUIRED[via] || 'Unauthorized' });
+    }
     await linkCreatorIpIfNeeded(creator, ip);
 
     // Critical section: check balance + no-pending, insert the withdrawal, and
@@ -3553,7 +3577,7 @@ function isSignalRateLimited(socketId, socket) {
 
 io.on('connection', (socket) => {
   const userId = generateId('usr');
-  const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0]?.trim() || socket.handshake.address;
+  const ip = clientIp.socketClientIp(socket);
   const country = countryFromIP(ip);
 
   stats.totalConnections++;

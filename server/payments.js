@@ -17,8 +17,10 @@ const PRODUCTS = {
   },
 };
 
+const { httpClientIp } = require('./clientIp');
+
 function clientIp(req) {
-  return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || (req.ip === '::1' ? '127.0.0.1' : req.ip);
+  return httpClientIp(req);
 }
 
 function paymentProvider() {

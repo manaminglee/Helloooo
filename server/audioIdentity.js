@@ -9,6 +9,7 @@ const { NAME_COLORS, NAME_GRADIENTS, isValidNameColor, pickNameColor } = require
 
 const USERNAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.\-!?@#$%&*]{2,19}$/;
 const { createDeviceTrust } = require('./deviceTrust');
+const { httpClientIp } = require('./clientIp');
 
 const PIN_RE = /^\d{4}$/;
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
@@ -618,7 +619,7 @@ function registerAudioIdentity(app, io, deps) {
 
   /* ---------------------------------------------------------------- devices */
 
-  const clientIp = (req) => req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+  const clientIp = (req) => httpClientIp(req);
 
   /** Session token from the header, or nothing. Never trust a body-supplied id. */
   async function requireSession(req) {
@@ -700,7 +701,7 @@ function registerAudioIdentity(app, io, deps) {
 
   app.post('/api/audio-identity/register', async (req, res) => {
     try {
-      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+      const ip = httpClientIp(req);
       const result = await register({
         username: req.body?.username,
         pin: req.body?.pin,
@@ -716,7 +717,7 @@ function registerAudioIdentity(app, io, deps) {
 
   app.post('/api/audio-identity/login', async (req, res) => {
     try {
-      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+      const ip = httpClientIp(req);
       const result = await login({
         username: req.body?.username,
         pin: req.body?.pin,
@@ -736,7 +737,7 @@ function registerAudioIdentity(app, io, deps) {
 
   app.get('/api/audio-identity/me', async (req, res) => {
     await ensureHydrated();
-    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+    const ip = httpClientIp(req);
     const token = String(req.headers['x-audio-session'] || req.query?.token || '');
     if (!token) {
       // Soft miss — avoid noisy 401 in browser console on every page load
@@ -752,7 +753,7 @@ function registerAudioIdentity(app, io, deps) {
 
   app.get('/api/audio-identity/restore-ip', async (req, res) => {
     try {
-      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+      const ip = httpClientIp(req);
       const result = await restoreByIp(ip);
       // Soft miss — guests without a recent IP session are normal
       if (!result.ok) return res.json({ ok: false, error: result.error || 'No session' });
@@ -774,7 +775,7 @@ function registerAudioIdentity(app, io, deps) {
       if (typeof getCreatorForRequest !== 'function') {
         return res.status(501).json({ ok: false, error: 'Creator auth unavailable' });
       }
-      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+      const ip = httpClientIp(req);
       const { creator, via } = await getCreatorForRequest(req);
       if (!creator || via !== 'session') {
         return res.status(401).json({ ok: false, error: 'Creator secure login required' });

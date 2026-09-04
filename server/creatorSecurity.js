@@ -143,6 +143,34 @@ function stripCreatorSecrets(creator, { includePasswordOnce = false } = {}) {
   return out;
 }
 
+// referral_code is accepted as a legacy credential by getApprovedCreatorForRequest,
+// so it is a secret, not an identifier. The rest are private contact, payout and
+// network details. None may reach a caller who has not proven account ownership.
+const CREATOR_PRIVATE_FIELDS = [
+  'referral_code',
+  'email',
+  'preferred_upi',
+  'authorized_ips',
+  'follower_ips',
+  'password',
+  'password_hash',
+];
+
+/**
+ * Creator record safe to hand to a caller that has not proven account ownership.
+ * `keep` re-admits named fields for callers with a legitimate need (e.g. an
+ * agency seeing its own roster's contact email).
+ */
+function publicCreatorView(creator, { keep = [] } = {}) {
+  if (!creator) return null;
+  const out = { ...creator };
+  const keepSet = new Set(keep);
+  for (const field of CREATOR_PRIVATE_FIELDS) {
+    if (!keepSet.has(field)) delete out[field];
+  }
+  return out;
+}
+
 function checkRateBucket(map, key, max, windowMs) {
   const now = Date.now();
   let bucket = map.get(key);
@@ -325,6 +353,7 @@ module.exports = {
   hashPassword,
   verifyPassword,
   stripCreatorSecrets,
+  publicCreatorView,
   checkRegisterRate,
   checkLoginLock,
   recordLoginFailure,

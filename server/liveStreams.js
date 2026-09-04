@@ -18,6 +18,7 @@ const livekitRooms = require('./livekitRooms');
 const { GIFTS } = require('./giftCatalog');
 const { createLiveStore } = require('./liveStore');
 const { buildWordList, filterText, createRateLimiter } = require('./liveModeration');
+const { socketClientIp } = require('./clientIp');
 
 // ---------------------------------------------------------------------------
 // Tunables
@@ -83,12 +84,7 @@ function clampInt(v, min, max, fallback = min) {
 }
 
 function socketIp(socket) {
-  return (
-    socket?.handshake?.headers?.['x-forwarded-for']?.split(',')[0]?.trim()
-    || socket?.handshake?.address
-    || socket?.id
-    || 'unknown'
-  );
+  return socketClientIp(socket) || socket?.id || 'unknown';
 }
 
 function registerLiveStreams(app, io, deps) {

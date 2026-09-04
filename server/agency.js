@@ -178,7 +178,9 @@ function registerAgency(app, io, deps) {
     }
     res.json({
       ok: true,
-      creators: creators.map((c) => creatorSecurity.stripCreatorSecrets(c)),
+      // An agency manages its roster but must not learn a creator's referral
+      // code, payout handle or authorized IPs. Contact email is shown in the UI.
+      creators: creators.map((c) => creatorSecurity.publicCreatorView(c, { keep: ['email'] })),
       withdrawals,
       nutsPerUsd: settings.nutsPayoutPerUsd || NUTS_PER_USD,
       minWithdrawalNuts: settings.minWithdrawalNuts || 10000,
