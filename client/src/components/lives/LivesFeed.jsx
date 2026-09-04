@@ -13,10 +13,12 @@ export default function LivesFeed({
   onExit,
   onGoLive,
   isCreator = false,
+  canCreateLive = false,
 }) {
   const { isSignedIn } = identityHook;
   const { lives, loading, error, refresh, livekit } = useLivesList(6000);
   const [gate, setGate] = useState(false);
+  const showCreate = canCreateLive || isCreator;
 
   useEffect(() => {
     document.body.classList.add('mm-lives-mode');
@@ -29,7 +31,12 @@ export default function LivesFeed({
         <NutsSymbol size={40} />
         <h1 className="mm-h2 mt-4 text-white">Lives are mobile-only</h1>
         <p className="mm-body mt-2">Open Helloooo on your phone to watch and gift creators.</p>
-        <button type="button" className="mm-btn mm-btn--ghost mt-6" onClick={onExit}>Back home</button>
+        {showCreate && (
+          <button type="button" className="mm-btn mm-btn--primary mt-6" onClick={onGoLive}>
+            Create Live (host studio)
+          </button>
+        )}
+        <button type="button" className="mm-btn mm-btn--ghost mt-4" onClick={onExit}>Back home</button>
       </div>
     );
   }
@@ -56,9 +63,9 @@ export default function LivesFeed({
         <button type="button" className="mm-btn mm-btn--ghost text-xs" onClick={refresh}>↻</button>
       </header>
 
-      {isCreator && (
+      {showCreate && (
         <button type="button" className="mm-lives-go-live" onClick={onGoLive}>
-          <span className="mm-lives-go-live__dot" /> Go Live
+          <span className="mm-lives-go-live__dot" /> Create Live
         </button>
       )}
 
@@ -94,9 +101,9 @@ export default function LivesFeed({
       {!loading && !lives.length && (
         <div className="text-center py-16 text-white/45">
           <p>No one is live yet.</p>
-          {isCreator && (
+          {showCreate && (
             <button type="button" className="mm-btn mm-btn--primary mt-4" onClick={onGoLive}>
-              Be the first — Go Live
+              Be the first — Create Live
             </button>
           )}
         </div>

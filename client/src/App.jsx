@@ -320,6 +320,7 @@ function AppShell() {
     setAppState(STATES.LANDING);
     setMode(null);
     setInterest('general');
+    setJoinMeta((prev) => ({ ...prev, createLive: false }));
   };
 
   // Called when user selects a mode from the landing page
@@ -328,7 +329,12 @@ function AppShell() {
     setIsJoining(true);
     const intst = (interestVal || 'general').trim().toLowerCase() || 'general';
     const displayNick = (nick || joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
-    setJoinMeta((prev) => ({ ...prev, ...meta, displayNickname: displayNick }));
+    setJoinMeta((prev) => ({
+      ...prev,
+      ...meta,
+      displayNickname: displayNick,
+      createLive: !!meta.createLive,
+    }));
     setInterest(intst);
     setMode(m);
     setRoomId(rid);
@@ -447,6 +453,7 @@ function AppShell() {
               socket={socket}
               identityHook={audioIdentityHook}
               isCreator={isCreator}
+              initialCreateLive={!!joinMeta.createLive}
               onExit={handleBack}
             />
           </Suspense>

@@ -82,8 +82,11 @@ function validatePassword(password, { forLogin = false } = {}) {
   const p = String(password || '');
   if (!p) return { ok: false, error: 'Password is required.' };
   if (p.length > 128) return { ok: false, error: 'Password is too long.' };
-  if (!forLogin && p.length < 8) {
-    return { ok: false, error: 'Password must be at least 8 characters.' };
+  if (!forLogin) {
+    if (p.length < 8) return { ok: false, error: 'Password must be at least 8 characters.' };
+    if (!/[A-Za-z]/.test(p) || !/[0-9]/.test(p)) {
+      return { ok: false, error: 'Password must include at least one letter and one number.' };
+    }
   }
   return { ok: true, password: p };
 }

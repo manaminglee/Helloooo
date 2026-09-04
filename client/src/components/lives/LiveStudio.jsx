@@ -1,13 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
 import { API_BASE } from '../../config/apiBase';
-import { getCreatorAuthHeaders } from '../../utils/creatorAuth';
+import { getCreatorAuthHeaders, getCreatorSessionToken } from '../../utils/creatorAuth';
 import { useLiveKitLive } from '../../hooks/useLiveKitLive';
-import { NutsAmount } from '../NutsSymbol';
+import CreatorVerifyModal from '../CreatorVerifyModal';
+
+function validateLiveTitle(raw) {
+  const t = String(raw || '').trim();
+  if (!t) return { ok: true, title: '' }; // optional — server fills default
+  if (t.length < 2) return { ok: false, error: 'Title is too short.' };
+  if (t.length > 80) return { ok: false, error: 'Title max 80 characters.' };
+  return { ok: true, title: t };
+}
 
 /**
- * Creator go-live studio — publish camera via LiveKit, wallpaper, end live.
+ * Creator go-live studio — requires secure creator session + LiveKit publish.
  */
-export default function LiveStudio({ socket, onExit, onStarted }) {
+export default function LiveStudio({
+  socket,
+  onExit,
+  onStarted,
+  creatorsHook = null,
+}) {
   const videoRef = useRef(null);
   const fileRef = useRef(null);
   const [title, setTitle] = useState('');
@@ -16,6 +29,8 @@ export default function LiveStudio({ socket, onExit, onStarted }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [viewerCount, setViewerCount] = useState(0);
+  const [needLogin, setNeedLogin] = useState(!getCreatorSessionToken());
+  const [creatorHandle, setCreatorHandle] = useState('');
 
   const { connected, error: mediaError } = useLiveKitLive({
     enabled: !!liveId,
@@ -26,24 +41,69 @@ export default function LiveStudio({ socket, onExit, onStarted }) {
   });
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!getCreatorSessionToken()) {
+        setNeedLogin(true);
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/api/creators/status`, {
+          headers: { ...getCreatorAuthHeaders() },
+          credentials: 'include',
+        });
+        const data = await res.json();
+        if (cancelled) return;
+        if (!data?.data || data.data.status !== 'approved') {
+          setNeedLogin(true);
+          setError('Only approved creators can go live. Log in with your creator account.');
+          return;
+        }
+        setNeedLogin(false);
+        setCreatorHandle(data.data.handle_name || '');
+        if (data.data.live_wallpaper_url) setWallpaperUrl(data.data.live_wallpaper_url);
+        if (!title) setTitle(`${data.data.handle_name} Live`);
+      } catch {
+        if (!cancelled) setError('Could not verify creator session.');
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needLogin]);
+
+  useEffect(() => {
     if (!socket || !liveId) return undefined;
     const onViewers = ({ liveId: id, count }) => {
       if (id === liveId) setViewerCount(count);
     };
+    const onEnded = ({ liveId: id }) => {
+      if (id === liveId) {
+        setLiveId(null);
+        setError('Live ended.');
+      }
+    };
     socket.on('live:viewers', onViewers);
-    return () => socket.off('live:viewers', onViewers);
+    socket.on('live:ended', onEnded);
+    return () => {
+      socket.off('live:viewers', onViewers);
+      socket.off('live:ended', onEnded);
+    };
   }, [socket, liveId]);
 
   const saveWallpaper = async (dataUrl) => {
     setWallpaperUrl(dataUrl);
     try {
-      await fetch(`${API_BASE}/api/lives/wallpaper`, {
+      const res = await fetch(`${API_BASE}/api/lives/wallpaper`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },
         credentials: 'include',
         body: JSON.stringify({ wallpaperUrl: dataUrl }),
       });
-    } catch { /* ignore */ }
+      const data = await res.json();
+      if (!res.ok) setError(data.error || 'Could not save wallpaper');
+    } catch {
+      setError('Network error saving wallpaper');
+    }
   };
 
   const onPickWall = (e) => {
@@ -72,6 +132,20 @@ export default function LiveStudio({ socket, onExit, onStarted }) {
   };
 
   const start = async () => {
+    if (!getCreatorSessionToken()) {
+      setNeedLogin(true);
+      setError('Creator login required');
+      return;
+    }
+    if (!socket?.id) {
+      setError('Socket not connected — wait a moment and retry.');
+      return;
+    }
+    const titleCheck = validateLiveTitle(title);
+    if (!titleCheck.ok) {
+      setError(titleCheck.error);
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -80,14 +154,15 @@ export default function LiveStudio({ socket, onExit, onStarted }) {
         headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },
         credentials: 'include',
         body: JSON.stringify({
-          title: title.trim() || undefined,
+          title: titleCheck.title || undefined,
           wallpaperUrl: wallpaperUrl || undefined,
-          socketId: socket?.id,
+          socketId: socket.id,
         }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
         setError(data.error || 'Could not start live');
+        if (res.status === 401) setNeedLogin(true);
         return;
       }
       setLiveId(data.live.id);
@@ -117,6 +192,37 @@ export default function LiveStudio({ socket, onExit, onStarted }) {
     onExit?.();
   };
 
+  if (needLogin && creatorsHook) {
+    return (
+      <CreatorVerifyModal
+        open
+        onClose={() => {
+          if (getCreatorSessionToken()) setNeedLogin(false);
+          else onExit?.();
+        }}
+        registerCreator={creatorsHook.registerCreator}
+        login={async (...args) => {
+          const res = await creatorsHook.login(...args);
+          if (res.success) setNeedLogin(false);
+          return res;
+        }}
+        checkStatus={creatorsHook.checkStatus}
+        requestPasswordReset={creatorsHook.requestPasswordReset}
+        showAlert={() => {}}
+        onOpenDashboard={() => setNeedLogin(false)}
+      />
+    );
+  }
+
+  if (needLogin) {
+    return (
+      <div className="mm-live-shell mm-live-shell--center">
+        <p className="text-white font-bold">Creator login required</p>
+        <button type="button" className="mm-btn mm-btn--ghost mt-4" onClick={onExit}>Back</button>
+      </div>
+    );
+  }
+
   return (
     <div className="mm-live-studio mm-live-nocapture">
       <div className="mm-live-studio__preview">
@@ -129,32 +235,39 @@ export default function LiveStudio({ socket, onExit, onStarted }) {
       <div className="mm-live-studio__panel">
         <header className="flex items-center justify-between gap-2">
           <button type="button" className="mm-live-icon-btn" onClick={end}>←</button>
-          <h1 className="text-white font-black text-sm">{liveId ? 'You are LIVE' : 'Go Live'}</h1>
+          <h1 className="text-white font-black text-sm">
+            {liveId ? 'You are LIVE' : 'Create Live'}
+            {creatorHandle ? ` · @${creatorHandle}` : ''}
+          </h1>
           {liveId ? <span className="text-xs text-white/50">{viewerCount} watching</span> : <span />}
         </header>
 
         {!liveId ? (
           <div className="space-y-3 mt-4">
             <label className="mm-audio-id-label">
-              Title
+              Live title
               <input
                 className="mm-audio-id-input"
                 value={title}
                 onChange={(e) => setTitle(e.target.value.slice(0, 80))}
                 placeholder="Tonight's vibe…"
+                maxLength={80}
               />
             </label>
             <div>
-              <p className="mm-audio-id-label !mb-2">Wallpaper (saved for next time)</p>
+              <p className="mm-audio-id-label !mb-2">Wallpaper (saved for next live)</p>
               <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPickWall} />
               <button type="button" className="mm-btn mm-btn--ghost w-full" onClick={() => fileRef.current?.click()}>
                 {wallpaperUrl ? 'Change wallpaper' : 'Upload wallpaper'}
               </button>
             </div>
             {(error || mediaError) && <p className="mm-audio-id-error">{error || mediaError}</p>}
-            <button type="button" className="mm-btn mm-btn--primary w-full" disabled={busy} onClick={start}>
-              {busy ? 'Starting…' : 'Start live'}
+            <button type="button" className="mm-btn mm-btn--primary w-full" disabled={busy || !socket?.connected} onClick={start}>
+              {busy ? 'Starting…' : 'Start live now'}
             </button>
+            <p className="text-[10px] text-white/35 text-center">
+              Requires approved creator session + LiveKit. Viewers gift Nuts to you.
+            </p>
           </div>
         ) : (
           <div className="space-y-3 mt-4">

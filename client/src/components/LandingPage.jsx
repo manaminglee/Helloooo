@@ -22,6 +22,9 @@ import { CreatorNotificationBell } from './CreatorNotificationBell';
 import { compressImageFile } from '../utils/compressImage';
 import { CreatorLiveStudio } from './CreatorLiveStudio';
 import { validateCreatorUpi } from '../utils/creatorValidation';
+import CreatorVerifyModal from './CreatorVerifyModal';
+import CreatorHub from './CreatorHub';
+import { clearCreatorSession, getCreatorSessionToken } from '../utils/creatorAuth';
 
 // Below-the-fold / secondary UI — keep landing first paint light.
 const MiniTrendChart = lazyRetry(() =>
@@ -228,7 +231,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [dialog, setDialog] = useState(null); // { title, body, confirm?, onConfirm?, onCancel? }
   const [showCommunityPolicy, setShowCommunityPolicy] = useState(false);
   const [pendingVideoMode, setPendingVideoMode] = useState(null);
-  const { creatorStatus, registerCreator, verifyReferral, requestWithdrawal, login, checkStatus, reRequestApproval, updateProfile, fetchStatus, fetchMyActivity, fetchMyWithdrawals, fetchMyAnalytics, fetchFeaturedCreators, requestPasswordReset, resetPassword } = useCreators();
+  const { creatorStatus, registerCreator, verifyReferral, requestWithdrawal, login, logout, checkStatus, reRequestApproval, updateProfile, fetchStatus, fetchMyActivity, fetchMyWithdrawals, fetchMyAnalytics, fetchFeaturedCreators, requestPasswordReset, resetPassword } = useCreators();
 
   const creatorReferralCode =
     creatorStatus?.referral_code ||
@@ -601,9 +604,63 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
     ? `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(referralUrl)}`
     : '';
 
-  const jumpFromDashboard = (mode) => {
+  const openCreatorFlow = () => {
+    if (creatorStatus?.status === 'approved') {
+      setShowDashboardModal(true);
+      return;
+    }
+    setShowCreatorModal(true);
+  };
+
+  const jumpFromDashboard = (mode, meta = {}) => {
     setShowDashboardModal(false);
+    if (mode === 'lives' && meta.createLive) {
+      const nick = (joinMeta.displayNickname || creatorStatus?.handle_name || 'Anonymous').trim().slice(0, 30);
+      if (setJoinMeta) {
+        setJoinMeta((p) => ({ ...p, displayNickname: nick, createLive: true }));
+      }
+      onJoin('general', nick, 'lives', null, { createLive: true, displayNickname: nick });
+      return;
+    }
     handleStartInteraction(mode, true);
+  };
+
+  const onCreatorHubAction = (actionId) => {
+    switch (actionId) {
+      case 'create_live':
+        if (!getCreatorSessionToken()) {
+          showAlert('Login required', 'Secure creator session missing. Please log in again.');
+          setShowDashboardModal(false);
+          setShowCreatorModal(true);
+          return;
+        }
+        jumpFromDashboard('lives', { createLive: true });
+        break;
+      case 'watch_lives':
+        jumpFromDashboard('lives');
+        break;
+      case 'group_text':
+      case 'group_video':
+      case 'video':
+        jumpFromDashboard(actionId);
+        break;
+      case 'profile':
+        setProfileForm({ bio: creatorStatus.bio || '', avatar: creatorStatus.avatar_url || '' });
+        setShowProfileModal(true);
+        break;
+      case 'payout':
+        // Scroll focus via UPI section — keep dashboard open
+        document.getElementById('mm-creator-payout')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        break;
+      case 'referral':
+        if (referralUrl) {
+          navigator.clipboard.writeText(referralUrl);
+          showAlert('Copied', 'Referral link copied.');
+        }
+        break;
+      default:
+        break;
+    }
   };
 
   const saveDashboardUpi = async () => {
@@ -693,7 +750,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             <div className="mm-landing-header__actions">
               <button
                 type="button"
-                onClick={() => setShowCreatorModal(true)}
+                onClick={openCreatorFlow}
                 className="mm-hide-mobile mm-compact-btn px-3.5 py-2 rounded-xl border border-violet-500/25 bg-violet-500/10 text-xs font-semibold text-violet-200 hover:bg-violet-500/20 transition-colors"
               >
                 For Creators
@@ -733,9 +790,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   >Dashboard</button>
                   <button
                     type="button"
-                    onClick={() => {
-                      window.localStorage.setItem('mm_logout_flag', 'true');
-                      window.localStorage.removeItem('mm_creatorId');
+                    onClick={async () => {
+                      await logout();
                       window.location.reload();
                     }}
                     className="mm-compact-btn px-2 py-1.5 bg-rose-500/10 border border-rose-500/20 text-rose-500 hover:bg-rose-500 hover:text-white rounded-lg text-[8px] font-black uppercase tracking-widest transition-all"
@@ -779,7 +835,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 value={languageFilter}
                 onChange={setLanguageFilter}
               />
-              <button type="button" onClick={() => setShowCreatorModal(true)} className="mm-hide-desktop mm-landing-chip px-4">
+              <button type="button" onClick={openCreatorFlow} className="mm-hide-desktop mm-landing-chip px-4">
                 For Creators
               </button>
               <button type="button" onClick={() => setLowPower(!lowPower)} className="mm-landing-chip px-4">
@@ -980,7 +1036,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             </div>
             <div className="space-y-3">
               <h5 className="mm-landing-section-label mb-2">Creators</h5>
-              <button type="button" onClick={() => setShowCreatorModal(true)} className="text-sm text-left text-white/50 hover:text-white transition-colors">Open creator program</button>
+              <button type="button" onClick={openCreatorFlow} className="text-sm text-left text-white/50 hover:text-white transition-colors">Open creator program</button>
             </div>
           </div>
         </div>
@@ -990,599 +1046,21 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
         </div>
       </footer>
 
-      {/* CREATOR MODAL */}
-      {showCreatorModal && (
-        <div className="mm-modal-overlay z-[2000]" onClick={() => setShowCreatorModal(false)}>
-          <div className="relative w-full max-w-lg bg-[#161a22] border border-white/10 rounded-2xl p-6 sm:p-8 overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
-            <button
-              onClick={() => setShowCreatorModal(false)}
-              className="absolute top-4 right-4 text-white/40 hover:text-white transition-colors"
-            >✕</button>
+      <CreatorVerifyModal
+        open={showCreatorModal}
+        onClose={() => setShowCreatorModal(false)}
+        registerCreator={registerCreator}
+        login={login}
+        checkStatus={checkStatus}
+        requestPasswordReset={requestPasswordReset}
+        featuredCreators={featuredCreators}
+        showAlert={showAlert}
+        onOpenDashboard={() => {
+          setShowCreatorModal(false);
+          setShowDashboardModal(true);
+        }}
+      />
 
-            <div className="text-center mb-6">
-              <h3 className="text-xl font-semibold text-white">Creator Program</h3>
-              <p className="text-sm text-white/50 mt-1">Apply, check status, or log in to manage your creator account.</p>
-            </div>
-
-            {!approvalData && !waitingForApproval && !creatorStatus && (
-              <Suspense fallback={<p className="text-sm text-white/40 text-center py-6">Loading…</p>}>
-                <CreatorMatrix
-                  embedded
-                  creatorStatus={creatorStatus}
-                  onOpenDashboard={() => { setShowCreatorModal(false); setShowDashboardModal(true); }}
-                  onOpenApply={() => {}}
-                  onOpenStatus={() => { setShowCreatorModal(false); setShowStatusModal(true); }}
-                  onOpenLogin={() => { setShowCreatorModal(false); setShowLoginModal(true); }}
-                  onEditProfile={() => {
-                    setProfileForm({
-                      bio: creatorStatus?.bio || '',
-                      avatar: creatorStatus?.avatar_url || ''
-                    });
-                    setShowProfileModal(true);
-                  }}
-                  onWithdraw={(upi) => requestWithdrawal(upi)}
-                  onLogout={() => {
-                    localStorage.setItem('mm_logout_flag', '1');
-                    localStorage.removeItem('mm_creatorId');
-                    window.location.reload();
-                  }}
-                  showAlert={showAlert}
-                />
-              </Suspense>
-            )}
-
-            <div className="text-center mb-6">
-              <p className="text-xs text-white/40">{approvalData ? 'Approved account' : waitingForApproval ? 'Application in review' : creatorStatus ? 'Your creator account' : 'New application'}</p>
-            </div>
-
-            {featuredCreators.length > 0 && !creatorStatus && (
-              <div className="mb-8">
-                <div className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-3">Featured creators</div>
-                <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">
-                  {featuredCreators.map((c) => (
-                    <a
-                      key={c.handle_name}
-                      href={`/creator/${c.handle_name}`}
-                      className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-2xl bg-white/[0.04] border border-white/10 hover:border-violet-500/30 transition-colors"
-                    >
-                      {c.avatar_url ? (
-                        <img src={c.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover" />
-                      ) : (
-                        <span className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-xs">⭐</span>
-                      )}
-                      <span className="text-[10px] font-black text-white">@{c.handle_name}</span>
-                    </a>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {approvalData ? (
-              <div className="space-y-8 animate-in-zoom">
-                <div className="p-8 rounded-[40px] bg-emerald-500/5 border-2 border-emerald-500/20 space-y-6 shadow-[0_0_50px_rgba(16,185,129,0.1)]">
-                  <div className="flex flex-col items-center">
-                    <div className="w-20 h-20 rounded-full bg-emerald-500/20 flex items-center justify-center text-4xl mb-4 animate-bounce">✅</div>
-                    <h4 className="text-xl font-black italic uppercase text-white">Validation Success!</h4>
-                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
-                      {approvalData.password ? 'Admin-assigned credentials' : 'Use your registration password to log in'}
-                    </p>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="bg-black/40 rounded-2xl p-4 border border-white/5 flex justify-between items-center group">
-                      <div>
-                        <div className="text-[8px] font-black uppercase text-white/20 mb-1">Creator Handle</div>
-                        <div className="text-xs font-black text-white italic uppercase tracking-widest">@{approvalData.handle_name}</div>
-                      </div>
-                      <span className="text-[10px] opacity-10 group-hover:opacity-40 transition-opacity">🆔</span>
-                    </div>
-                    {approvalData.password ? (
-                    <div className="bg-black/40 rounded-2xl p-4 border border-white/5 flex justify-between items-center group">
-                      <div>
-                        <div className="text-[8px] font-black uppercase text-white/20 mb-1">Temporary Password</div>
-                        <div className="text-xs font-black text-violet-400 italic uppercase select-all tracking-widest">{approvalData.password}</div>
-                      </div>
-                      <span className="text-[10px] opacity-10 group-hover:opacity-40 transition-opacity">🔒</span>
-                    </div>
-                    ) : (
-                    <div className="bg-black/40 rounded-2xl p-4 border border-white/5">
-                      <div className="text-[8px] font-black uppercase text-white/20 mb-1">Login Password</div>
-                      <p className="text-[10px] text-white/50 leading-relaxed">Use the password you chose when you applied. Open the bell icon for admin updates.</p>
-                    </div>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      const content = approvalData.password
-                        ? `HELLOOOO CREATOR CREDENTIALS\n\nHandle: @${approvalData.handle_name}\nAccess Code: ${approvalData.referral_code}\nPassword: ${approvalData.password}\n\nNote: Reach admin team at manaminglee@gmail.com for issues.`
-                        : `HELLOOOO CREATOR CREDENTIALS\n\nHandle: @${approvalData.handle_name}\nAccess Code: ${approvalData.referral_code}\nPassword: (the one you set during registration)\n\nNote: Reach admin team at manaminglee@gmail.com for issues.`;
-                      const blob = new Blob([content], { type: 'text/plain' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = `mm_approved_${approvalData.handle_name}.txt`;
-                      a.click();
-                      URL.revokeObjectURL(url);
-                      window.localStorage.setItem('mm_creatorId', approvalData.referral_code);
-                      window.location.reload();
-                    }}
-                    className="w-full py-5 bg-emerald-500 text-black font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-white hover:scale-[1.02] active:scale-95 transition-all shadow-xl shadow-emerald-500/20"
-                  >Download and Enter Hub →</button>
-                </div>
-              </div>
-            ) : waitingForApproval ? (
-              <div className="space-y-8 animate-in-zoom">
-                <div className="text-center py-6">
-                  {approvalTimer > 0 ? (
-                    <div className="space-y-6">
-                      <div className="relative w-32 h-32 mx-auto flex items-center justify-center">
-                        <div className="absolute inset-0 border-4 border-violet-500/20 rounded-full" />
-                        <div
-                          className="absolute inset-0 border-4 border-violet-500 border-t-transparent rounded-full animate-spin"
-                          style={{ animationDuration: '0.8s' }}
-                        />
-                        <span className="text-3xl font-black italic text-violet-400 tabular-nums">{approvalTimer}</span>
-                      </div>
-                      <div className="space-y-2">
-                        <h4 className="text-xl font-black italic uppercase tracking-tighter text-white">Validating Identity...</h4>
-                        <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest animate-pulse">
-                          Application saved — waiting for admin appraisal
-                        </p>
-                      </div>
-                      {(uniqueAccessCode || creatorStatus?.referral_code) && (
-                        <div className="mx-auto max-w-sm rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-left">
-                          <p className="text-[9px] font-black uppercase tracking-widest text-white/35 mb-1">Your access code</p>
-                          <p className="text-sm font-bold text-violet-200 break-all select-all">
-                            {uniqueAccessCode || creatorStatus?.referral_code}
-                          </p>
-                          <p className="text-[9px] text-white/30 mt-2">Save this now. Use it under Check Status after approval.</p>
-                        </div>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => setApprovalTimer(0)}
-                        className="text-[10px] font-bold uppercase tracking-widest text-white/40 hover:text-white/70"
-                      >
-                        Skip wait → show code
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-8 animate-fade-in-up">
-                      <div className="p-8 rounded-[45px] bg-indigo-500/5 border-2 border-indigo-500/20 space-y-8 shadow-[0_0_50px_rgba(99,102,241,0.15)]">
-                        <div className="text-center">
-                          <h4 className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400/60 mb-2">Unique Access Code</h4>
-                          <div className="w-full bg-black/40 rounded-[30px] py-10 px-6 text-2xl font-black italic text-center tracking-[0.1em] text-white border border-white/5 select-all hover:border-indigo-500/30 transition-all">
-                            {uniqueAccessCode || creatorStatus?.referral_code || '—'}
-                          </div>
-                        </div>
-
-                        <div className="flex flex-col items-center gap-4">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const code = uniqueAccessCode || creatorStatus?.referral_code;
-                              if (!code) return;
-                              navigator.clipboard.writeText(code);
-                              setCodeCopied(true);
-                              showAlert('Code copied', 'Your unique access code was saved to the clipboard.');
-                            }}
-                            className="px-10 py-4 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-indigo-500 hover:scale-105 transition-all shadow-2xl shadow-indigo-600/30 active:scale-95"
-                          >
-                            {codeCopied ? 'Code Copied ✓' : 'Copy Access Code'}
-                          </button>
-
-                          <p className="text-[9px] font-bold text-white/35 uppercase text-center leading-relaxed max-w-xs">
-                            An admin will approve your application. Use <span className="text-white/70">Check Status</span> or <span className="text-white/70">Creator Login</span> with this code and your password.
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setWaitingForApproval(false);
-                            setShowCreatorModal(false);
-                            setShowStatusModal(true);
-                          }}
-                          className="w-full h-14 bg-white text-black font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-indigo-400 transition-all"
-                        >
-                          Check Status
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setWaitingForApproval(false);
-                            setShowCreatorModal(false);
-                          }}
-                          className="w-full h-12 bg-white/5 border border-white/10 text-white/50 font-black uppercase tracking-widest text-[10px] rounded-2xl hover:text-white hover:border-white/20 transition-all"
-                        >
-                          Close
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : !creatorStatus ? (
-              <div className="space-y-6">
-                <div className="space-y-4 text-center mb-8">
-                  <p className="text-xs font-bold text-white/60 leading-normal">
-                    Verified creators get a <span className="text-violet-400">Blue Tick</span>, unique handles, and earn <span className="text-emerald-400">₹150 per 10k clicks</span>.
-                  </p>
-                </div>
-                <div className="space-y-4">
-                  <input
-                    type="text"
-                    placeholder="@handle_name"
-                    className="w-full h-14 bg-white/5 border border-white/5 focus:border-violet-500/30 rounded-2xl px-6 text-sm outline-none text-white font-bold"
-                    value={creatorForm.handle}
-                    onChange={e => {
-                      const h = e.target.value.replace(/^@/, '');
-                      setCreatorFormError('');
-                      const platformUrls = {
-                        'Instagram': `https://instagram.com/${h}`,
-                        'YouTube': `https://youtube.com/@${h}`,
-                        'Snapchat': `https://snapchat.com/add/${h}`,
-                        'X (Twitter)': `https://x.com/${h}`,
-                        'TikTok': `https://tiktok.com/@${h}`,
-                      };
-                      const autoLink = h ? (platformUrls[creatorForm.platform] || '') : '';
-                      setCreatorForm(f => ({ ...f, handle: e.target.value, link: autoLink }));
-                      setLinkValidated(false);
-                    }}
-                  />
-                  {creatorForm.handle && !validateCreatorHandle(creatorForm.handle).ok && (
-                    <p className="text-[9px] text-amber-400/80 px-2">{validateCreatorHandle(creatorForm.handle).error}</p>
-                  )}
-                  <input
-                    type="email"
-                    placeholder="Email (for approval & payout updates)"
-                    className="w-full h-14 bg-white/5 border border-white/5 focus:border-violet-500/30 rounded-2xl px-6 text-sm outline-none text-white font-bold"
-                    value={creatorForm.email}
-                    onChange={(e) => setCreatorForm((f) => ({ ...f, email: e.target.value }))}
-                  />
-                  <p className="text-[9px] text-white/25 px-2">Recommended — used for approval, password reset, and payout emails.</p>
-                  <input
-                    type="password"
-                    placeholder="Create login password (min 8 characters)"
-                    autoComplete="new-password"
-                    className="w-full h-14 bg-white/5 border border-white/5 focus:border-violet-500/30 rounded-2xl px-6 text-sm outline-none text-white font-bold"
-                    value={creatorForm.password}
-                    onChange={(e) => setCreatorForm((f) => ({ ...f, password: e.target.value }))}
-                  />
-                  <input
-                    type="password"
-                    placeholder="Confirm login password"
-                    autoComplete="new-password"
-                    className="w-full h-14 bg-white/5 border border-white/5 focus:border-violet-500/30 rounded-2xl px-6 text-sm outline-none text-white font-bold"
-                    value={creatorForm.confirmPassword}
-                    onChange={(e) => setCreatorForm((f) => ({ ...f, confirmPassword: e.target.value }))}
-                  />
-                  {creatorForm.password && !validateCreatorPassword(creatorForm.password, creatorForm.confirmPassword).ok && creatorForm.confirmPassword && (
-                    <p className="text-[9px] text-amber-400/80 px-2">{validateCreatorPassword(creatorForm.password, creatorForm.confirmPassword).error}</p>
-                  )}
-                  <p className="text-[9px] text-white/25 px-2">You will use this password to log in after admin approval.</p>
-                  <div className="relative group">
-                    <button
-                      onClick={() => setPlatformDropdownOpen(!platformDropdownOpen)}
-                      type="button"
-                      className="w-full h-14 bg-white/5 border border-white/5 focus:border-violet-500/30 rounded-2xl px-6 text-sm outline-none text-white/50 flex items-center justify-between transition-all hover:bg-white/[0.08]"
-                    >
-                      <span>{creatorForm.platform || 'Select Platform'}</span>
-                      <svg className={`w-4 h-4 transition-transform duration-300 ${platformDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-
-                    {platformDropdownOpen && (
-                      <div className="absolute top-[calc(100%+8px)] left-0 right-0 z-[1000] bg-[#111] border border-white/10 rounded-2xl overflow-hidden shadow-2xl animate-in-zoom">
-                        {['Instagram', 'YouTube', 'Snapchat', 'X (Twitter)', 'TikTok'].map(p => {
-                          const platformUrls = {
-                            'Instagram': `https://instagram.com/${creatorForm.handle.replace(/^@/, '')}`,
-                            'YouTube': `https://youtube.com/@${creatorForm.handle.replace(/^@/, '')}`,
-                            'Snapchat': `https://snapchat.com/add/${creatorForm.handle.replace(/^@/, '')}`,
-                            'X (Twitter)': `https://x.com/${creatorForm.handle.replace(/^@/, '')}`,
-                            'TikTok': `https://tiktok.com/@${creatorForm.handle.replace(/^@/, '')}`,
-                          };
-                          return (
-                            <button
-                              key={p}
-                              onClick={() => {
-                                const newLink = platformUrls[p] || '';
-                                setCreatorForm(f => ({ ...f, platform: p, link: newLink }));
-                                setLinkValidated(false);
-                                setPlatformDropdownOpen(false);
-                              }}
-                              className="w-full h-12 px-6 text-left text-xs font-bold text-white/60 hover:text-white hover:bg-violet-500/10 transition-all border-b border-white/[0.03] last:border-0"
-                            >
-                              {p}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      <input
-                        type="url"
-                        placeholder={`e.g. https://instagram.com/${creatorForm.handle.replace(/^@/, '') || 'yourhandle'}`}
-                        className={`flex-1 h-14 bg-white/5 border rounded-2xl px-4 text-sm outline-none text-white transition-all ${linkValidated ? 'border-emerald-500/50 shadow-[0_0_10px_#10b98120]' :
-                          linkVerifyFailed ? 'border-rose-500/40' :
-                            'border-white/5 focus:border-violet-500/30'
-                          }`}
-                        value={creatorForm.link}
-                        onChange={e => {
-                          setCreatorForm({ ...creatorForm, link: e.target.value });
-                          setLinkValidated(false);
-                          setLinkVerifyFailed(false);
-                        }}
-                      />
-                      <button
-                        type="button"
-                        disabled={linkVerifying || !creatorForm.link}
-                        onClick={async () => {
-                          let url = creatorForm.link.trim();
-                          if (!url) return;
-                          if (!/^https?:\/\//i.test(url)) {
-                            url = `https://${url}`;
-                            setCreatorForm((f) => ({ ...f, link: url }));
-                          }
-                          try { new URL(url); } catch { return showAlert('Invalid URL', 'Please enter a valid URL starting with https://'); }
-                          setLinkVerifying(true);
-                          setLinkValidated(false);
-                          setLinkVerifyFailed(false);
-                          try {
-                            const res = await fetch(`${API_BASE}/api/validate-url`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ url })
-                            });
-                            const data = await res.json();
-                            if (data.normalized && data.normalized !== url) {
-                              setCreatorForm((f) => ({ ...f, link: data.normalized }));
-                            }
-                            if (data.valid) {
-                              setLinkValidated(true);
-                              setLinkVerifyFailed(false);
-                            } else {
-                              setLinkVerifyFailed(true);
-                              setLinkValidated(false);
-                            }
-                          } catch {
-                            // Network error talking to our API — allow submission; format already checked.
-                            setLinkValidated(true);
-                          } finally {
-                            setLinkVerifying(false);
-                          }
-                        }}
-                        title="Background verify — no new tab opened"
-                        className={`h-14 px-4 rounded-2xl font-black text-[9px] uppercase tracking-widest transition-all border min-w-[80px] flex items-center justify-center ${linkValidated ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400' :
-                          linkVerifyFailed ? 'bg-rose-500/20 border-rose-500/40 text-rose-400' :
-                            linkVerifying ? 'bg-white/5 border-white/10 text-white/40 cursor-wait' :
-                              'bg-white/5 border-white/10 text-white/40 hover:border-violet-500/40 hover:text-violet-400 disabled:opacity-50'
-                          }`}
-                      >
-                        {linkVerifying ? (
-                          <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                          </svg>
-                        ) : linkValidated ? '✓ Live' : linkVerifyFailed ? '✗ Dead' : 'Verify'}
-                      </button>
-                    </div>
-                    <p className={`text-[9px] px-2 ${linkValidated ? 'text-emerald-400/60' : linkVerifyFailed ? 'text-rose-400/60' : 'text-white/20'
-                      }`}>
-                      {linkValidated ? '✓ Profile link looks good.' :
-                        linkVerifyFailed ? '⚠ Could not verify that link. Check the URL, or submit anyway if you are sure it is correct.' :
-                          'Paste your Instagram / YouTube / TikTok / X profile URL, then Verify.'}
-                    </p>
-                  </div>
-                  <button
-                    onClick={async () => {
-                      setCreatorFormError('');
-                      const handleCheck = validateCreatorHandle(creatorForm.handle);
-                      if (!handleCheck.ok) return showAlert('Invalid handle', handleCheck.error);
-                      if (!creatorForm.link) return showAlert('Missing Profile Link', 'Please enter your profile link.');
-                      if (!linkValidated) {
-                        const go = await showConfirm('Profile Not Verified', "You haven't verified your profile link yet. Are you sure you want to submit?");
-                        if (!go) return;
-                      }
-                      const passCheck = validateCreatorPassword(creatorForm.password, creatorForm.confirmPassword);
-                      if (!passCheck.ok) return showAlert('Password required', passCheck.error);
-                      const res = await registerCreator(
-                        creatorForm.handle,
-                        creatorForm.platform,
-                        creatorForm.link,
-                        creatorForm.email,
-                        creatorForm.password,
-                        creatorForm.confirmPassword
-                      );
-                      if (res.success) {
-                        setUniqueAccessCode(res.accessCode);
-                        setWaitingForApproval(true);
-                        setApprovalTimer(15);
-                        fetchStatus();
-                      }
-                      else {
-                        setCreatorFormError(res.error || 'Registration failed');
-                        showAlert('Registration Failed', res.error || 'Something went wrong. Please try again.');
-                      }
-                    }}
-                    className="w-full h-14 bg-violet-400 text-black font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-white transition-all shadow-xl shadow-violet-500/25"
-                  >Register as Creator</button>
-
-                  <div className="pt-10 flex flex-col items-center gap-6 border-t border-white/5">
-                    <div className="flex items-center gap-4 text-[8px] font-black uppercase tracking-[0.4em] text-white/20 whitespace-nowrap italic">
-                      <span>Apply</span>
-                      <span className="text-violet-500 animate-pulse">→</span>
-                      <span>Check Status</span>
-                      <span className="text-violet-500 animate-pulse">→</span>
-                      <span>Login</span>
-                    </div>
-
-                    <div className="flex gap-4 w-full">
-                      <button
-                        onClick={() => { setShowCreatorModal(false); setShowStatusModal(true); }}
-                        className="flex-1 py-4 rounded-xl bg-white/5 border border-white/5 text-[9px] font-black uppercase text-white/40 hover:text-violet-400 hover:border-violet-400/20 transition-all tracking-widest"
-                      >Check Status</button>
-                      <button
-                        onClick={() => { setShowCreatorModal(false); setShowLoginModal(true); }}
-                        className="flex-1 py-4 rounded-xl bg-white/5 border border-white/5 text-[9px] font-black uppercase text-white/40 hover:text-indigo-400 hover:border-indigo-400/20 transition-all tracking-widest"
-                      >Creator Login</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-8 animate-in-zoom">
-                <div className="p-8 rounded-[32px] bg-white/[0.02] border border-white/5 space-y-4 text-center">
-                  <div className="text-[10px] font-black uppercase tracking-[0.4em] text-white/30">Account Identity</div>
-                  <h4 className="text-3xl font-black italic uppercase tracking-tighter text-white">
-                    @{creatorStatus.handle_name}
-                    {creatorStatus.status === 'approved' && <BlueTick />}
-                  </h4>
-                  <div className="flex justify-center gap-4">
-                    {creatorStatus.status === 'approved' ? (
-                      <span className="px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-black uppercase tracking-widest shadow-[0_0_20px_#10b98130]">Account Active</span>
-                    ) : (
-                      <span className="px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-black uppercase tracking-widest animate-pulse">Waiting for manual appraisal</span>
-                    )}
-                  </div>
-                </div>
-                {creatorStatus.status === 'approved' && (
-                  <div className="space-y-6">
-                    {/* GROWTH VELOCITY ANALYTICS */}
-                    <div className="mb-8 animate-in-zoom" style={{ animationDelay: '100ms' }}>
-                      <Suspense fallback={null}>
-                        <MiniTrendChart data={dashboardAnalytics.length ? dashboardAnalytics : [0, 0, 0, 0, 0, 0, 0]} color="#a78bfa" />
-                      </Suspense>
-                      <div className="flex justify-between mt-3 px-2 text-[8px] font-black uppercase text-white/10 tracking-[0.3em] italic">
-                        <span className="flex items-center gap-2">
-                          <span className="w-1 h-1 rounded-full bg-violet-400" />
-                          Activity: referrals + tips + follows (7 days)
-                        </span>
-                        <span className="text-emerald-400/40 tabular-nums">
-                          {dashboardAnalytics.reduce((a, b) => a + b, 0)} events
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="p-6 rounded-[32px] bg-white/[0.03] border border-white/5">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-white/20 mb-1">Earned</div>
-                        <div className="text-xl font-black italic text-emerald-400">₹{creatorStatus.earnings_rs || 0}</div>
-                        <div className="text-[8px] font-bold text-white/10 uppercase mt-1 italic">Creator Earnings</div>
-                      </div>
-                      <div className="p-6 rounded-[32px] bg-white/[0.03] border border-white/5">
-                        <div className="text-[9px] font-black uppercase tracking-widest text-white/20 mb-1">Referral Clicks</div>
-                        <div className="text-xl font-black italic text-indigo-400">{creatorStatus.referral_count || 0}</div>
-                        <div className="text-[8px] font-bold text-white/10 uppercase mt-1 italic">Total Referrals</div>
-                      </div>
-                    </div>
-
-                    <div className="p-8 rounded-[32px] bg-indigo-500/5 border border-indigo-500/10 space-y-4">
-                      <div className="text-center">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400 italic">Profile Details</span>
-                        <p className="text-[8px] font-black text-white/20 uppercase mt-1">Use these to login from any device</p>
-                      </div>
-                      <div className="grid grid-cols-1 gap-3">
-                        <div className="bg-black/40 rounded-2xl p-4 border border-white/5 flex justify-between items-center group">
-                          <div>
-                            <div className="text-[8px] font-black uppercase text-white/20 mb-1">Public Handle</div>
-                            <div className="text-xs font-black text-white italic uppercase">{creatorStatus?.handle_name || ''}</div>
-                          </div>
-                          <span className="text-[10px] opacity-10 group-hover:opacity-40 transition-opacity">🆔</span>
-                        </div>
-                        <div className="bg-black/40 rounded-2xl p-4 border border-white/5 flex justify-between items-center group">
-                          <div>
-                            <div className="text-[8px] font-black uppercase text-white/20 mb-1">Account Password</div>
-                            <div className="text-xs font-black text-emerald-400 italic uppercase select-all">{creatorStatus?.password || ''}</div>
-                          </div>
-                          <span className="text-[10px] opacity-10 group-hover:opacity-40 transition-opacity">🔒</span>
-                        </div>
-                        <button
-                          onClick={() => {
-                            const content = `HELLOOOO CREATOR CREDENTIALS\n\nHandle: @${creatorStatus.handle_name}\nCreator ID: ${creatorStatus.referral_code}\nPassword: ${creatorStatus.password}\nReferral Link: ${window.location.origin}/?ref=${creatorStatus.referral_code}\n\nNote: If you have forgotten these, reach the admin team at manaminglee@gmail.com`;
-                            const blob = new Blob([content], { type: 'text/plain' });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = `mm_creator_${creatorStatus.handle_name}.txt`;
-                            a.click();
-                            URL.revokeObjectURL(url);
-                            showAlert('Downloaded', 'Your creator credentials were downloaded to this device. Keep them private.');
-                          }}
-                          className="w-full py-4 rounded-xl bg-white/5 border border-white/10 text-white/40 text-[9px] font-black uppercase tracking-[0.2em] hover:bg-white hover:text-black transition-all"
-                        >Download Account Details →</button>
-                        <p className="text-[7px] text-center font-black uppercase tracking-widest text-white/10 italic">Forgotten? Reach Admin Team</p>
-                      </div>
-                    </div>
-
-                    <div className="p-8 rounded-[32px] bg-white/[0.01] border border-white/5">
-                      <div className="flex justify-between items-center mb-4 px-2">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-white/20">Authorized IP Addresses</span>
-                        <span className="text-[8px] font-black text-emerald-400 uppercase italic animate-pulse">Verified</span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {(creatorStatus.authorized_ips || []).map(ipNode => (
-                          <span key={ipNode} className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/5 text-[9px] font-bold text-white/30 uppercase tracking-widest">{ipNode}</span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-4 pt-6 border-t border-white/5">
-                  <div className="flex justify-between items-center px-4">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-white/30">Referral Link</span>
-                    {creatorStatus.status === 'approved' && <span className="text-[9px] font-bold text-emerald-400 uppercase italic animate-pulse">Referral Ready</span>}
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      disabled
-                      readOnly
-                      value={creatorStatus.status === 'approved' ? `${window.location.origin}?ref=${creatorStatus.referral_code}` : 'Pending Appraisal...'}
-                      className="flex-1 h-14 bg-white/5 border border-white/5 rounded-2xl px-6 text-[10px] font-bold text-white/40 outline-none overflow-hidden text-ellipsis italic"
-                    />
-                    {creatorStatus.status === 'approved' && (
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(`${window.location.origin}?ref=${creatorStatus.referral_code}`);
-                          showAlert('Link copied', 'Your referral link was saved to the clipboard.');
-                        }}
-                        className="px-8 h-14 rounded-2xl bg-violet-400 text-black font-black uppercase tracking-widest text-[10px] hover:bg-white transition-all shadow-xl shadow-violet-500/25"
-                      >Copy Link</button>
-                    )}
-                  </div>
-                </div>
-
-                {creatorStatus.status === 'approved' && creatorStatus.earnings_rs >= 1500 && (
-                  <button
-                    onClick={async () => {
-                      const upi = prompt('Enter UPI ID for withdrawal:');
-                      if (upi) {
-                        const res = await requestWithdrawal(upi);
-                        if (res.success) showAlert('Withdrawal requested', 'Your withdrawal request was sent. Coins will be debited after verification.');
-                        else showAlert('Withdrawal failed', res.error || 'Could not submit the withdrawal request.');
-                      }
-                    }}
-                    className="w-full h-14 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-emerald-500 hover:text-white transition-all shadow-xl shadow-emerald-500/20"
-                  >Authorize Withdrawal (₹{creatorStatus.earnings_rs})</button>
-                )}
-
-                <div className="text-[9px] font-bold text-white/10 text-center uppercase tracking-widest italic pt-4">
-                  Earnings Logic: 10 Coins / Click | 10000 Coins = ₹150 | Min Withdrawal ₹1500
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* CREATOR LOGIN MODAL */}
       {showLoginModal && (
         <div className="mm-modal-overlay z-[2000] animate-in-zoom" onClick={() => setShowLoginModal(false)}>
           <div className="relative w-full max-w-sm bg-black border border-white/10 rounded-[50px] p-10 shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -1661,7 +1139,10 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 type="button"
                 onClick={async () => {
                   setForgotMessage('');
-                  const res = await requestPasswordReset(forgotForm.handle, forgotForm.referralCode);
+                  const res = await requestPasswordReset({
+                    handle: forgotForm.handle,
+                    referral_code: forgotForm.referralCode,
+                  });
                   if (res.success) {
                     setForgotMessage(res.message || 'Check your email for a reset link.');
                   } else {
@@ -1872,23 +1353,30 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 </div>
                 <div className="flex gap-4">
                   <button onClick={() => setShowDashboardModal(false)} className="px-6 py-3 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black text-white hover:bg-white hover:text-black transition-all uppercase tracking-widest">Exit HUD</button>
-                  <button onClick={() => { localStorage.setItem('mm_logout_flag', '1'); localStorage.removeItem('mm_creatorId'); window.location.reload(); }} className="px-6 py-3 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-[10px] font-black text-rose-500 hover:bg-rose-500 hover:text-white transition-all uppercase tracking-widest">Deactivate</button>
+                  <button onClick={async () => { await logout(); window.location.reload(); }} className="px-6 py-3 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-[10px] font-black text-rose-500 hover:bg-rose-500 hover:text-white transition-all uppercase tracking-widest">Deactivate</button>
                 </div>
               </div>
 
-              {/* QUICK ACTIONS */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 mb-10 px-4">
-                <button type="button" onClick={() => jumpFromDashboard('video')} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-violet-500/30 hover:text-violet-300 transition-all">1:1 Video</button>
-                <button type="button" onClick={() => jumpFromDashboard('group_video')} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-violet-500/30 hover:text-violet-300 transition-all">Group Video</button>
-                <button type="button" onClick={() => jumpFromDashboard('group_text')} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-violet-500/30 hover:text-violet-300 transition-all">Voice Room</button>
-                <button type="button" onClick={() => jumpFromDashboard('lives')} className="py-3 px-3 rounded-2xl bg-rose-500/10 border border-rose-500/25 text-[9px] font-black uppercase tracking-widest text-rose-200 hover:border-rose-400/50 hover:text-rose-100 transition-all">Go Live</button>
-                <button type="button" onClick={() => { setProfileForm({ bio: creatorStatus.bio || '', avatar: creatorStatus.avatar_url || '' }); setShowProfileModal(true); }} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-emerald-500/30 hover:text-emerald-300 transition-all">Edit Profile</button>
-                <button type="button" onClick={() => { if (referralUrl) { navigator.clipboard.writeText(referralUrl); showAlert('Copied', 'Referral link copied.'); } }} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-indigo-500/30 hover:text-indigo-300 transition-all">Copy Referral</button>
-                <button type="button" onClick={() => { setShowDashboardModal(false); setShowForgotPasswordModal(true); }} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-amber-500/30 hover:text-amber-300 transition-all">Reset Password</button>
+              {/* CREATOR HUB — Create Live + modes */}
+              <div className="mb-10 px-4">
+                <CreatorHub
+                  creator={creatorStatus}
+                  sessionOk={!!getCreatorSessionToken()}
+                  onAction={onCreatorHubAction}
+                />
               </div>
 
-              {/* YOUTUBE LIVE STUDIO */}
+              {/* QUICK ACTIONS (legacy shortcuts) */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-10 px-4">
+                <button type="button" onClick={() => jumpFromDashboard('lives', { createLive: true })} className="py-3 px-3 rounded-2xl bg-rose-500/15 border border-rose-500/35 text-[9px] font-black uppercase tracking-widest text-rose-100 hover:bg-rose-500/25 transition-all">Create Live</button>
+                <button type="button" onClick={() => jumpFromDashboard('lives')} className="py-3 px-3 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-[9px] font-black uppercase tracking-widest text-amber-100 hover:border-amber-400/40 transition-all">Browse Lives</button>
+                <button type="button" onClick={() => jumpFromDashboard('group_text')} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-violet-500/30 hover:text-violet-300 transition-all">Voice Room</button>
+                <button type="button" onClick={() => { setProfileForm({ bio: creatorStatus.bio || '', avatar: creatorStatus.avatar_url || '' }); setShowProfileModal(true); }} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-emerald-500/30 hover:text-emerald-300 transition-all">Edit Profile</button>
+              </div>
+
+              {/* YOUTUBE LIVE STUDIO (optional external) */}
               <div className="mb-12 px-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-white/30 mb-3 px-1">Optional · YouTube RTMP</p>
                 <CreatorLiveStudio socket={socket} enabled={creatorStatus.status === 'approved'} compact />
               </div>
 
@@ -1945,7 +1433,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                         </div>
                       </div>
                     </div>
-                    <div className="p-5 bg-black/40 rounded-2xl border border-white/5 space-y-3">
+                    <div id="mm-creator-payout" className="p-5 bg-black/40 rounded-2xl border border-white/5 space-y-3">
                       <div className="text-[8px] font-black text-white/20 uppercase">Saved UPI (payouts)</div>
                       <input
                         type="text"

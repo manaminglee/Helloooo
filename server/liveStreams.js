@@ -244,16 +244,41 @@ function registerLiveStreams(app, io, deps) {
 
   app.post('/api/lives/start', async (req, res) => {
     try {
-      const { creator } = await getCreatorForRequest(req);
-      if (!creator) return res.status(401).json({ ok: false, error: 'Creator login required' });
+      const { creator, via } = await getCreatorForRequest(req);
+      if (!creator || via !== 'session') {
+        return res.status(401).json({
+          ok: false,
+          error: 'Creator secure login required. Open Creator Hub and log in again.',
+        });
+      }
+      if (!canCreatorGoLive(creator)) {
+        return res.status(403).json({
+          ok: false,
+          error: creator.status === 'pending'
+            ? 'Your application is still pending approval.'
+            : 'Only approved creators can go live.',
+        });
+      }
+      const titleRaw = String(req.body?.title || '').trim();
+      if (titleRaw && (titleRaw.length < 2 || titleRaw.length > 80)) {
+        return res.status(400).json({ ok: false, error: 'Live title must be 2–80 characters.' });
+      }
       const socketId = String(req.body?.socketId || '');
+      if (!socketId) {
+        return res.status(400).json({ ok: false, error: 'Socket connection required to go live.' });
+      }
+      const hostUser = users?.get?.(socketId);
+      if (!hostUser) {
+        return res.status(400).json({ ok: false, error: 'Socket not connected — refresh and try again.' });
+      }
       const result = await startLive({
         creator,
         socketId,
-        title: req.body?.title,
+        title: titleRaw || undefined,
         wallpaperUrl: req.body?.wallpaperUrl,
       });
       if (!result.ok) return res.status(400).json(result);
+      audit?.('live_start', { creatorId: creator.id, liveId: result.live?.id, ip: req.ip });
       res.json(result);
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message || 'Start failed' });
@@ -262,10 +287,10 @@ function registerLiveStreams(app, io, deps) {
 
   app.post('/api/lives/:id/end', async (req, res) => {
     try {
-      const { creator } = await getCreatorForRequest(req);
+      const { creator, via } = await getCreatorForRequest(req);
       const session = getLive(req.params.id);
       if (!session) return res.status(404).json({ ok: false, error: 'Not found' });
-      const isHost = creator && creator.id === session.creatorId;
+      const isHost = creator && via === 'session' && creator.id === session.creatorId;
       const agency = !!(req.agencyAuthed || req.adminAuthed);
       if (!isHost && !agency) return res.status(403).json({ ok: false, error: 'Forbidden' });
       const result = await endLive(session.id);
@@ -277,8 +302,13 @@ function registerLiveStreams(app, io, deps) {
 
   app.post('/api/lives/wallpaper', async (req, res) => {
     try {
-      const { creator } = await getCreatorForRequest(req);
-      if (!creator) return res.status(401).json({ ok: false, error: 'Creator login required' });
+      const { creator, via } = await getCreatorForRequest(req);
+      if (!creator || via !== 'session') {
+        return res.status(401).json({ ok: false, error: 'Creator secure login required' });
+      }
+      if (creator.status !== 'approved' && !canCreatorGoLive(creator)) {
+        return res.status(403).json({ ok: false, error: 'Approved creator required' });
+      }
       const url = String(req.body?.wallpaperUrl || '').trim().slice(0, 500000);
       if (!url) return res.status(400).json({ ok: false, error: 'wallpaperUrl required' });
       // Allow data URLs (compressed) or https

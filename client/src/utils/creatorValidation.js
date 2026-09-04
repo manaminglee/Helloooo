@@ -49,16 +49,26 @@ export function validateCreatorPassword(password, confirm) {
   if (!p) return { ok: false, error: 'Choose a login password.' };
   if (p.length < 8) return { ok: false, error: 'Password must be at least 8 characters.' };
   if (p.length > 128) return { ok: false, error: 'Password is too long.' };
+  if (!/[A-Za-z]/.test(p) || !/[0-9]/.test(p)) {
+    return { ok: false, error: 'Include at least one letter and one number.' };
+  }
   if (p !== c) return { ok: false, error: 'Passwords do not match.' };
   return { ok: true, password: p };
 }
 
-export function validateCreatorLogin(handle, password) {
-  const h = validateCreatorHandle(handle);
-  if (!h.ok) return h;
+export function validateCreatorLogin(handleOrEmail, password) {
+  const raw = String(handleOrEmail || '').trim();
+  if (!raw) return { ok: false, error: 'Handle or email is required.' };
   if (!String(password || '').trim()) return { ok: false, error: 'Password is required.' };
   if (String(password).length > 128) return { ok: false, error: 'Password is too long.' };
-  return { ok: true, handle: h.handle, password: String(password) };
+  if (raw.includes('@')) {
+    const e = validateCreatorEmail(raw, { required: true });
+    if (!e.ok) return e;
+    return { ok: true, handle: e.email, password: String(password), viaEmail: true };
+  }
+  const h = validateCreatorHandle(raw);
+  if (!h.ok) return h;
+  return { ok: true, handle: h.handle, password: String(password), viaEmail: false };
 }
 
 export function validateCreatorUpi(upi) {
@@ -70,7 +80,7 @@ export function validateCreatorUpi(upi) {
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
-export function validateCreatorEmail(raw, { required = false } = {}) {
+export function validateCreatorEmail(raw, { required = true } = {}) {
   const e = String(raw || '').trim().toLowerCase();
   if (!e) {
     if (required) return { ok: false, error: 'Email is required.' };

@@ -24,6 +24,7 @@ const { registerPayments } = require('./payments');
 const creatorSecurity = require('./creatorSecurity');
 const creatorEmail = require('./creatorEmail');
 const creatorNotifications = require('./creatorNotifications');
+const creatorSessions = require('./creatorSessions');
 const adminLiveMonitor = require('./adminLiveMonitor');
 const { registerAudioChannels } = require('./audioChannels');
 const { registerYoutubeLiveHandlers, stopAllForSocket, isFfmpegAvailable } = require('./youtubeLive');
@@ -520,66 +521,70 @@ function getClientIp(req) {
 const MIN_CREATOR_WITHDRAWAL_COINS = 2000;
 
 /**
- * Resolve an approved creator by X-Creator-Token / Bearer referral code, else by authorized IP.
+ * Resolve creator by secure session token (preferred).
+ * Legacy: referral_code via X-Creator-Referral only (not X-Creator-Token).
+ * IP auth is soft-disabled for privileged actions — session required for approved ops.
  */
 async function getApprovedCreatorForRequest(req) {
   const ip = getClientIp(req);
-  const auth = req.headers.authorization || '';
-  const token = String(req.headers['x-creator-token'] || req.headers['x-creator-referral'] || '').trim()
-    || (auth.startsWith('Bearer ') ? auth.slice(7).trim() : '');
+  const sessionTok = creatorSessions.extractSessionToken(req);
 
-  if (token) {
+  if (sessionTok && sessionTok.startsWith(creatorSessions.SESSION_PREFIX)) {
+    const resolved = await creatorSessions.resolveSessionCreator({
+      supabase,
+      localDb,
+      saveLocalDb,
+      token: sessionTok,
+      requireApproved: true,
+    });
+    if (resolved?.creator) return { creator: resolved.creator, ip, via: 'session', session: resolved.session };
+  }
+
+  // Legacy referral header only (not the primary token header)
+  const legacyRef = String(req.headers['x-creator-referral'] || '').trim();
+  if (legacyRef && !legacyRef.startsWith(creatorSessions.SESSION_PREFIX)) {
     let c = null;
     if (supabase) {
-      const { data } = await supabase.from('creators').select('*').eq('referral_code', token).maybeSingle();
+      const { data } = await supabase.from('creators').select('*').eq('referral_code', legacyRef).maybeSingle();
       c = data;
     } else {
-      c = localDb.creators.find((x) => x.referral_code === token);
+      c = localDb.creators.find((x) => x.referral_code === legacyRef);
     }
-    if (c && c.status === 'approved') return { creator: c, ip, via: 'token' };
+    if (c && c.status === 'approved') return { creator: c, ip, via: 'legacy_referral' };
   }
 
-  let c2 = null;
-  if (supabase) {
-    const { data } = await supabase
-      .from('creators')
-      .select('*')
-      .contains('authorized_ips', [ip])
-      .eq('status', 'approved')
-      .maybeSingle();
-    c2 = data;
-  } else {
-    c2 = localDb.creators.find((x) => x.authorized_ips.includes(ip) && x.status === 'approved');
-  }
-  return { creator: c2 || null, ip, via: c2 ? 'ip' : null };
+  return { creator: null, ip, via: null };
 }
 
-/** Resolve creator by referral token (any status) for notifications / status checks. */
+/** Resolve creator by session (any status) for notifications / status checks. */
 async function getCreatorForRequest(req) {
   const ip = getClientIp(req);
-  const auth = req.headers.authorization || '';
-  const token = String(req.headers['x-creator-token'] || req.headers['x-creator-referral'] || '').trim()
-    || (auth.startsWith('Bearer ') ? auth.slice(7).trim() : '');
+  const sessionTok = creatorSessions.extractSessionToken(req);
 
-  if (token) {
+  if (sessionTok && sessionTok.startsWith(creatorSessions.SESSION_PREFIX)) {
+    const resolved = await creatorSessions.resolveSessionCreator({
+      supabase,
+      localDb,
+      saveLocalDb,
+      token: sessionTok,
+      requireApproved: false,
+    });
+    if (resolved?.creator) return { creator: resolved.creator, ip, via: 'session', session: resolved.session };
+  }
+
+  const legacyRef = String(req.headers['x-creator-referral'] || '').trim();
+  if (legacyRef && !legacyRef.startsWith(creatorSessions.SESSION_PREFIX)) {
     let c = null;
     if (supabase) {
-      const { data } = await supabase.from('creators').select('*').eq('referral_code', token).maybeSingle();
+      const { data } = await supabase.from('creators').select('*').eq('referral_code', legacyRef).maybeSingle();
       c = data;
     } else {
-      c = localDb.creators.find((x) => x.referral_code === token);
+      c = localDb.creators.find((x) => x.referral_code === legacyRef);
     }
-    if (c) return { creator: c, ip, via: 'token' };
+    if (c) return { creator: c, ip, via: 'legacy_referral' };
   }
 
-  let c2 = null;
-  if (supabase) {
-    const { data } = await supabase.from('creators').select('*').contains('authorized_ips', [ip]).maybeSingle();
-    c2 = data;
-  } else {
-    c2 = localDb.creators.find((x) => x.authorized_ips.includes(ip));
-  }
-  return { creator: c2 || null, ip, via: c2 ? 'ip' : null };
+  return { creator: null, ip, via: null };
 }
 
 const notifyCtx = () => ({
@@ -603,10 +608,19 @@ async function notifyCreatorAction(creator, payload) {
 
 async function resolveCreatorIdentity(userData, data, ip) {
   if (!userData) return;
-  const token = String(data?.creatorToken || data?.referralCode || '').trim();
+  const token = String(data?.creatorToken || data?.creatorSession || data?.referralCode || '').trim();
   if (token) {
     let creator = null;
-    if (supabase) {
+    if (token.startsWith(creatorSessions.SESSION_PREFIX)) {
+      const resolved = await creatorSessions.resolveSessionCreator({
+        supabase,
+        localDb,
+        saveLocalDb,
+        token,
+        requireApproved: true,
+      });
+      creator = resolved?.creator || null;
+    } else if (supabase) {
       const { data: row } = await supabase.from('creators').select('*').eq('referral_code', token).eq('status', 'approved').maybeSingle();
       creator = row;
     } else {
@@ -1227,7 +1241,7 @@ app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
   const linkCheck = creatorSecurity.validateProfileLink(link, handleCheck.handle);
   if (!linkCheck.ok) return res.status(400).json({ error: linkCheck.error });
 
-  const emailCheck = creatorSecurity.validateEmail(email);
+  const emailCheck = creatorSecurity.validateEmail(email, { required: true });
   if (!emailCheck.ok) return res.status(400).json({ error: emailCheck.error });
 
   const passCheck = creatorSecurity.validatePassword(password);
@@ -1260,17 +1274,16 @@ app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
     created_at: new Date().toISOString()
   };
 
-  /** Insert with retries that strip unknown columns (older Supabase schemas). */
+  /** Insert — never silently drop email or password_hash (auth-critical). */
   async function insertCreatorRow(row) {
     const payload = { ...row };
-    if (payload.email == null) delete payload.email;
     if (payload.avatar_url == null) delete payload.avatar_url;
+    const CRITICAL = new Set(['email', 'password_hash', 'handle_name', 'referral_code', 'status', 'id']);
 
     for (let attempt = 0; attempt < 8; attempt++) {
       const { error } = await supabase.from('creators').insert(payload);
       if (!error) return { ok: true };
 
-      // Unique constraint (handle / referral_code / email)
       if (error.code === '23505') {
         return { ok: false, conflict: true, message: error.message };
       }
@@ -1282,11 +1295,14 @@ app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
         msg.match(/unknown column ["']?(\w+)["']?/i);
       if (colMatch && Object.prototype.hasOwnProperty.call(payload, colMatch[1])) {
         const col = colMatch[1];
-        console.warn(`[CREATORS] register: stripping missing column "${col}" and retrying`);
-        if (col === 'password_hash' && payload.password_hash) {
-          // Keep credentials usable on schemas that only have `password`.
-          payload.password = payload.password_hash;
+        if (CRITICAL.has(col)) {
+          console.error(`[CREATORS] register: critical column missing "${col}" — run supabase_migration_creator_sessions.sql`);
+          return {
+            ok: false,
+            message: `Database missing column "${col}". Run creator sessions migration, then retry.`,
+          };
         }
+        console.warn(`[CREATORS] register: stripping missing column "${col}" and retrying`);
         delete payload[col];
         continue;
       }
@@ -1298,26 +1314,31 @@ app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
   }
 
   try {
-    if (supabase) {
-      const { data: existing } = await supabase.from('creators').select('id').ilike('handle_name', entry.handle_name).maybeSingle();
-      if (existing) return res.status(400).json({ error: 'Handle already registered.' });
+    if (!supabase) {
+      return res.status(503).json({
+        error: 'Creator registration requires Supabase. Configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.',
+      });
+    }
 
-      const inserted = await insertCreatorRow(entry);
-      if (!inserted.ok) {
-        if (inserted.conflict) return res.status(400).json({ error: 'Handle or access code already registered.' });
-        return res.status(500).json({ error: 'Database save failed. Please try again.' });
-      }
-    } else {
-      const existing = localDb.creators.find(c => c.handle_name.toLowerCase() === entry.handle_name.toLowerCase());
-      if (existing) return res.status(400).json({ error: 'Handle already registered.' });
-      localDb.creators.push(entry);
-      saveLocalDb();
+    const { data: existing } = await supabase.from('creators').select('id').ilike('handle_name', entry.handle_name).maybeSingle();
+    if (existing) return res.status(400).json({ error: 'Handle already registered.' });
+
+    const { data: emailTaken } = await supabase.from('creators').select('id').ilike('email', entry.email).maybeSingle();
+    if (emailTaken) return res.status(400).json({ error: 'Email already registered to another creator.' });
+
+    const inserted = await insertCreatorRow(entry);
+    if (!inserted.ok) {
+      if (inserted.conflict) return res.status(400).json({ error: 'Handle, email, or access code already registered.' });
+      return res.status(500).json({ error: inserted.message || 'Database save failed. Please try again.' });
     }
 
     res.json({
       success: true,
-      message: 'Application submitted. Save your access code and use your password to log in after approval.',
+      message: 'Application submitted. Log in with your handle and password after approval.',
       accessCode: referral_code,
+      handle: entry.handle_name,
+      email: entry.email,
+      status: 'pending',
     });
 
     // Side-effects after response — never turn a successful register into a 500.
@@ -1353,50 +1374,76 @@ app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
 });
 
 app.post('/api/creators/login', creatorLoginLimiter, async (req, res) => {
-  const { handle, password } = req.body || {};
+  const { handle, password, email } = req.body || {};
   const currentIp = getClientIp(req);
+  const loginId = String(handle || email || '').trim();
 
-  const handleCheck = creatorSecurity.validateHandle(handle);
-  if (!handleCheck.ok) return res.status(400).json({ error: handleCheck.error });
+  let creatorQueryHandle = null;
+  let creatorQueryEmail = null;
+  if (loginId.includes('@')) {
+    const emailCheck = creatorSecurity.validateEmail(loginId, { required: true });
+    if (!emailCheck.ok) return res.status(400).json({ error: emailCheck.error });
+    creatorQueryEmail = emailCheck.email;
+  } else {
+    const handleCheck = creatorSecurity.validateHandle(loginId);
+    if (!handleCheck.ok) return res.status(400).json({ error: handleCheck.error });
+    creatorQueryHandle = handleCheck.handle;
+  }
 
   const passCheck = creatorSecurity.validatePassword(password, { forLogin: true });
   if (!passCheck.ok) return res.status(400).json({ error: passCheck.error });
 
-  const lock = creatorSecurity.checkLoginLock(handleCheck.handle, currentIp);
+  const lockKey = creatorQueryHandle || creatorQueryEmail;
+  const lock = creatorSecurity.checkLoginLock(lockKey, currentIp);
   if (lock.locked) {
     return res.status(429).json({ error: `Too many failed attempts. Try again in ${lock.retryAfterSec}s.` });
   }
 
   try {
+    if (!supabase) {
+      return res.status(503).json({ error: 'Creator login requires Supabase configuration.' });
+    }
+
     let creator = null;
-    if (supabase) {
-      const { data } = await supabase.from('creators').select('*').ilike('handle_name', handleCheck.handle).maybeSingle();
+    if (creatorQueryEmail) {
+      const { data } = await supabase.from('creators').select('*').ilike('email', creatorQueryEmail).maybeSingle();
       creator = data;
     } else {
-      creator = localDb.creators.find(c => c.handle_name.toLowerCase() === handleCheck.handle.toLowerCase());
+      const { data } = await supabase.from('creators').select('*').ilike('handle_name', creatorQueryHandle).maybeSingle();
+      creator = data;
     }
 
     const valid = creator ? await creatorSecurity.verifyPassword(passCheck.password, creator) : false;
     if (!creator || !valid) {
       creatorSecurity.recordLoginFailure(lock.key);
-      if (supabase) await supabase.from('creator_logins').insert({ handle: handleCheck.handle, ip: currentIp, success: false, reason: 'invalid_credentials' });
-      return res.status(401).json({ error: 'Invalid handle or password.' });
+      await supabase.from('creator_logins').insert({
+        handle: creatorQueryHandle || creatorQueryEmail,
+        ip: currentIp,
+        success: false,
+        reason: 'invalid_credentials',
+      });
+      return res.status(401).json({ error: 'Invalid handle/email or password.' });
     }
 
     if (creator.status !== 'approved') {
-      if (supabase) await supabase.from('creator_logins').insert({ handle: handleCheck.handle, creator_id: creator.id, ip: currentIp, success: false, reason: 'pending_review' });
-      return res.status(403).json({ error: creator.status === 'rejected' ? 'Application was rejected. Contact support.' : 'Application pending review.' });
+      await supabase.from('creator_logins').insert({
+        handle: creator.handle_name,
+        creator_id: creator.id,
+        ip: currentIp,
+        success: false,
+        reason: 'pending_review',
+      });
+      return res.status(403).json({
+        error: creator.status === 'rejected'
+          ? 'Application was rejected. Contact support.'
+          : 'Application pending review. You can check status anytime.',
+        status: creator.status,
+      });
     }
 
     if (valid === 'legacy') {
       const hash = await creatorSecurity.hashPassword(passCheck.password);
-      if (supabase) {
-        await supabase.from('creators').update({ password_hash: hash, password: null }).eq('id', creator.id);
-      } else {
-        creator.password_hash = hash;
-        creator.password = null;
-        saveLocalDb();
-      }
+      await supabase.from('creators').update({ password_hash: hash, password: null }).eq('id', creator.id);
       creator.password_hash = hash;
       creator.password = null;
     }
@@ -1404,49 +1451,93 @@ app.post('/api/creators/login', creatorLoginLimiter, async (req, res) => {
     if (!Array.isArray(creator.authorized_ips)) creator.authorized_ips = [];
     if (!creator.authorized_ips.includes(currentIp)) {
       creator.authorized_ips.push(currentIp);
-      if (supabase) {
-        await supabase.from('creators').update({ authorized_ips: creator.authorized_ips }).eq('id', creator.id);
-      } else {
-        saveLocalDb();
-      }
+      await supabase.from('creators').update({ authorized_ips: creator.authorized_ips }).eq('id', creator.id);
     }
+
+    const session = await creatorSessions.createSession({
+      supabase,
+      localDb,
+      saveLocalDb,
+      creatorId: creator.id,
+      ip: currentIp,
+      userAgent: req.headers['user-agent'],
+    });
 
     creatorSecurity.clearLoginFailures(lock.key);
-    if (supabase) await supabase.from('creator_logins').insert({ handle: handleCheck.handle, creator_id: creator.id, ip: currentIp, success: true });
-    res.json({ success: true, data: creatorSecurity.stripCreatorSecrets(creator) });
-  } catch (e) { res.status(500).json({ error: 'Authentication failed' }); }
-});
-
-app.post('/api/creators/forgot-password', creatorLoginLimiter, async (req, res) => {
-  const { handle, referral_code: code } = req.body || {};
-  const handleCheck = creatorSecurity.validateHandle(handle);
-  if (!handleCheck.ok) return res.status(400).json({ error: handleCheck.error });
-  const refCode = String(code || '').trim();
-  if (!refCode) return res.status(400).json({ error: 'Access code is required.' });
-
-  try {
-    let creator = null;
-    if (supabase) {
-      const { data } = await supabase.from('creators').select('*').ilike('handle_name', handleCheck.handle).eq('referral_code', refCode).maybeSingle();
-      creator = data;
-    } else {
-      creator = localDb.creators.find(
-        (c) => c.handle_name.toLowerCase() === handleCheck.handle.toLowerCase() && c.referral_code === refCode
-      );
-    }
-
-    if (creator && creator.status === 'approved' && creator.email) {
-      const token = await creatorSecurity.createPasswordResetToken(supabase, localDb, saveLocalDb, creator.id);
-      const resetUrl = `${creatorEmail.getFrontendUrl()}/?creator_reset=${token}`;
-      await creatorEmail.notifyPasswordReset(creator, resetUrl);
-    }
+    await supabase.from('creator_logins').insert({
+      handle: creator.handle_name,
+      creator_id: creator.id,
+      ip: currentIp,
+      success: true,
+    });
 
     res.json({
       success: true,
-      message: 'If a matching approved account with email exists, a reset link was sent.',
+      sessionToken: session.token,
+      expiresAt: session.expiresAt,
+      data: creatorSecurity.stripCreatorSecrets(creator),
     });
   } catch (e) {
-    res.status(500).json({ error: 'Could not process reset request' });
+    console.error('[CREATORS] login failed', e);
+    res.status(500).json({ error: 'Authentication failed' });
+  }
+});
+
+app.post('/api/creators/logout', async (req, res) => {
+  try {
+    const tok = creatorSessions.extractSessionToken(req);
+    if (tok && tok.startsWith(creatorSessions.SESSION_PREFIX)) {
+      await creatorSessions.revokeSession({
+        supabase,
+        localDb,
+        saveLocalDb,
+        tokenHash: creatorSessions.hashToken(tok),
+      });
+    }
+    res.json({ ok: true });
+  } catch {
+    res.json({ ok: true });
+  }
+});
+
+app.post('/api/creators/forgot-password', creatorLoginLimiter, async (req, res) => {
+  const { handle, referral_code: code, email } = req.body || {};
+  const handleCheck = handle ? creatorSecurity.validateHandle(handle) : { ok: false };
+  const emailCheck = email ? creatorSecurity.validateEmail(email, { required: true }) : { ok: false };
+  if (!handleCheck.ok && !emailCheck.ok) {
+    return res.status(400).json({ error: 'Handle or email is required.' });
+  }
+  // Access code optional if email matches — keep code for extra security when provided
+  const refCode = String(code || '').trim();
+
+  try {
+    if (!supabase) return res.status(503).json({ error: 'Password reset requires Supabase.' });
+    let creator = null;
+    if (handleCheck.ok) {
+      const { data } = await supabase.from('creators').select('*').ilike('handle_name', handleCheck.handle).maybeSingle();
+      creator = data;
+    } else {
+      const { data } = await supabase.from('creators').select('*').ilike('email', emailCheck.email).maybeSingle();
+      creator = data;
+    }
+    if (!creator) {
+      // Don't leak existence
+      return res.json({ success: true, message: 'If that account exists, a reset link was sent.' });
+    }
+    if (refCode && creator.referral_code !== refCode) {
+      return res.status(400).json({ error: 'Access code does not match.' });
+    }
+    if (!creator.email) {
+      return res.status(400).json({ error: 'No email on file for this account. Contact support.' });
+    }
+
+    const token = await creatorSecurity.createPasswordResetToken(supabase, localDb, saveLocalDb, creator.id);
+    const resetUrl = `${creatorEmail.getFrontendUrl()}/?creator_reset=${token}`;
+    creatorEmail.notifyPasswordReset(creator, resetUrl).catch((e) => console.error('[EMAIL] reset', e.message));
+    res.json({ success: true, message: 'If that account exists, a reset link was sent.' });
+  } catch (e) {
+    console.error('[CREATORS] forgot-password', e);
+    res.status(500).json({ error: 'Could not start reset' });
   }
 });
 
@@ -1562,47 +1653,39 @@ app.post('/api/creators/update-profile', async (req, res) => {
 
 app.get('/api/creators/status', async (req, res) => {
   const { id, handle } = req.query || {};
-  const ip = req.ip === '::1' ? '127.0.0.1' : req.ip;
   try {
-    let creator = null;
-    // Support "handle:name" prefix from client for handle-name lookup
-    const isHandleLookup = id && id.startsWith('handle:');
-    const handleFromId = isHandleLookup ? id.replace(/^handle:/, '').trim() : null;
+    // Prefer secure session
+    const { creator: sessionCreator } = await getCreatorForRequest(req);
+    if (sessionCreator) {
+      return res.json({ data: creatorSecurity.stripCreatorSecrets(sessionCreator) });
+    }
 
-    if (supabase) {
-      if (isHandleLookup && handleFromId) {
-        const { data } = await supabase.from('creators').select('*').ilike('handle_name', handleFromId).single();
-        creator = data;
-      } else if (id) {
-        // Primary: try referral_code match
-        const { data: byCode } = await supabase.from('creators').select('*').eq('referral_code', id).single();
-        creator = byCode;
-        // Secondary fallback: try handle_name match (in case user types their handle)
-        if (!creator) {
-          const { data: byHandle } = await supabase.from('creators').select('*').ilike('handle_name', id).single();
-          creator = byHandle;
-        }
-      } else if (handle) {
-        const { data } = await supabase.from('creators').select('*').ilike('handle_name', handle).single();
-        creator = data;
-      } else {
-        const { data } = await supabase.from('creators').select('*').contains('authorized_ips', [ip]).single();
-        creator = data;
-      }
-    } else {
-      if (isHandleLookup && handleFromId) {
-        creator = localDb.creators.find(c => c.handle_name.toLowerCase() === handleFromId.toLowerCase());
-      } else if (id) {
-        creator = localDb.creators.find(c => c.referral_code === id);
-        // Fallback: try by handle name
-        if (!creator) creator = localDb.creators.find(c => c.handle_name.toLowerCase() === id.toLowerCase());
-      } else if (handle) {
-        creator = localDb.creators.find(c => c.handle_name.toLowerCase() === handle.toLowerCase());
-      } else {
-        creator = localDb.creators.find(c => c.authorized_ips.includes(ip));
+    let creator = null;
+    const isHandleLookup = id && String(id).startsWith('handle:');
+    const handleFromId = isHandleLookup ? String(id).replace(/^handle:/, '').trim() : null;
+
+    if (!supabase) return res.json({ data: null });
+
+    if (isHandleLookup && handleFromId) {
+      const { data } = await supabase.from('creators').select('*').ilike('handle_name', handleFromId).maybeSingle();
+      creator = data;
+    } else if (id && String(id).startsWith(creatorSessions.SESSION_PREFIX)) {
+      // Ignore session-looking ids in query — use header instead
+      creator = null;
+    } else if (handle) {
+      const { data } = await supabase.from('creators').select('*').ilike('handle_name', handle).maybeSingle();
+      creator = data;
+    } else if (id) {
+      // Public status check by referral code OR handle (no secrets returned)
+      const { data: byCode } = await supabase.from('creators').select('*').eq('referral_code', id).maybeSingle();
+      creator = byCode;
+      if (!creator) {
+        const { data: byHandle } = await supabase.from('creators').select('*').ilike('handle_name', id).maybeSingle();
+        creator = byHandle;
       }
     }
-    res.json({ data: creator ? creatorSecurity.stripCreatorSecrets(creator, { includePasswordOnce: creator.status === 'approved' && creator.password && !creator.password_hash }) : null });
+
+    res.json({ data: creator ? creatorSecurity.stripCreatorSecrets(creator) : null });
   } catch (e) { res.json({ data: null }); }
 });
 

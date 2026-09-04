@@ -1930,7 +1930,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     setConnectPhase('matching');
     let creatorToken = '';
     try {
-      creatorToken = window.localStorage.getItem('mm_creatorId') || '';
+      creatorToken = window.localStorage.getItem('mm_creator_session') || window.localStorage.getItem('mm_creatorId') || '';
     } catch { /* ignore */ }
     const prefs = loadProMatchPrefs();
     const proOpts = proMatchOptsRef.current || {};
@@ -1960,7 +1960,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       setConnectPhase('matching');
       let creatorToken = '';
       try {
-        creatorToken = window.localStorage.getItem('mm_creatorId') || '';
+        creatorToken = window.localStorage.getItem('mm_creator_session') || window.localStorage.getItem('mm_creatorId') || '';
       } catch { /* ignore */ }
       findPartnerEmittedRef.current = true;
       const prefs = loadProMatchPrefs();
@@ -2222,7 +2222,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         setConnectPhase('matching');
         let creatorToken = '';
         try {
-          creatorToken = window.localStorage.getItem('mm_creatorId') || '';
+          creatorToken = window.localStorage.getItem('mm_creator_session') || window.localStorage.getItem('mm_creatorId') || '';
         } catch { /* ignore */ }
         socket.emit('find-partner', {
           mode: 'video',

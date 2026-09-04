@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getCreatorAuthHeaders } from '../utils/creatorAuth';
+import {
+  getCreatorAuthHeaders,
+  setCreatorSessionToken,
+  clearCreatorSession,
+  getCreatorSessionToken,
+} from '../utils/creatorAuth';
 import { API_BASE } from '../config/apiBase';
 import { mmDebug } from '../utils/mmDebug';
 import {
@@ -18,22 +23,22 @@ export function useCreators() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const storedId = window.localStorage.getItem('mm_creatorId');
       const logoutFlag = window.localStorage.getItem('mm_logout_flag');
+      const session = getCreatorSessionToken();
 
-      let url = `${API_BASE}/api/creators/status`;
-      if (storedId) {
-        url += `?id=${encodeURIComponent(storedId)}`;
-        window.localStorage.removeItem('mm_logout_flag');
-      } else if (logoutFlag) {
+      if (!session && logoutFlag) {
         setCreatorStatus(null);
         setLoading(false);
         return;
       }
 
-      const res = await fetch(url);
+      const res = await fetch(`${API_BASE}/api/creators/status`, {
+        headers: { ...getCreatorAuthHeaders() },
+        credentials: 'include',
+      });
       const data = await res.json();
       setCreatorStatus(data.data);
+      if (data.data) window.localStorage.removeItem('mm_logout_flag');
     } catch (e) {
       mmDebug('creators.status', e);
     } finally {
@@ -52,7 +57,7 @@ export function useCreators() {
     if (!platformCheck.ok) return { success: false, error: platformCheck.error };
     const linkCheck = validateCreatorLink(link);
     if (!linkCheck.ok) return { success: false, error: linkCheck.error };
-    const emailCheck = validateCreatorEmail(email);
+    const emailCheck = validateCreatorEmail(email, { required: true });
     if (!emailCheck.ok) return { success: false, error: emailCheck.error };
     const passCheck = validateCreatorPassword(password, confirmPassword);
     if (!passCheck.ok) return { success: false, error: passCheck.error };
@@ -65,16 +70,20 @@ export function useCreators() {
           handle: handleCheck.handle,
           platform: platformCheck.platform,
           link: linkCheck.link,
-          email: emailCheck.email || undefined,
+          email: emailCheck.email,
           password: passCheck.password,
         }),
       });
       const data = await res.json();
       if (res.ok) {
-        try {
-          window.localStorage.setItem('mm_creatorId', data.accessCode);
-        } catch { /* ignore */ }
-        return { success: true, accessCode: data.accessCode };
+        return {
+          success: true,
+          accessCode: data.accessCode,
+          handle: data.handle,
+          email: data.email,
+          status: data.status || 'pending',
+          message: data.message,
+        };
       }
       return { success: false, error: data.error || 'Registration failed' };
     } catch (e) {
@@ -82,9 +91,11 @@ export function useCreators() {
     }
   };
 
-  const checkStatus = useCallback(async (code) => {
+  const checkStatus = useCallback(async (codeOrHandle) => {
     try {
-      const res = await fetch(`${API_BASE}/api/creators/status?id=${encodeURIComponent(code)}`);
+      const res = await fetch(
+        `${API_BASE}/api/creators/status?id=${encodeURIComponent(codeOrHandle)}`,
+      );
       const data = await res.json();
       return data.data;
     } catch (e) { return null; }
@@ -135,22 +146,36 @@ export function useCreators() {
     const check = validateCreatorLogin(handle, password);
     if (!check.ok) return { success: false, error: check.error };
     try {
+      const body = check.viaEmail
+        ? { email: check.handle, password: check.password }
+        : { handle: check.handle, password: check.password };
       const res = await fetch(`${API_BASE}/api/creators/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ handle: check.handle, password: check.password }),
+        body: JSON.stringify(body),
       });
       const result = await res.json();
-      if (res.ok && result.success) {
-        window.localStorage.setItem('mm_creatorId', result.data.referral_code);
-        window.localStorage.removeItem('mm_logout_flag');
+      if (res.ok && result.success && result.sessionToken) {
+        setCreatorSessionToken(result.sessionToken);
+        try { localStorage.removeItem('mm_creatorId'); } catch { /* */ }
         setCreatorStatus(result.data);
         return { success: true };
       }
-      return { success: false, error: result.error || 'Invalid handle or password' };
+      return { success: false, error: result.error || 'Invalid handle or password', status: result.status };
     } catch (e) {
       return { success: false, error: 'Network failure' };
     }
+  };
+
+  const logout = async () => {
+    try {
+      await fetch(`${API_BASE}/api/creators/logout`, {
+        method: 'POST',
+        headers: { ...getCreatorAuthHeaders() },
+      });
+    } catch { /* ignore */ }
+    clearCreatorSession();
+    setCreatorStatus(null);
   };
 
   const fetchMyActivity = useCallback(async () => {
@@ -212,53 +237,42 @@ export function useCreators() {
         body: JSON.stringify(body),
       });
       let data = {};
-      try {
-        data = await res.json();
-      } catch {
-        data = {};
+      try { data = await res.json(); } catch { /* */ }
+      if (res.ok) {
+        await fetchStatus();
+        return { success: true };
       }
-      if (res.status === 413) {
-        return { error: data.error || 'Avatar too large. Pick a smaller photo.' };
-      }
-      if (res.ok) fetchStatus();
-      return data;
-    } catch (e) {
-      return { error: 'Update failed' };
-    }
-  };
-
-  const requestPasswordReset = async (handle, referralCode) => {
-    const handleCheck = validateCreatorHandle(handle);
-    if (!handleCheck.ok) return { success: false, error: handleCheck.error };
-    if (!String(referralCode || '').trim()) return { success: false, error: 'Access code is required.' };
-    try {
-      const res = await fetch(`${API_BASE}/api/creators/forgot-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ handle: handleCheck.handle, referral_code: String(referralCode).trim() }),
-      });
-      const data = await res.json();
-      if (res.ok) return { success: true, message: data.message };
-      return { success: false, error: data.error || 'Request failed' };
+      return { success: false, error: data.error || 'Update failed' };
     } catch (e) {
       return { success: false, error: 'Network failure' };
     }
   };
 
-  const resetPassword = async (token, password) => {
-    if (!String(password || '').trim()) return { success: false, error: 'Password is required.' };
-    if (String(password).length < 8) return { success: false, error: 'Password must be at least 8 characters.' };
-    if (String(password).length > 128) return { success: false, error: 'Password is too long.' };
+  const requestPasswordReset = async ({ handle, email, referral_code }) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/creators/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ handle, email, referral_code }),
+      });
+      return await res.json();
+    } catch {
+      return { error: 'Network failure' };
+    }
+  };
+
+  const resetPassword = async (token, password, confirmPassword) => {
+    const passCheck = validateCreatorPassword(password, confirmPassword);
+    if (!passCheck.ok) return { success: false, error: passCheck.error };
     try {
       const res = await fetch(`${API_BASE}/api/creators/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, password }),
+        body: JSON.stringify({ token, password: passCheck.password }),
       });
       const data = await res.json();
-      if (res.ok) return { success: true, message: data.message };
-      return { success: false, error: data.error || 'Reset failed' };
-    } catch (e) {
+      return res.ok ? { success: true, ...data } : { success: false, error: data.error };
+    } catch {
       return { success: false, error: 'Network failure' };
     }
   };
@@ -269,11 +283,12 @@ export function useCreators() {
     registerCreator,
     verifyReferral,
     requestWithdrawal,
-    fetchStatus,
     login,
+    logout,
     checkStatus,
     reRequestApproval,
     updateProfile,
+    fetchStatus,
     fetchMyActivity,
     fetchMyWithdrawals,
     fetchMyAnalytics,
