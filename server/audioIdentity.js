@@ -8,6 +8,8 @@ const { displayLevel, levelFromXp, levelBadgeLabel, levelPerks, xpToNextLevel } 
 const { NAME_COLORS, NAME_GRADIENTS, isValidNameColor, pickNameColor } = require('./audioNameStyle');
 
 const USERNAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.\-!?@#$%&*]{2,19}$/;
+const { createDeviceTrust } = require('./deviceTrust');
+
 const PIN_RE = /^\d{4}$/;
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const IP_SESSION_TTL_MS = 30 * 60 * 1000;
@@ -21,6 +23,11 @@ const WEAK_PINS = new Set([
 
 function registerAudioIdentity(app, io, deps) {
   const { saveLocalDb, localDb, audit, supabase, getCreatorForRequest } = deps;
+
+  /* "Remember this device" — audio rooms and lives share this identity, and
+     both handle real money, so the PIN is proven once and then a rotating,
+     hashed device credential keeps the person signed in. */
+  const deviceTrust = createDeviceTrust({ supabase, localDb, saveLocalDb, audit });
 
   const identities = new Map();
   const sessions = new Map();
@@ -608,6 +615,87 @@ function registerAudioIdentity(app, io, deps) {
     });
   }
 
+  /* ---------------------------------------------------------------- devices */
+
+  const clientIp = (req) => req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+
+  /** Session token from the header, or nothing. Never trust a body-supplied id. */
+  async function requireSession(req) {
+    await ensureHydrated();
+    const token = String(req.headers['x-audio-session'] || req.body?.token || '');
+    const session = getSession(token);
+    if (!session) return null;
+    return { token, usernameKey: session.username };
+  }
+
+  // Opt in to staying signed in on this device. Requires a live session, which
+  // means the PIN was just proven.
+  app.post('/api/audio-identity/trust-device', async (req, res) => {
+    try {
+      const auth = await requireSession(req);
+      if (!auth) return res.status(401).json({ ok: false, error: 'Sign in first.' });
+      const result = await deviceTrust.issue({
+        usernameKey: auth.usernameKey,
+        ip: clientIp(req),
+        userAgent: req.headers['user-agent'],
+        label: req.body?.label,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message || 'Could not remember this device' });
+    }
+  });
+
+  // Silent sign-in. Returns a fresh session AND a rotated device token; the
+  // client must store the new one — the old is dead the moment this returns.
+  app.post('/api/audio-identity/resume', async (req, res) => {
+    try {
+      await ensureHydrated();
+      const result = await deviceTrust.resume({
+        deviceToken: req.body?.deviceToken,
+        ip: clientIp(req),
+        userAgent: req.headers['user-agent'],
+      });
+      if (!result.ok) {
+        // 401 tells the client to drop its stored token and ask for the PIN.
+        return res.status(401).json({ ok: false, error: result.error, reason: result.reason });
+      }
+      const rec = identities.get(result.usernameKey);
+      if (!rec) {
+        await deviceTrust.revoke(result.usernameKey, result.deviceId);
+        return res.status(401).json({ ok: false, error: 'Sign in again.' });
+      }
+      const token = createSession(result.usernameKey, clientIp(req));
+      res.json({
+        ok: true,
+        token,
+        deviceToken: result.deviceToken,
+        deviceId: result.deviceId,
+        identity: publicView(rec),
+      });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message || 'Resume failed' });
+    }
+  });
+
+  app.get('/api/audio-identity/devices', async (req, res) => {
+    const auth = await requireSession(req);
+    if (!auth) return res.status(401).json({ ok: false, error: 'Sign in first.' });
+    res.json({ ok: true, devices: await deviceTrust.list(auth.usernameKey) });
+  });
+
+  app.post('/api/audio-identity/devices/revoke', async (req, res) => {
+    const auth = await requireSession(req);
+    if (!auth) return res.status(401).json({ ok: false, error: 'Sign in first.' });
+    const all = !!req.body?.all;
+    const result = all
+      ? await deviceTrust.revokeAll(auth.usernameKey)
+      : await deviceTrust.revoke(auth.usernameKey, String(req.body?.deviceId || ''));
+    if (!result.ok) return res.status(400).json(result);
+    res.json(result);
+  });
+
   app.post('/api/audio-identity/register', async (req, res) => {
     try {
       const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
@@ -717,6 +805,8 @@ function registerAudioIdentity(app, io, deps) {
     restoreByIp,
     bindIpSession,
     ensureFromCreator,
+    createSession,
+    deviceTrust,
   };
 }
 

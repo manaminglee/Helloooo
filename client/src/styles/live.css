@@ -1325,3 +1325,839 @@
   color: rgba(255, 255, 255, 0.5);
   text-align: center;
 }
+
+/* ==========================================================================
+   PRE-LIVE — the go-live setup screen. Same frame and same right rail as the
+   room, so nothing jumps when the stream starts.
+   ========================================================================== */
+
+.prelive-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--live-hairline);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.9px;
+  color: rgba(255, 255, 255, 0.8);
+  white-space: nowrap;
+}
+
+/* Framing guide: viewfinder corners marking the region the overlays will NOT
+   cover once live. Corners, never a full rectangle — a border around the video
+   is the one thing this UI must never draw. */
+.prelive-guide {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  padding: calc(var(--sa-top) + 56px) calc(var(--live-rail) + 20px) 46% calc(var(--sa-left) + 4px);
+  transition: opacity 900ms ease;
+}
+.prelive-guide--faded { opacity: 0; }
+
+.prelive-guide__frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-height: 300px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+/* four corner brackets */
+.prelive-guide__frame i {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
+}
+.prelive-guide__frame i:nth-child(1) {
+  top: 0; left: 0;
+  border-right: none; border-bottom: none;
+  border-top-left-radius: 12px;
+}
+.prelive-guide__frame i:nth-child(2) {
+  top: 0; right: 0;
+  border-left: none; border-bottom: none;
+  border-top-right-radius: 12px;
+}
+.prelive-guide__frame i:nth-child(3) {
+  bottom: 0; left: 0;
+  border-right: none; border-top: none;
+  border-bottom-left-radius: 12px;
+}
+.prelive-guide__frame i:nth-child(4) {
+  bottom: 0; right: 0;
+  border-left: none; border-top: none;
+  border-bottom-right-radius: 12px;
+}
+
+.prelive-guide__label {
+  /* Sits just INSIDE the top of the frame — above it would collide with the
+     header pill on short phones. */
+  transform: translateY(9px);
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.82);
+  white-space: nowrap;
+}
+
+.live-rail__btn--off {
+  background: rgba(220, 38, 38, 0.5);
+  border-color: rgba(255, 140, 140, 0.4);
+}
+.live-rail__btn:disabled { opacity: 0.4; }
+
+/* Mic check strip */
+.prelive-mic {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 7px 13px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--live-hairline);
+}
+.prelive-mic__icon { font-size: 14px; line-height: 1; flex: 0 0 auto; }
+.prelive-mic__meter {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 14px;
+}
+.prelive-mic__seg {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+  transition: background 90ms linear, transform 90ms linear;
+  transform-origin: center;
+}
+.prelive-mic__seg--on { background: #4ade80; }
+.prelive-mic__seg:nth-child(n+9).prelive-mic__seg--on { background: #fbbf24; }
+.prelive-mic__seg:nth-child(n+12).prelive-mic__seg--on { background: #f87171; }
+.prelive-mic__hint {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+}
+
+/* Title field — a labelled input, not something that reads as a chat box */
+.prelive-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 9px 13px 11px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--live-hairline);
+}
+.prelive-field__label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+}
+.prelive-field__count { font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: 0; }
+.prelive-field__input {
+  width: 100%;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: #fff;
+  /* 16px so iOS does not zoom the page on focus */
+  font-size: 16px;
+  font-weight: 600;
+  outline: none;
+  padding: 0;
+}
+.prelive-field__input::placeholder { color: rgba(255, 255, 255, 0.35); font-weight: 500; }
+
+.prelive-go {
+  width: 100%;
+  height: 52px;
+  border: none;
+  border-radius: 16px;
+  background: linear-gradient(120deg, var(--live-accent), var(--live-accent-2));
+  box-shadow: 0 8px 26px rgba(236, 72, 153, 0.4);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  transition: transform 140ms ease, opacity 180ms ease;
+}
+.prelive-go:active { transform: scale(0.975); }
+.prelive-go:disabled {
+  opacity: 0.45;
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.prelive-error {
+  margin: 0;
+  padding: 9px 13px;
+  border-radius: 12px;
+  background: rgba(190, 18, 60, 0.24);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.prelive-error__retry {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: underline;
+}
+
+/* Short phones: the guide and the mic strip yield before the actions do. */
+@media (max-height: 700px) {
+  .prelive-guide { padding-bottom: 50%; }
+  .prelive-guide__frame { max-height: 220px; }
+  .prelive-go { height: 48px; }
+}
+@media (max-height: 600px) {
+  .prelive-mic { display: none; }
+  .prelive-guide { display: none; }
+}
+
+/* ==========================================================================
+   ICON SYSTEM — sizing rules for the SVG marks that replaced the emoji.
+   Emoji sized themselves with font-size; SVGs need explicit box rules.
+   ========================================================================== */
+
+.mm-icon { display: block; flex: 0 0 auto; }
+.mm-gift { display: block; flex: 0 0 auto; }
+
+/* Buttons that used to hold a glyph now centre an SVG. */
+.live-icon-btn,
+.live-rail__btn,
+.live-action,
+.prelive-go,
+.feed-golive,
+.live-gift-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.live-icon-btn,
+.live-rail__btn,
+.live-action { gap: 0; }
+
+/* The like button is the one icon with its own colour. */
+.live-rail__heart { color: var(--live-accent); }
+
+/* Floating reactions: --size comes from the spawn, so each heart differs. */
+.live-heart { font-size: 0; }
+.live-heart svg {
+  display: block;
+  width: var(--size, 20px);
+  height: var(--size, 20px);
+}
+
+/* Gift marks inside chrome */
+.live-gift-banner__icon { display: flex; align-items: center; }
+.live-gift-card__icon { display: flex; align-items: center; justify-content: center; height: 30px; }
+.live-combo-btn__icon { display: flex; align-items: center; justify-content: center; }
+
+.live-gift-fullscreen__icon { display: flex; justify-content: center; }
+.live-gift-fullscreen__icon svg {
+  width: clamp(96px, 34vw, 168px);
+  height: auto;
+}
+
+.live-pinned__icon { display: flex; align-items: center; padding-top: 2px; }
+.live-menu__item span:first-child { display: flex; align-items: center; justify-content: center; }
+.live-chip { gap: 4px; }
+.live-chip .mm-icon { margin-right: 1px; }
+.prelive-mic__icon { display: flex; align-items: center; }
+.feed-card__viewers { gap: 4px; }
+.live-unmute .mm-icon { margin-right: 2px; }
+
+/* The verified tick sits on the baseline of the creator name. */
+.live-verified { color: #38bdf8; flex: 0 0 auto; }
+
+/* ==========================================================================
+   REMEMBER THIS DEVICE — shown wherever the 4-digit PIN is entered.
+   ========================================================================== */
+.mm-remember {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.mm-remember input {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  accent-color: #a855f7;
+}
+.mm-remember__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mm-remember__text strong { font-size: 13px; font-weight: 700; color: #fff; }
+.mm-remember__text em {
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.5);
+  overflow-wrap: anywhere;
+}
+
+/* ==========================================================================
+   CREATOR PROFILE SHEET + SEARCH
+   ========================================================================== */
+
+.mm-verified { display: inline-block; flex: 0 0 auto; vertical-align: -2px; }
+
+.live-host__tap { padding: 0; border: none; background: none; flex: 0 0 auto; }
+.live-host__text--tap {
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.creator-sheet { padding-bottom: 18px; }
+
+.creator-sheet__msg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 34px 20px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.creator-sheet__msg--quiet { color: rgba(255, 255, 255, 0.4); }
+
+.creator-sheet__top {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 14px 16px 10px;
+  min-width: 0;
+}
+.creator-sheet__avatar {
+  width: 62px; height: 62px; border-radius: 50%; flex: 0 0 auto;
+  object-fit: cover;
+  background: linear-gradient(135deg, #a855f7, #ff2d6f);
+  display: grid; place-items: center;
+  font-size: 24px; font-weight: 800; color: #fff;
+  border: 2px solid rgba(255, 255, 255, 0.14);
+}
+.creator-sheet__id { min-width: 0; flex: 1 1 auto; }
+.creator-sheet__name {
+  display: flex; align-items: center; gap: 6px;
+  margin: 0;
+  font-size: 17px; font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.creator-sheet__handle {
+  margin: 1px 0 0;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.5);
+  overflow-wrap: anywhere;
+}
+.creator-sheet__code {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-top: 7px;
+  height: 25px; padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 11.5px; font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.4px;
+}
+.creator-sheet__code span { font-weight: 600; color: rgba(255, 255, 255, 0.45); letter-spacing: 0; }
+
+.creator-sheet__actions {
+  display: flex; gap: 9px;
+  padding: 4px 16px 12px;
+}
+.creator-sheet__actions > * { flex: 1 1 0; min-width: 0; height: 42px; }
+
+/* Rank block — the headline number of the sheet. */
+.creator-sheet__rank {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 0 16px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(120deg, rgba(168, 85, 247, 0.18), rgba(255, 255, 255, 0.04));
+}
+.creator-sheet__rank--elite  { background: linear-gradient(120deg, rgba(251,191,36,0.22), rgba(255,45,111,0.14)); border-color: rgba(251,191,36,0.34); }
+.creator-sheet__rank--star   { background: linear-gradient(120deg, rgba(192,132,252,0.22), rgba(56,189,248,0.12)); border-color: rgba(192,132,252,0.32); }
+.creator-sheet__rank--rising { background: linear-gradient(120deg, rgba(56,189,248,0.18), rgba(255,255,255,0.04)); border-color: rgba(56,189,248,0.26); }
+
+.creator-sheet__rank-num {
+  display: block;
+  font-size: 26px; font-weight: 900; line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.creator-sheet__rank-of { font-size: 11px; color: rgba(255, 255, 255, 0.55); }
+.creator-sheet__rank-right { text-align: right; flex: 0 0 auto; }
+.creator-sheet__tier {
+  display: block;
+  font-size: 12.5px; font-weight: 800; letter-spacing: 0.4px; text-transform: uppercase;
+}
+.creator-sheet__score {
+  font-size: 11px; color: rgba(255, 255, 255, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+
+.creator-sheet__note {
+  margin: 8px 16px 0;
+  font-size: 11px; line-height: 1.45;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.creator-sheet__bio {
+  margin: 14px 16px 0;
+  font-size: 13px; line-height: 1.55;
+  color: rgba(255, 255, 255, 0.82);
+  overflow-wrap: anywhere;
+}
+
+.creator-sheet__chips {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 12px 16px 2px;
+}
+.creator-sheet__chip--lang {
+  border-color: rgba(56, 189, 248, 0.34);
+  color: #bae6fd;
+}
+
+.creator-sheet__section {
+  margin: 16px 0 6px;
+  padding: 0 16px;
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.creator-sheet__recent {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  padding: 4px 16px 8px;
+}
+.creator-sheet__gift {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  min-width: 0;
+  padding: 9px 5px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+.creator-sheet__gift-name {
+  font-size: 10px; font-weight: 700; text-align: center;
+  overflow-wrap: anywhere;
+}
+.creator-sheet__gift-from {
+  font-size: 9.5px; color: rgba(255, 255, 255, 0.45);
+  text-align: center; overflow-wrap: anywhere;
+}
+
+/* --- search --- */
+.creator-search__field {
+  display: flex; align-items: center; gap: 9px;
+  margin: 12px 16px 8px;
+  padding: 0 13px;
+  height: 44px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.5);
+}
+.creator-search__input {
+  flex: 1 1 auto; min-width: 0;
+  border: none; background: none; color: #fff;
+  font-size: 16px;   /* 16px keeps iOS from zooming on focus */
+  outline: none;
+}
+.creator-search__input::placeholder { color: rgba(255, 255, 255, 0.35); font-size: 14px; }
+.creator-search__clear {
+  border: none; background: none; color: rgba(255, 255, 255, 0.5);
+  display: flex; align-items: center; padding: 4px;
+}
+.creator-search__hint {
+  margin: 0 16px 8px;
+  font-size: 11.5px;
+  color: rgba(192, 132, 252, 0.9);
+  font-variant-numeric: tabular-nums;
+}
+.creator-search__live {
+  height: 16px; padding: 0 6px;
+  display: inline-flex; align-items: center;
+  border-radius: 5px;
+  background: var(--live-accent, #ff2d6f);
+  font-size: 8.5px; font-weight: 900; letter-spacing: 0.5px;
+  color: #fff;
+}
+
+/* ==========================================================================
+   3D GIFT STAGE — legendary and mega only.
+   Everything animates transform/opacity so it stays on the compositor and the
+   video decode underneath is never starved.
+   ========================================================================== */
+
+.g3d {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  perspective: 900px;
+  perspective-origin: 50% 46%;
+  animation: g3d-in 400ms ease, g3d-out 700ms ease var(--g-hold, 4200ms) forwards;
+}
+
+.g3d__wash {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 46%, color-mix(in srgb, var(--g-accent) 26%, transparent), transparent 58%),
+    radial-gradient(circle at 50% 46%, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.82) 78%);
+}
+
+/* --- starfield (mega only) --- */
+.g3d__stars { position: absolute; inset: 0; overflow: hidden; }
+.g3d__star {
+  position: absolute;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0;
+  animation: g3d-twinkle 1.9s ease-in-out infinite;
+}
+
+/* --- the 3D stage --- */
+.g3d__stage {
+  position: relative;
+  width: 240px;
+  height: 240px;
+  transform-style: preserve-3d;
+  animation: g3d-orbit 7s linear infinite;
+}
+
+.g3d__ring {
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--g-accent) 70%, transparent);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--g-accent) 45%, transparent);
+  transform-style: preserve-3d;
+  opacity: 0;
+  animation: g3d-ring-in 800ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.g3d__ring--1 { transform: rotateX(74deg); animation-delay: 60ms; }
+.g3d__ring--2 {
+  inset: 2%;
+  border-color: color-mix(in srgb, var(--g-accent-2) 70%, transparent);
+  transform: rotateX(74deg) rotateZ(60deg);
+  animation-delay: 200ms;
+}
+.g3d__ring--3 {
+  inset: -6%;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--g-accent) 45%, transparent);
+  transform: rotateY(70deg);
+  animation-delay: 340ms;
+}
+
+.g3d__shockwave {
+  position: absolute;
+  inset: 34%;
+  border-radius: 50%;
+  border: 3px solid color-mix(in srgb, var(--g-accent) 85%, transparent);
+  opacity: 0;
+  animation: g3d-shock 1200ms cubic-bezier(0.16, 1, 0.3, 1) 120ms;
+}
+
+.g3d__gift {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  transform: translateZ(40px);
+  animation: g3d-gift 1400ms cubic-bezier(0.22, 1, 0.36, 1);
+  filter: drop-shadow(0 12px 34px color-mix(in srgb, var(--g-accent) 55%, transparent));
+}
+.g3d__gift svg { width: clamp(108px, 38vw, 172px); height: auto; }
+
+.g3d__shard {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--g-accent);
+  box-shadow: 0 0 10px var(--g-accent);
+  opacity: 0;
+  animation: g3d-shard 1500ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+
+.g3d__caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 22%;
+  text-align: center;
+  padding: 0 24px;
+  animation: g3d-caption 700ms cubic-bezier(0.22, 1, 0.36, 1) 300ms both;
+}
+.g3d__name {
+  font-size: clamp(21px, 6.5vw, 32px);
+  font-weight: 900;
+  letter-spacing: 0.4px;
+  background: linear-gradient(180deg, #fff, var(--g-accent) 62%, var(--g-accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  overflow-wrap: anywhere;
+}
+.g3d__from {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.88);
+  overflow-wrap: anywhere;
+}
+.g3d__combo {
+  margin-left: 7px;
+  font-style: italic;
+  font-weight: 900;
+  color: var(--g-accent);
+}
+
+@keyframes g3d-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes g3d-out { to { opacity: 0; } }
+@keyframes g3d-orbit { to { transform: rotateY(360deg); } }
+@keyframes g3d-twinkle {
+  0%, 100% { opacity: 0; transform: scale(0.6); }
+  50% { opacity: 0.9; transform: scale(1); }
+}
+@keyframes g3d-ring-in {
+  from { opacity: 0; transform: rotateX(74deg) scale(0.3); }
+  to { opacity: 1; }
+}
+@keyframes g3d-shock {
+  0% { opacity: 0.9; transform: scale(0.3); }
+  100% { opacity: 0; transform: scale(3.4); }
+}
+@keyframes g3d-gift {
+  0% { opacity: 0; transform: translateZ(40px) scale(0.2) rotateY(-160deg); }
+  45% { opacity: 1; transform: translateZ(70px) scale(1.16) rotateY(20deg); }
+  70% { transform: translateZ(40px) scale(1) rotateY(0deg); }
+  100% { transform: translateZ(40px) scale(1) rotateY(0deg); }
+}
+@keyframes g3d-shard {
+  0% { opacity: 0; }
+  22% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes g3d-caption {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Short phones: pull the caption up so it never collides with the composer. */
+@media (max-height: 700px) {
+  .g3d__stage { width: 190px; height: 190px; }
+  .g3d__caption { bottom: 26%; }
+}
+
+/* Motion sensitivity: keep the announcement, drop the movement entirely. */
+@media (prefers-reduced-motion: reduce) {
+  .g3d { animation: g3d-in 200ms ease, g3d-out 400ms ease var(--g-hold, 4200ms) forwards; }
+  .g3d__stage { animation: none; }
+  .g3d__ring, .g3d__shard, .g3d__shockwave, .g3d__star { display: none; }
+  .g3d__gift { animation: none; }
+  .g3d__caption { animation: none; }
+}
+
+/* Feed card live preview — sits over the wallpaper, fades out after 5s. */
+.feed-card__preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 38%;
+  opacity: 0;
+  transition: opacity 420ms ease;
+  pointer-events: none;
+  background: transparent;
+}
+.feed-card__preview--on { opacity: 1; }
+
+/* ==========================================================================
+   BOTTOM NAVIGATION (phones only)
+   ========================================================================== */
+
+.mmnav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  padding: 0 10px max(env(safe-area-inset-bottom, 0px), 8px);
+  pointer-events: none;
+}
+
+/* Desktop keeps the existing navigation; this bar is a phone affordance. */
+@media (min-width: 901px) and (pointer: fine) { .mmnav { display: none; } }
+
+.mmnav__bar {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: end;
+  height: 58px;
+  margin: 0 auto;
+  max-width: 520px;
+  padding: 0 4px;
+  border-radius: 20px 20px 0 0;
+  background: rgba(12, 11, 22, 0.9);
+  backdrop-filter: blur(22px) saturate(1.4);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-bottom: none;
+  box-shadow: 0 -10px 34px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+.mmnav__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 100%;
+  min-width: 0;
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: rgba(255, 255, 255, 0.5);
+  transition: color 160ms ease, transform 140ms ease;
+}
+.mmnav__item:active { transform: scale(0.92); }
+.mmnav__item--on { color: #fff; }
+
+.mmnav__label {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* The raised Live button. Lifted out of the bar so it reads as the primary
+   action even at a glance, and sized for a thumb. */
+.mmnav__live {
+  position: relative;
+  justify-self: center;
+  align-self: start;
+  transform: translateY(-18px);
+  width: 58px;
+  height: 58px;
+  border: none;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  background: linear-gradient(140deg, #ff2d6f, #a855f7);
+  box-shadow:
+    0 0 0 5px rgba(12, 11, 22, 0.92),
+    0 8px 26px rgba(255, 45, 111, 0.45);
+  color: #fff;
+  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.mmnav__live:active { transform: translateY(-18px) scale(0.9); }
+.mmnav__live--on { box-shadow: 0 0 0 5px rgba(12, 11, 22, 0.92), 0 0 0 7px rgba(255, 45, 111, 0.45), 0 8px 26px rgba(255, 45, 111, 0.5); }
+
+.mmnav__live-ring {
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 45, 111, 0.55);
+  animation: mmnav-pulse 2.4s ease-out infinite;
+}
+.mmnav__live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+}
+.mmnav__live-text {
+  font-size: 8.5px;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+@keyframes mmnav-pulse {
+  0% { transform: scale(1); opacity: 0.7; }
+  70% { transform: scale(1.35); opacity: 0; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) { .mmnav__live-ring { animation: none; } }
+
+/* Very narrow phones: labels go, icons stay. */
+@media (max-width: 330px) {
+  .mmnav__label { display: none; }
+  .mmnav__bar { height: 52px; }
+}
+
+/* Screens that carry the bar need room for it at the end of their content. */
+.mmnav-pad { padding-bottom: calc(58px + max(env(safe-area-inset-bottom, 0px), 8px)); }

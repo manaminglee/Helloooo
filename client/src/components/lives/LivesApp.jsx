@@ -61,6 +61,7 @@ export default function LivesApp({
 
   return (
     <LivesFeed
+      socket={socket}
       identityHook={identityHook}
       isCreator={isCreator || canHost}
       canCreateLive={canHost}

@@ -5,26 +5,21 @@ import { useFloatingReactions } from '../../hooks/useFloatingReactions';
 import { useLiveViewport, useLiveBodyLock } from '../../hooks/useLiveViewport';
 import { hapticTap, hapticSuccess } from '../../utils/haptics';
 import { NutsSymbol } from '../NutsSymbol';
+import { MmIcon } from '../icons/MmIcon';
+import { VerifiedBadge } from '../icons/VerifiedBadge';
+import CreatorSheet from './CreatorSheet';
 import { AudioCoinShop } from '../AudioIdentityGate';
 import LiveGiftTray from './LiveGiftTray';
 import {
   LiveViewerSheet, LiveUserSheet, LiveModerationSheet, LiveReportSheet, LiveStatsSheet,
 } from './LiveSheets';
+import { GiftArt } from '../icons/GiftArt';
 import {
   Avatar, CommentStream, HeartLayer, GiftBanners, FullscreenGift,
   StateOverlay, ReconnectBanner, LiveToast, ConfirmDialog, compact,
 } from './LiveBits';
 
 const COMBO_MS = 4000;
-
-function VerifiedMark() {
-  return (
-    <svg className="live-verified" viewBox="0 0 24 24" fill="none" aria-label="Verified">
-      <path d="M12 2l2.4 2.1 3.1-.4 1 3 2.8 1.4-1 3 1 3-2.8 1.4-1 3-3.1-.4L12 22l-2.4-2.1-3.1.4-1-3L2.7 16l1-3-1-3 2.8-1.4 1-3 3.1.4L12 2z" fill="#38bdf8" />
-      <path d="M8.6 12.2l2.3 2.3 4.5-4.6" stroke="#04202e" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
 
 /**
  * The live room. One component serves both roles:
@@ -90,6 +85,7 @@ export default function LiveRoom({
   const [combo, setCombo] = useState(null);   // { gift, count, key }
   const [soundOn, setSoundOn] = useState(isHost);
   const [liked, setLiked] = useState(false);
+  const [creatorOpen, setCreatorOpen] = useState(false);
 
   const comboTimer = useRef(null);
   const balance = identity?.coins ?? 0;
@@ -129,7 +125,7 @@ export default function LiveRoom({
     if (res?.ok) {
       hapticSuccess();
       identityHook?.refresh?.();
-      armCombo(gift || { id: giftId, icon: '🎁' });
+      armCombo(gift || { id: giftId, tier: 'basic' });
     }
     return res;
   }, [sendGift, identityHook, armCombo]);
@@ -177,7 +173,7 @@ export default function LiveRoom({
     const url = `${window.location.origin}/live/${live.id}`;
     const payload = {
       title: `${live.displayName || live.handle} is LIVE`,
-      text: `${live.displayName || live.handle} is LIVE now 🔴`,
+      text: `${live.displayName || live.handle} is LIVE now`,
       url,
     };
     try {
@@ -239,14 +235,27 @@ export default function LiveRoom({
         {/* --- TOP ------------------------------------------------------- */}
         <header className="live-top">
           <div className="live-host">
-            <Avatar className="live-host__avatar" src={live?.avatarUrl} name={live?.handle} />
-            <span className="live-host__text">
+            {/* Tapping the creator opens their full profile — the one place a
+                viewer can check who they are about to send money to. */}
+            <button
+              type="button"
+              className="live-host__tap"
+              onClick={() => setCreatorOpen(true)}
+              aria-label={`View ${live?.displayName || live?.handle}'s profile`}
+            >
+              <Avatar className="live-host__avatar" src={live?.avatarUrl} name={live?.handle} />
+            </button>
+            <button
+              type="button"
+              className="live-host__text live-host__text--tap"
+              onClick={() => setCreatorOpen(true)}
+            >
               <span className="live-host__name">
                 {live?.displayName || live?.handle}
-                {live?.verified && <VerifiedMark />}
+                {live?.verified && <VerifiedBadge size={13} />}
               </span>
               <span className="live-host__handle">@{live?.handle}</span>
-            </span>
+            </button>
             {!isHost && followKnown && !following && (
               <button type="button" className="live-follow" onClick={onFollow}>
                 Follow
@@ -269,7 +278,7 @@ export default function LiveRoom({
               onClick={isHost ? () => setConfirmEnd(true) : onExit}
               aria-label={isHost ? 'End live' : 'Close'}
             >
-              ✕
+              <MmIcon name="close" size={15} />
             </button>
           </div>
         </header>
@@ -281,7 +290,7 @@ export default function LiveRoom({
               <div className="live-subrow">
                 {topGifter && (
                   <span className="live-chip live-chip--gold">
-                    🏆 {topGifter.username} · {compact(topGifter.coins)}
+                    <MmIcon name="trophy" size={11} /> {topGifter.username} · {compact(topGifter.coins)}
                   </span>
                 )}
                 {isHost && (
@@ -305,7 +314,7 @@ export default function LiveRoom({
 
             {pinnedComment && (
               <div className="live-pinned">
-                <span className="live-pinned__icon">📌</span>
+                <span className="live-pinned__icon"><MmIcon name="pin" size={12} /></span>
                 <span className="live-pinned__text">
                   <strong style={{ color: pinnedComment.nameColor || '#ffd479' }}>
                     {pinnedComment.username}
@@ -337,7 +346,7 @@ export default function LiveRoom({
                     onClick={() => { hapticTap(); media.toggleMic(); }}
                     aria-label={media.micEnabled ? 'Mute microphone' : 'Unmute microphone'}
                   >
-                    {media.micEnabled ? '🎙' : '🔇'}
+                    <MmIcon name={media.micEnabled ? 'mic' : 'micOff'} size={19} />
                   </button>
                 </span>
                 <span className="live-rail__item">
@@ -347,7 +356,7 @@ export default function LiveRoom({
                     onClick={() => { hapticTap(); media.switchCamera(); }}
                     aria-label="Switch camera"
                   >
-                    🔄
+                    <MmIcon name="cameraFlip" size={19} />
                   </button>
                 </span>
                 <span className="live-rail__item">
@@ -357,7 +366,7 @@ export default function LiveRoom({
                     onClick={() => setViewersOpen(true)}
                     aria-label="Viewers"
                   >
-                    👥
+                    <MmIcon name="users" size={19} />
                     <span className="live-rail__label">{headerCount}</span>
                   </button>
                 </span>
@@ -368,7 +377,7 @@ export default function LiveRoom({
                     onClick={() => setModOpen(true)}
                     aria-label="Moderation"
                   >
-                    🛡
+                    <MmIcon name="shield" size={19} />
                   </button>
                 </span>
               </>
@@ -381,7 +390,7 @@ export default function LiveRoom({
                     onClick={onLike}
                     aria-label="Like"
                   >
-                    ❤️
+                    <MmIcon name="heartSolid" size={20} className="live-rail__heart" />
                     <span className="live-rail__label">{compact(likes)}</span>
                   </button>
                 </span>
@@ -392,13 +401,13 @@ export default function LiveRoom({
                     onClick={() => setViewersOpen(true)}
                     aria-label="Viewers"
                   >
-                    👥
+                    <MmIcon name="users" size={19} />
                     <span className="live-rail__label">{headerCount}</span>
                   </button>
                 </span>
                 <span className="live-rail__item">
                   <button type="button" className="live-rail__btn" onClick={onShare} aria-label="Share">
-                    ↗
+                    <MmIcon name="share" size={19} />
                   </button>
                 </span>
                 <span className="live-rail__item">
@@ -408,7 +417,7 @@ export default function LiveRoom({
                     onClick={() => (isModerator ? setModOpen(true) : setReportOpen(true))}
                     aria-label={isModerator ? 'Moderation' : 'More'}
                   >
-                    {isModerator ? '🛡' : '⋯'}
+                    <MmIcon name={isModerator ? 'shield' : 'more'} size={19} />
                   </button>
                 </span>
               </>
@@ -439,7 +448,7 @@ export default function LiveRoom({
                 onClick={() => { unlockSound(); hapticTap(); setGiftOpen(true); }}
                 aria-label="Send a gift"
               >
-                🎁
+                <MmIcon name="gift" size={19} />
               </button>
             )}
             {isHost ? (
@@ -457,7 +466,7 @@ export default function LiveRoom({
                 disabled={!text.trim()}
                 aria-label="Send comment"
               >
-                ➤
+                <MmIcon name="send" size={17} />
               </button>
             )}
           </form>
@@ -474,14 +483,16 @@ export default function LiveRoom({
               style={{ animation: `live-combo-ring ${COMBO_MS}ms linear forwards` }}
             />
           </svg>
-          <span className="live-combo-btn__icon">{combo.gift?.icon || '🎁'}</span>
+          <span className="live-combo-btn__icon">
+            <GiftArt id={combo.gift?.id} tier={combo.gift?.tier} size={26} />
+          </span>
           <span className="live-combo-btn__count">x{combo.count}</span>
         </button>
       )}
 
       {!soundOn && media.hasMedia && !isHost && (
         <button type="button" className="live-unmute" onClick={unlockSound}>
-          🔈 Tap for sound
+          <MmIcon name="volume" size={13} /> Tap for sound
         </button>
       )}
 
@@ -567,6 +578,15 @@ export default function LiveRoom({
         onBalanceUpdate={() => identityHook?.refresh?.()}
       />
 
+      <CreatorSheet
+        open={creatorOpen}
+        creatorKey={live?.handle}
+        following={following}
+        onFollow={(handle) => follow(handle)}
+        onClose={() => setCreatorOpen(false)}
+        onWatchLive={() => setCreatorOpen(false)}
+      />
+
       <ConfirmDialog
         open={confirmEnd}
         title="End Live?"
@@ -629,7 +649,7 @@ function LiveEnded({ summary, live, isHost, following, onFollow, onExit }) {
 
         {s.topGifter && (
           <p className="live-ended__handle" style={{ marginTop: 2 }}>
-            🏆 Top gifter · {s.topGifter.username} ({compact(s.topGifter.coins)})
+            <MmIcon name="trophy" size={12} /> Top gifter · {s.topGifter.username} ({compact(s.topGifter.coins)})
           </p>
         )}
 

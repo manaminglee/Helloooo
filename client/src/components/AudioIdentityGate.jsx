@@ -31,6 +31,7 @@ function UsernameMirrorPreview({ username, nameColor }) {
 }
 
 function AudioIdentityRegisterModal({ open, onClose, identityHook, onSignedIn }) {
+  const [remember, setRemember] = useState(true);
   const { register, loading, error, setError } = identityHook;
   const [username, setUsername] = useState('');
   const [pin, setPin] = useState('');
@@ -70,7 +71,7 @@ function AudioIdentityRegisterModal({ open, onClose, identityHook, onSignedIn })
       setError('PINs do not match');
       return;
     }
-    const ok = await register({ username: username.trim(), pin, nameColor });
+    const ok = await register({ username: username.trim(), pin, nameColor, remember });
     if (ok) {
       onClose();
       onSignedIn?.();
@@ -163,6 +164,13 @@ function AudioIdentityRegisterModal({ open, onClose, identityHook, onSignedIn })
             </div>
             <UsernameMirrorPreview username={username} nameColor={nameColor} />
           </div>
+          <label className="mm-remember">
+            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+            <span className="mm-remember__text">
+              <strong>Remember this device</strong>
+              <em>Stay signed in here so you only type your PIN once.</em>
+            </span>
+          </label>
           {error && <p className="mm-audio-id-error">{error}</p>}
           <button type="submit" className="mm-btn mm-btn--primary w-full" disabled={loading || pin.length !== 4 || pin !== pin2}>
             {loading ? 'Creating…' : 'Create & enter'}
@@ -178,6 +186,7 @@ function AudioIdentityRegisterModal({ open, onClose, identityHook, onSignedIn })
 }
 
 export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant = 'fullscreen' }) {
+  const [remember, setRemember] = useState(true);
   const { login, loading, error, setError, savedUsername, clearLocalIdentity, hydrating } = identityHook;
   const [pin, setPin] = useState('');
   const [showRegister, setShowRegister] = useState(false);
@@ -191,7 +200,7 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
     }
     const pinErr = validateAudioPin(pin);
     if (pinErr) { setError(pinErr); return; }
-    const ok = await login({ username: savedUsername, pin });
+    const ok = await login({ username: savedUsername, pin, remember });
     if (ok) onSignedIn?.();
   };
 
@@ -227,6 +236,17 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
             autoFocus={!hydrating}
             required
           />
+        </label>
+        <label className="mm-remember">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+          />
+          <span className="mm-remember__text">
+            <strong>Remember this device</strong>
+            <em>Stay signed in here. Your PIN still guards every recharge and gift.</em>
+          </span>
         </label>
         {error && <p className="mm-audio-id-error">{error}</p>}
         <button

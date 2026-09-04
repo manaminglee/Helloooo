@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from 'react';
 import { NutsSymbol } from '../NutsSymbol';
+import { MmIcon } from '../icons/MmIcon';
 import { Avatar, Badges, Sheet, compact } from './LiveBits';
 
 /* ------------------------------------------------------------------------ */
@@ -64,7 +65,7 @@ export function LiveViewerSheet({ open, onClose, onFetch, onPickUser, canModerat
               <NutsSymbol size={11} /> {compact(v.giftedCoins)}
             </span>
           )}
-          {canModerate && <span aria-hidden style={{ opacity: 0.4 }}>›</span>}
+          {canModerate && <MmIcon name="chevron" size={14} style={{ opacity: 0.4 }} />}
         </button>
       ))}
       {!loading && !rows.length && (
@@ -91,16 +92,16 @@ export function LiveUserSheet({
     <Sheet open title={`@${user.username}`} onClose={onClose}>
       <div className="live-menu">
         <button type="button" className="live-menu__item" onClick={act(onMention, user.username)}>
-          <span>@</span> Mention {user.username}
+          <span><MmIcon name="at" size={16} /></span> Mention {user.username}
         </button>
 
         {isModerator && user.commentId && (
           <>
             <button type="button" className="live-menu__item" onClick={act(onPin, user.commentId)}>
-              <span>📌</span> Pin this comment
+              <span><MmIcon name="pin" size={17} /></span> Pin this comment
             </button>
             <button type="button" className="live-menu__item live-menu__item--warn" onClick={act(onDeleteComment, user.commentId)}>
-              <span>🗑</span> Delete comment
+              <span><MmIcon name="trash" size={17} /></span> Delete comment
             </button>
           </>
         )}
@@ -108,25 +109,25 @@ export function LiveUserSheet({
         {isModerator && user.socketId && (
           <>
             <button type="button" className="live-menu__item live-menu__item--warn" onClick={act(onMute, user.socketId, user.muted)}>
-              <span>{user.muted ? '🔊' : '🔇'}</span> {user.muted ? 'Unmute user' : 'Mute user'}
+              <span><MmIcon name={user.muted ? 'volume' : 'volumeOff'} size={17} /></span> {user.muted ? 'Unmute user' : 'Mute user'}
             </button>
             <button type="button" className="live-menu__item live-menu__item--warn" onClick={act(onKick, user.socketId)}>
-              <span>👋</span> Remove from live
+              <span><MmIcon name="userMinus" size={17} /></span> Remove from live
             </button>
             <button type="button" className="live-menu__item live-menu__item--danger" onClick={act(onBlock, user.socketId)}>
-              <span>⛔</span> Block user
+              <span><MmIcon name="ban" size={17} /></span> Block user
             </button>
           </>
         )}
 
         {isHost && user.socketId && (
           <button type="button" className="live-menu__item" onClick={act(onPromote, user.socketId, user.badges?.includes('moderator'))}>
-            <span>🛡</span> {user.badges?.includes('moderator') ? 'Remove moderator' : 'Make moderator'}
+            <span><MmIcon name="shield" size={17} /></span> {user.badges?.includes('moderator') ? 'Remove moderator' : 'Make moderator'}
           </button>
         )}
 
         <button type="button" className="live-menu__item live-menu__item--danger" onClick={act(onReport, user)}>
-          <span>🚩</span> Report
+          <span><MmIcon name="flag" size={17} /></span> Report
         </button>
       </div>
     </Sheet>
@@ -149,18 +150,18 @@ export function LiveModerationSheet({ open, onClose, settings, onSlowMode, onTog
           aria-pressed={settings.commentsDisabled}
           onClick={() => onToggleComments(!settings.commentsDisabled)}
         >
-          <span>{settings.commentsDisabled ? '🚫' : '💬'}</span>
+          <span><MmIcon name={settings.commentsDisabled ? 'chatOff' : 'chat'} size={17} /></span>
           {settings.commentsDisabled ? 'Turn comments back on' : 'Turn comments off'}
         </button>
 
         {hasPinned && (
           <button type="button" className="live-menu__item" onClick={onUnpin}>
-            <span>📌</span> Remove pinned comment
+            <span><MmIcon name="pin" size={17} /></span> Remove pinned comment
           </button>
         )}
 
         <button type="button" className="live-menu__item" onClick={onOpenViewers}>
-          <span>👥</span> Manage viewers
+          <span><MmIcon name="users" size={17} /></span> Manage viewers
         </button>
       </div>
 
@@ -225,7 +226,7 @@ export function LiveReportSheet({ open, target, onClose, onSubmit }) {
                 setTimeout(onClose, 1200);
               }}
             >
-              <span>›</span> {label}
+              <span><MmIcon name="chevron" size={15} /></span> {label}
             </button>
           ))}
         </div>
@@ -281,7 +282,7 @@ export const LiveStatsSheet = memo(function LiveStatsSheet({ open, onClose, stat
       {s.recentGift && (
         <p style={{ padding: '0 18px 10px', fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>
           Latest: <strong style={{ color: '#fff' }}>{s.recentGift.username}</strong>{' '}
-          sent {s.recentGift.icon} {s.recentGift.giftName}
+          sent {s.recentGift.giftName}
         </p>
       )}
 

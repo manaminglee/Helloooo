@@ -7,6 +7,33 @@ const STORAGE_KEY = 'mm_audio_session';
 const USERNAME_KEY = 'mm_audio_username';
 const CREATOR_SESSION_KEY = 'mm_creator_session';
 
+/* The session token stays in sessionStorage — short-lived, dies with the tab.
+   The DEVICE token is the durable half and lives in localStorage: it is
+   rotated on every use and is useless without this browser, so persisting it
+   is what lets someone stay signed in without retyping a PIN that guards real
+   money. */
+const DEVICE_KEY = 'mm_audio_device';
+const DEVICE_ID_KEY = 'mm_audio_device_id';
+
+function readDeviceToken() {
+  try { return localStorage.getItem(DEVICE_KEY) || null; }
+  catch { return null; }
+}
+
+function persistDeviceToken(value, deviceId) {
+  try {
+    if (value) localStorage.setItem(DEVICE_KEY, value);
+    else localStorage.removeItem(DEVICE_KEY);
+    if (deviceId) localStorage.setItem(DEVICE_ID_KEY, deviceId);
+    else if (!value) localStorage.removeItem(DEVICE_ID_KEY);
+  } catch { /* private mode — trust simply will not persist */ }
+}
+
+function readDeviceId() {
+  try { return localStorage.getItem(DEVICE_ID_KEY) || null; }
+  catch { return null; }
+}
+
 function readSavedUsername() {
   try { return localStorage.getItem(USERNAME_KEY) || ''; }
   catch { return ''; }
@@ -29,6 +56,7 @@ export function useAudioIdentity(socket) {
   const [hydrating, setHydrating] = useState(true);
   const [error, setError] = useState('');
   const [hasCreatorSession, setHasCreatorSession] = useState(() => !!getCreatorSessionToken());
+  const [deviceTrusted, setDeviceTrusted] = useState(() => !!readDeviceToken());
   const [creatorLinkFailed, setCreatorLinkFailed] = useState(false);
 
   const attachSocket = useCallback((sessionToken) => {
@@ -37,6 +65,26 @@ export function useAudioIdentity(socket) {
       if (res?.ok && res.identity) setIdentity(res.identity);
     });
   }, [socket]);
+
+  /* Shared by register/login so opting in works the same on both paths. */
+  const rememberThisDevice = useCallback(async (sessionToken) => {
+    if (!sessionToken) return false;
+    try {
+      const res = await fetch(`${API_BASE}/api/audio-identity/trust-device`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-audio-session': sessionToken },
+        credentials: 'include',
+        body: JSON.stringify({ label: navigator.platform || 'This device' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!data?.ok || !data.deviceToken) return false;
+      persistDeviceToken(data.deviceToken, data.deviceId);
+      setDeviceTrusted(true);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
 
   const persistSession = useCallback((sessionToken, id) => {
     setToken(sessionToken);
@@ -137,6 +185,35 @@ export function useAudioIdentity(socket) {
           try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
         }
 
+        // Trusted device → exchange the rotating device token for a session.
+        // No PIN, no prompt. A 401 here means the token was revoked, expired or
+        // replayed, so we drop it and fall through to a normal sign-in.
+        const deviceToken = readDeviceToken();
+        if (deviceToken) {
+          const res = await fetch(`${API_BASE}/api/audio-identity/resume`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ deviceToken }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (cancelled) return;
+          if (data?.ok && data.token && data.identity) {
+            persistDeviceToken(data.deviceToken, data.deviceId);  // rotated — old one is dead
+            setDeviceTrusted(true);
+            setToken(data.token);
+            setIdentity(data.identity);
+            try { sessionStorage.setItem(STORAGE_KEY, data.token); } catch { /* ignore */ }
+            if (data.identity?.username) persistUsername(data.identity.username);
+            attachSocket(data.token);
+            return;
+          }
+          if (res.status === 401) {
+            persistDeviceToken(null);
+            setDeviceTrusted(false);
+          }
+        }
+
         const restore = await fetch(`${API_BASE}/api/audio-identity/restore-ip`, { credentials: 'include' });
         const restored = await restore.json().catch(() => ({}));
         if (cancelled) return;
@@ -177,7 +254,7 @@ export function useAudioIdentity(socket) {
     return () => { cancelled = true; };
   }, [hasCreatorSession, hydrating, identity?.username, creatorLinkFailed, loginFromCreator]);
 
-  const register = async ({ username, pin, nameColor }) => {
+  const register = async ({ username, pin, nameColor, remember = true }) => {
     setLoading(true);
     setError('');
     try {
@@ -193,6 +270,7 @@ export function useAudioIdentity(socket) {
         return false;
       }
       persistSession(data.token, data.identity);
+      if (remember) await rememberThisDevice(data.token);
       return true;
     } catch {
       setError('Network error — try again');
@@ -202,7 +280,7 @@ export function useAudioIdentity(socket) {
     }
   };
 
-  const login = async ({ username, pin }) => {
+  const login = async ({ username, pin, remember = true }) => {
     setLoading(true);
     setError('');
     try {
@@ -218,6 +296,7 @@ export function useAudioIdentity(socket) {
         return false;
       }
       persistSession(data.token, data.identity);
+      if (remember) await rememberThisDevice(data.token);
       return true;
     } catch {
       setError('Network error — try again');
@@ -250,9 +329,48 @@ export function useAudioIdentity(socket) {
     }
     setIdentity(null);
     setToken(null);
+    persistDeviceToken(null);
+    setDeviceTrusted(false);
     try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
     try { localStorage.removeItem(USERNAME_KEY); } catch { /* ignore */ }
   }, [token, socket]);
+
+  /** Opt in to staying signed in here. Only meaningful with a live session. */
+  const trustDevice = useCallback(
+    (sessionToken = token) => rememberThisDevice(sessionToken),
+    [token, rememberThisDevice],
+  );
+
+  /** Stop trusting this device, and tell the server to burn the record. */
+  const forgetDevice = useCallback(async ({ all = false } = {}) => {
+    const deviceId = readDeviceId();
+    persistDeviceToken(null);
+    setDeviceTrusted(false);
+    if (!token) return true;
+    try {
+      await fetch(`${API_BASE}/api/audio-identity/devices/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-audio-session': token },
+        credentials: 'include',
+        body: JSON.stringify(all || !deviceId ? { all: true } : { deviceId }),
+      });
+    } catch { /* the local token is already gone */ }
+    return true;
+  }, [token]);
+
+  const listDevices = useCallback(async () => {
+    if (!token) return [];
+    try {
+      const res = await fetch(`${API_BASE}/api/audio-identity/devices`, {
+        headers: { 'x-audio-session': token },
+        credentials: 'include',
+      });
+      const data = await res.json().catch(() => ({}));
+      return data?.devices || [];
+    } catch {
+      return [];
+    }
+  }, [token]);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -289,5 +407,9 @@ export function useAudioIdentity(socket) {
     isSignedIn: !!identity?.username,
     hasCreatorSession,
     creatorLinkFailed,
+    deviceTrusted,
+    trustDevice,
+    forgetDevice,
+    listDevices,
   };
 }

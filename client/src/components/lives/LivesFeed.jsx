@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLivesList } from '../../hooks/useLiveStream';
 import { AudioIdentityGate } from '../AudioIdentityGate';
 import { isMobileLiveDevice } from '../../utils/liveDevice';
 import { getCreatorSessionToken } from '../../utils/creatorAuth';
 import { useLiveBodyLock } from '../../hooks/useLiveViewport';
+import { useLivePreview } from '../../hooks/useLivePreview';
+import { MmIcon } from '../icons/MmIcon';
+import { VerifiedBadge } from '../icons/VerifiedBadge';
+import CreatorSearch from './CreatorSearch';
 import { Avatar, compact } from './LiveBits';
 
 function elapsed(startedAt) {
@@ -12,28 +16,66 @@ function elapsed(startedAt) {
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
-function LiveCard({ live, onOpen }) {
+function LiveCard({ live, onOpen, socket }) {
+  const cardRef = useRef(null);
+  const videoRef = useRef(null);
+  const [inView, setInView] = useState(false);
+
+  // Only preview what the viewer is actually looking at.
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver(
+      ([entry]) => setInView(entry.isIntersecting && entry.intersectionRatio > 0.6),
+      { threshold: [0, 0.6, 1] },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  const { playing } = useLivePreview({
+    socket,
+    liveId: live.id,
+    enabled: inView,
+    videoRef,
+  });
+
   return (
-    <button type="button" className="feed-card" onClick={() => onOpen(live.id)}>
+    <button type="button" className="feed-card" onClick={() => onOpen(live.id)} ref={cardRef}>
       <div
         className="feed-card__thumb"
         style={live.wallpaperUrl ? { backgroundImage: `url(${live.wallpaperUrl})` } : undefined}
       >
-        {!live.wallpaperUrl && (
+        {/* The preview sits above the wallpaper and fades out after 5s, so the
+            card settles back to a still image instead of holding a decoder. */}
+        <video
+          ref={videoRef}
+          className={`feed-card__preview${playing ? ' feed-card__preview--on' : ''}`}
+          playsInline
+          muted
+          autoPlay
+          disablePictureInPicture
+        />
+        {!live.wallpaperUrl && !playing && (
           <Avatar className="feed-card__ghost" src={live.avatarUrl} name={live.handle} />
         )}
         <span className="feed-card__badge">
           <span className="live-badge-live__dot" />
           LIVE
         </span>
-        <span className="feed-card__viewers">👥 {compact(live.viewerCount || 0)}</span>
+        <span className="feed-card__viewers">
+          <MmIcon name="users" size={11} /> {compact(live.viewerCount || 0)}
+        </span>
         <span className="feed-card__time">{elapsed(live.startedAt)}</span>
       </div>
 
       <div className="feed-card__meta">
         <Avatar className="feed-card__avatar" src={live.avatarUrl} name={live.handle} />
         <span className="feed-card__text">
-          <span className="feed-card__name">{live.displayName || live.handle}</span>
+          <span className="feed-card__name">
+            {live.displayName || live.handle}
+            {live.verified && <VerifiedBadge size={11} />}
+          </span>
           <span className="feed-card__title">{live.title}</span>
         </span>
       </div>
@@ -46,6 +88,7 @@ function LiveCard({ live, onOpen }) {
  * transition into a stream does not feel like entering a different product.
  */
 export default function LivesFeed({
+  socket,
   identityHook,
   onOpenLive,
   onExit,
@@ -56,6 +99,7 @@ export default function LivesFeed({
   const { isSignedIn, hydrating, loginFromCreator, creatorLinkFailed } = identityHook;
   const { lives, loading, error, refresh, livekit } = useLivesList(6000);
   const [creatorLinking, setCreatorLinking] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const showCreate = canCreateLive || isCreator;
   const creatorSession = !!getCreatorSessionToken();
 
@@ -114,12 +158,19 @@ export default function LivesFeed({
   return (
     <div className="feed-root">
       <header className="feed-top">
-        <button type="button" className="live-icon-btn" onClick={onExit} aria-label="Back">←</button>
+        <button type="button" className="live-icon-btn" onClick={onExit} aria-label="Back">
+          <MmIcon name="back" size={16} />
+        </button>
         <div className="feed-top__title">
           <span className="feed-top__eyebrow">Live now</span>
           <h1 className="feed-top__h1">Lives</h1>
         </div>
-        <button type="button" className="live-icon-btn" onClick={refresh} aria-label="Refresh">↻</button>
+        <button type="button" className="live-icon-btn" onClick={() => setSearchOpen(true)} aria-label="Find a creator">
+          <MmIcon name="eye" size={16} />
+        </button>
+        <button type="button" className="live-icon-btn" onClick={refresh} aria-label="Refresh">
+          <MmIcon name="refresh" size={16} />
+        </button>
       </header>
 
       <div className="feed-body">
@@ -141,13 +192,13 @@ export default function LivesFeed({
 
         <div className="feed-grid">
           {lives.map((live) => (
-            <LiveCard key={live.id} live={live} onOpen={onOpenLive} />
+            <LiveCard key={live.id} live={live} onOpen={onOpenLive} socket={socket} />
           ))}
         </div>
 
         {!loading && !lives.length && (
           <div className="feed-empty">
-            <span style={{ fontSize: 40 }}>📡</span>
+            <MmIcon name="broadcast" size={40} />
             <p style={{ fontSize: 15, fontWeight: 700 }}>No one is live yet</p>
             {showCreate && (
               <button type="button" className="live-btn live-btn--primary" onClick={onGoLive}>
@@ -157,6 +208,7 @@ export default function LivesFeed({
           </div>
         )}
       </div>
+      <CreatorSearch open={searchOpen} onClose={() => setSearchOpen(false)} onOpenLive={onOpenLive} />
     </div>
   );
 }

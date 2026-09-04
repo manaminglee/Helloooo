@@ -35,6 +35,8 @@ const { registerEconomy } = require('./economy');
 const { registerAudioIdentity } = require('./audioIdentity');
 const { registerLiveStreams } = require('./liveStreams');
 const { createLivePersistence } = require('./livePersistence');
+const { registerCreatorProfile } = require('./creatorProfile');
+const { registerCreatorKyc } = require('./creatorKyc');
 const { registerAgency } = require('./agency');
 const { registerModeration } = require('./moderation');
 const { createMatchQueue } = require('./matchQueue');
@@ -3231,6 +3233,29 @@ const liveStreams = registerLiveStreams(app, io, {
   // live rooms are shared across instances; without it, single-process memory.
   getRedis: () => infra.getRedis?.() || null,
   audit: moderation.audit,
+});
+
+// Public creator directory: 6-digit ID, score, rank, gifts board, search.
+registerCreatorProfile(app, io, {
+  supabase,
+  localDb,
+  saveLocalDb,
+  sanitize,
+  getCreatorForRequest,
+  liveStreams,
+  audit: moderation.audit,
+});
+
+// Blue badge. Identity checks are opt-in via KYC_MODE (off by default).
+registerCreatorKyc(app, io, {
+  supabase,
+  localDb,
+  saveLocalDb,
+  sanitize,
+  getCreatorForRequest,
+  isAdminRequest,
+  audit: moderation.audit,
+  notifyCreatorAction,
 });
 
 registerAgency(app, io, {

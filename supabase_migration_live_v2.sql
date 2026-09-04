@@ -165,3 +165,27 @@ CREATE TABLE IF NOT EXISTS mm_live_analytics (
   created_at     TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_live_analytics_creator ON mm_live_analytics (creator_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Trusted devices for the shared audio + live identity.
+--
+-- Only the SHA-256 of a device token is ever stored, so a dump of this table
+-- cannot be replayed. `prev_hash` holds one previous generation purely so that
+-- reuse of a rotated token can be detected and the device burned.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mm_audio_devices (
+  id            UUID PRIMARY KEY,
+  username_key  TEXT NOT NULL,
+  token_hash    TEXT,
+  prev_hash     TEXT,
+  ua_hash       TEXT NOT NULL,
+  label         TEXT,
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  last_used_at  TIMESTAMPTZ DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  last_ip       TEXT,
+  revoked       BOOLEAN DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_audio_devices_user  ON mm_audio_devices (username_key) WHERE revoked = FALSE;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_audio_device_token ON mm_audio_devices (token_hash) WHERE token_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_audio_devices_prev  ON mm_audio_devices (prev_hash) WHERE prev_hash IS NOT NULL;

@@ -1,5 +1,8 @@
 import { memo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { MmIcon } from '../icons/MmIcon';
+import { GiftArt } from '../icons/GiftArt';
+import GiftAnimation3D from './GiftAnimation3D';
 
 /* Small shared pieces of the live overlay. Everything here is memoised —
    these sit next to the video element and must not re-render on every tick. */
@@ -101,6 +104,18 @@ export const CommentStream = memo(function CommentStream({ comments, onUser }) {
 /* Floating hearts                                                           */
 /* ------------------------------------------------------------------------ */
 
+/* Two marks only — a heart and a spark. Drawn inline rather than through
+   <MmIcon> because dozens animate at once and every prop costs. */
+const FloatHeart = memo(function FloatHeart({ shape, hue }) {
+  return (
+    <svg viewBox="0 0 24 24" fill={hue} aria-hidden>
+      {shape === 'spark'
+        ? <path d="M12 1.6c.8 5 2.6 6.8 7.6 7.6-5 .8-6.8 2.6-7.6 7.6-.8-5-2.6-6.8-7.6-7.6 5-.8 6.8-2.6 7.6-7.6Z" />
+        : <path d="M12 21.4C4.2 16.2 1.6 12.4 1.6 8.8A5.3 5.3 0 0 1 12 6.6a5.3 5.3 0 0 1 10.4 2.2c0 3.6-2.6 7.4-10.4 12.6Z" />}
+    </svg>
+  );
+});
+
 export const HeartLayer = memo(function HeartLayer({ hearts, onDone }) {
   return (
     <div className="live-hearts" aria-hidden>
@@ -111,7 +126,7 @@ export const HeartLayer = memo(function HeartLayer({ hearts, onDone }) {
           style={h.style}
           onAnimationEnd={() => onDone(h.id)}
         >
-          {h.glyph}
+          <FloatHeart shape={h.shape} hue={h.hue} />
         </span>
       ))}
     </div>
@@ -133,7 +148,9 @@ export const GiftBanners = memo(function GiftBanners({ banners }) {
             <span className="live-gift-banner__from">{b.from}</span>
             <span className="live-gift-banner__what">sent {b.gift?.name}</span>
           </span>
-          <span className="live-gift-banner__icon">{b.gift?.icon}</span>
+          <span className="live-gift-banner__icon">
+            <GiftArt id={b.gift?.id} tier={b.gift?.tier} size={30} />
+          </span>
           {b.comboCount > 1 && (
             <span
               key={b.bump}
@@ -150,11 +167,17 @@ export const GiftBanners = memo(function GiftBanners({ banners }) {
 
 export const FullscreenGift = memo(function FullscreenGift({ gift }) {
   if (!gift) return null;
+  // legendary and mega get the 3D stage; everything else keeps the flat card.
+  if (gift.anim === 'legendary' || gift.anim === 'mega') {
+    return <GiftAnimation3D gift={gift} />;
+  }
   return (
     <div className="live-gift-fullscreen" aria-hidden>
       <div className="live-gift-fullscreen__rays" />
       <div className="live-gift-fullscreen__inner">
-        <div className="live-gift-fullscreen__icon">{gift.gift?.icon}</div>
+        <div className="live-gift-fullscreen__icon">
+          <GiftArt id={gift.gift?.id} tier={gift.gift?.tier} size={140} />
+        </div>
         <div className="live-gift-fullscreen__name">{gift.gift?.name}</div>
         <div className="live-gift-fullscreen__from">
           from {gift.from}{gift.comboCount > 1 ? ` · x${gift.comboCount}` : ''}
@@ -187,7 +210,9 @@ export function Sheet({ open, title, onClose, children, tall = false, foot = nul
         <div className="live-sheet__grip" />
         <div className="live-sheet__head">
           <span className="live-sheet__title">{title}</span>
-          <button type="button" className="live-icon-btn" onClick={onClose} aria-label="Close">✕</button>
+          <button type="button" className="live-icon-btn" onClick={onClose} aria-label="Close">
+            <MmIcon name="close" size={15} />
+          </button>
         </div>
         <div className="live-sheet__body">{children}</div>
         {foot}

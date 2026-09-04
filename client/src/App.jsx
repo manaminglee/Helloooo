@@ -1,5 +1,7 @@
-import { useState, useEffect, useMemo, Suspense } from 'react';
+import { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { LandingPage } from './components/LandingPage';
+import MobileNav from './components/MobileNav';
+import { useLiveManifest, launchTarget } from './utils/pwaManifest';
 import { AgeVerificationGate } from './components/AgeVerificationGate';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { UnblockPaymentModal } from './components/UnblockPaymentModal';
@@ -62,6 +64,14 @@ function AppShell() {
     return STATES.LANDING;
   });
   const [mode, setMode] = useState(null);
+
+  /* Live and Audio are one installable app. The manifest is swapped whenever
+     the person is on either surface, so an install from there lands back on it
+     instead of the landing page. */
+  useEffect(() => {
+    const inLiveApp = mode === MODES.LIVES || mode === MODES.GROUP_TEXT;
+    useLiveManifest(inLiveApp ? 'live' : 'default');
+  }, [mode]);
   const [interest, setInterest] = useState('general');
   const [roomId, setRoomId] = useState(null);
   const [joinMeta, setJoinMeta] = useState({
@@ -329,6 +339,19 @@ function AppShell() {
     setJoinMeta((prev) => ({ ...prev, createLive: false }));
   };
 
+  /* PWA deep links. An installed Live app opens at /live; without this it
+     would land on the generic landing page every time. Fires once, and only
+     once the socket is up, because joining needs it. */
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    if (deepLinked.current || !socket || !connected || mode) return;
+    const target = launchTarget();
+    if (!target) return;
+    deepLinked.current = true;
+    handleJoin('general', joinMeta.displayNickname, target === 'live' ? MODES.LIVES : MODES.GROUP_TEXT);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socket, connected, mode]);
+
   // Called when user selects a mode from the landing page
   const handleJoin = (interestVal, nick, m, rid = null, meta = {}) => {
     if (!socket || !connected || isJoining) return;
@@ -435,7 +458,7 @@ function AppShell() {
     }
     if (appState === STATES.LANDING || (appState === STATES.CHAT && !mode)) {
       return (
-        <div className="mm-page-enter">
+        <div className="mm-page-enter mmnav-pad">
           <LandingPage
             onJoin={handleJoin}
             connected={connected}
@@ -447,6 +470,23 @@ function AppShell() {
             joinMeta={joinMeta}
             setJoinMeta={setJoinMeta}
             country={country}
+          />
+
+          {/* Phone navigation. Only here — inside a call or a live the screen
+              belongs to the video, and a persistent bar would both cover it and
+              make it easy to walk out of a session by accident. */}
+          <MobileNav
+            active="discover"
+            onSelect={(id) => {
+              if (id === 'discover') { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+              if (id === 'me') { window.location.assign('/creator'); return; }
+              const target = {
+                live: MODES.LIVES,
+                audio: MODES.GROUP_TEXT,
+                text: MODES.TEXT,
+              }[id];
+              if (target) handleJoin(interest || 'general', joinMeta.displayNickname, target);
+            }}
           />
         </div>
       );

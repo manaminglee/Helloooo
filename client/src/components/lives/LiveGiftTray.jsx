@@ -1,12 +1,14 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import { API_BASE } from '../../config/apiBase';
 import { NutsSymbol } from '../NutsSymbol';
+import { GiftArt } from '../icons/GiftArt';
 import { Sheet, compact } from './LiveBits';
 
-/* Catalog is fetched once per page load, then reused. Gift art is emoji glyphs
-   rendered by the OS — nothing to download, nothing to lazy-load, and no
-   third-party assets. Heavy animations are CSS and only mount when a gift
-   actually lands. */
+/* Catalog is fetched once per page load, then reused. The artwork is ours:
+   every mark is an inline SVG from components/icons/GiftArt — nothing to
+   download, no third-party assets, and identical on every device (emoji are
+   not: each platform draws its own). Heavy animations are CSS and only mount
+   when a gift actually lands. */
 let catalogCache = null;
 let catalogPromise = null;
 
@@ -40,7 +42,9 @@ const GiftCard = memo(function GiftCard({ gift, selected, affordable, onSelect }
       aria-pressed={selected}
     >
       <span className={`live-gift-card__rarity rarity--${gift.tier}`} aria-label={gift.tier} />
-      <span className="live-gift-card__icon">{gift.icon}</span>
+      <span className="live-gift-card__icon">
+        <GiftArt id={gift.id} tier={gift.tier} size={30} />
+      </span>
       <span className="live-gift-card__name">{gift.name}</span>
       <span className="live-gift-card__cost">
         <NutsSymbol size={10} />
@@ -151,7 +155,7 @@ export function LiveGiftTray({
     >
       {shortfall ? (
         <div className="live-recharge">
-          <span style={{ fontSize: 40 }}>🪙</span>
+          <NutsSymbol size={40} />
           <p className="live-recharge__title">Not enough coins</p>
           <p className="live-recharge__sub">
             You need {compact(shortfall)} more to send {selected?.name}.

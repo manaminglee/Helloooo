@@ -5,7 +5,10 @@ const MAX_QUEUE = 60;       // anything beyond this is dropped, not buffered
 const DRAIN_MS = 70;        // one heart spawned per tick
 const LIFETIME_MS = 2900;
 
-const GLYPHS = ['❤️', '💗', '💖', '💘', '💕', '✨'];
+/* Our own palette, drawn by <FloatHeart/> — never an emoji, which would be
+   Apple's or Google's artwork and would look different on every handset. */
+const HUES = ['#ff2d6f', '#ff5f8f', '#ff90b3', '#f472b6', '#a855f7', '#fb7185'];
+const SHAPES = ['heart', 'heart', 'heart', 'spark'];
 
 let seq = 0;
 
@@ -14,7 +17,8 @@ function makeHeart(color) {
   const drift = () => `${Math.round((Math.random() - 0.5) * 54)}px`;
   return {
     id: seq,
-    glyph: GLYPHS[Math.floor(Math.random() * GLYPHS.length)],
+    shape: SHAPES[Math.floor(Math.random() * SHAPES.length)],
+    hue: color || HUES[Math.floor(Math.random() * HUES.length)],
     style: {
       '--x1': drift(),
       '--x2': drift(),
@@ -22,7 +26,7 @@ function makeHeart(color) {
       '--scale': (0.62 + Math.random() * 0.75).toFixed(2),
       '--rot': `${Math.round((Math.random() - 0.5) * 34)}deg`,
       '--dur': `${Math.round(2200 + Math.random() * 1300)}ms`,
-      color: color || undefined,
+      '--size': `${Math.round(15 + Math.random() * 11)}px`,
     },
     bornAt: Date.now(),
   };
