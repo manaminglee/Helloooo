@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE } from '../../config/apiBase';
 import { useLiveRoom } from '../../hooks/useLiveRoom';
 import { useLiveKitLive } from '../../hooks/useLiveKitLive';
+import { useLiveKitOpponent } from '../../hooks/useLiveKitOpponent';
 import { useFloatingReactions } from '../../hooks/useFloatingReactions';
 import { useLiveViewport, useLiveBodyLock } from '../../hooks/useLiveViewport';
 import { hapticTap, hapticSuccess } from '../../utils/haptics';
@@ -49,6 +50,7 @@ export default function LiveRoom({
   const isHost = mode === 'host';
   const rootRef = useRef(null);
   const videoRef = useRef(null);
+  const opponentVideoRef = useRef(null);
   const inputRef = useRef(null);
 
   useLiveBodyLock();
@@ -103,6 +105,33 @@ export default function LiveRoom({
     mirrorLocal: isHost || guestPublish,
     beautyEnabled: (isHost || guestPublish) && (live?.beautyEnabled !== false) && beautyOn,
   });
+
+  /* HP split screen. `hpActive` is derived straight from the battle record, so
+     the moment the server ends the battle — a side exiting, the timer, a host
+     dropping — the opponent pane unmounts and this room goes full-bleed again
+     without any extra teardown step. */
+  const hpActive = battle?.status === 'active'
+    && (battle.liveA === live?.id || battle.liveB === live?.id);
+  const mySide = hpActive ? (battle.liveA === live?.id ? 'A' : 'B') : null;
+
+  const opponent = useLiveKitOpponent({
+    enabled: hpActive && roomState !== 'ended' && roomState !== 'removed',
+    socket,
+    liveId: live?.id,
+    battleId: hpActive ? battle.id : null,
+    videoElRef: opponentVideoRef,
+  });
+
+  const leaveHp = useCallback(() => {
+    if (!socket || !live?.id) return;
+    socket.emit('live:hp-leave', { liveId: live.id });
+  }, [socket, live?.id]);
+
+  const meLabel = mySide === 'B' ? battle?.handleB : battle?.handleA;
+  const themLabel = mySide === 'B' ? battle?.handleA : battle?.handleB;
+  const myScore = mySide === 'B' ? battle?.scoreB : battle?.scoreA;
+  const theirScore = mySide === 'B' ? battle?.scoreA : battle?.scoreB;
+  const opponentLiveId = mySide === 'B' ? battle?.liveA : battle?.liveB;
 
   const comboTimer = useRef(null);
   const balance = identity?.coins ?? 0;
@@ -291,21 +320,65 @@ export default function LiveRoom({
 
   return (
     <div className="live-root" ref={rootRef} onPointerDown={unlockSound}>
-      {/* 1 · VIDEO — mounted once, never inside a conditional branch */}
-      <div className="live-video-layer">
-        {live?.wallpaperUrl && !media.hasMedia && (
-          <div className="live-wallpaper" style={{ backgroundImage: `url(${live.wallpaperUrl})` }} />
+      {/* 1 · VIDEO — mounted once, never inside a conditional branch. During an
+             HP battle the same element just moves into the top half of a split
+             frame, so the stream is never torn down and rebuilt. */}
+      <div className={`live-video-layer${hpActive ? ' live-video-layer--hp' : ''}`}>
+        <div className="live-video-pane">
+          {live?.wallpaperUrl && !media.hasMedia && (
+            <div className="live-wallpaper" style={{ backgroundImage: `url(${live.wallpaperUrl})` }} />
+          )}
+          <video
+            ref={videoRef}
+            className={`live-video${isHost && media.facingMode === 'user' ? ' live-video--mirror' : ''}`}
+            playsInline
+            webkit-playsinline="true"
+            autoPlay
+            muted
+            disablePictureInPicture
+          />
+          {hpActive && <span className="live-video-pane__tag">@{meLabel}</span>}
+        </div>
+
+        {hpActive && (
+          <div className="live-video-pane live-video-pane--opponent">
+            <video
+              ref={opponentVideoRef}
+              className="live-video"
+              playsInline
+              webkit-playsinline="true"
+              autoPlay
+              muted
+              disablePictureInPicture
+            />
+            {!opponent.hasMedia && (
+              <div className="live-video-pane__waiting">
+                <div className="live-state__spinner" aria-hidden />
+                <p>{opponent.error ? 'Opponent unavailable' : `Connecting @${themLabel}…`}</p>
+              </div>
+            )}
+            <span className="live-video-pane__tag">@{themLabel}</span>
+            {!isHost && opponentLiveId && (
+              <button
+                type="button"
+                className="live-video-pane__switch"
+                data-interactive
+                onClick={() => onSwitchBattleLive?.(opponentLiveId)}
+              >
+                Watch
+              </button>
+            )}
+          </div>
         )}
-        <video
-          ref={videoRef}
-          className={`live-video${isHost && media.facingMode === 'user' ? ' live-video--mirror' : ''}`}
-          playsInline
-          webkit-playsinline="true"
-          autoPlay
-          muted
-          disablePictureInPicture
-        />
       </div>
+
+      {hpActive && (
+        <div className="live-hp-hud" aria-hidden={false}>
+          <span className="live-hp-hud__score">{compact(myScore || 0)}</span>
+          <span className="live-hp-hud__vs">HP</span>
+          <span className="live-hp-hud__score live-hp-hud__score--them">{compact(theirScore || 0)}</span>
+        </div>
+      )}
 
       <div className="live-scrim-top" />
       <div className="live-scrim-bottom" />
@@ -466,12 +539,16 @@ export default function LiveRoom({
                 <span className="live-rail__item">
                   <button
                     type="button"
-                    className="live-rail__btn"
-                    onClick={() => { hapticTap(); setHpOpen(true); }}
-                    aria-label="Helloooo Partner"
+                    className={`live-rail__btn${hpActive ? ' live-rail__btn--off' : ''}`}
+                    onClick={() => {
+                      hapticTap();
+                      if (hpActive) { leaveHp(); return; }
+                      setHpOpen(true);
+                    }}
+                    aria-label={hpActive ? 'End HP battle' : 'Helloooo Partner'}
                   >
                     <span style={{ fontSize: 12, fontWeight: 900 }}>HP</span>
-                    <span className="live-rail__label">Partner</span>
+                    <span className="live-rail__label">{hpActive ? 'End HP' : 'Partner'}</span>
                   </button>
                 </span>
                 <span className="live-rail__item">
@@ -738,6 +815,7 @@ export default function LiveRoom({
         onClose={() => setHpOpen(false)}
         socket={socket}
         liveId={live?.id}
+        live={live}
         battle={battle}
       />
 

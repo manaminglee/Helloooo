@@ -11,19 +11,24 @@ const Turnstile = lazyRetry(() =>
 );
 
 const apiBase = API_BASE;
-// Use env key or Cloudflare test key (always passes) for dev
-const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || '1x00000000000000000000AA';
+const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || '';
+const TURNSTILE_TEST_KEY = '1x00000000000000000000AA';
 
-/** Temporary: skip Turnstile on local/dev so age confirm works without CAPTCHA */
-function isLocalHostBypass() {
+/** Skip Turnstile when CAPTCHA cannot run (local dev, Render, or no real site key). */
+function shouldSkipTurnstile() {
   if (import.meta.env.DEV) return true;
   if (typeof window === 'undefined') return false;
   const host = window.location.hostname;
-  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+  if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') return true;
+  // Turnstile clearance only works on Cloudflare-proxied zones — not on Render direct URLs.
+  if (host.endsWith('.onrender.com')) return true;
+  const key = turnstileSiteKey.trim();
+  if (!key || key === TURNSTILE_TEST_KEY) return true;
+  return false;
 }
 
 export function AgeVerificationGate({ onVerified }) {
-  const skipTurnstile = isLocalHostBypass();
+  const skipTurnstile = shouldSkipTurnstile();
   const [turnstileToken, setTurnstileToken] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState('');

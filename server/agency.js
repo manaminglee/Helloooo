@@ -29,6 +29,7 @@ function registerAgency(app, io, deps) {
     supabase,
     isAdminRequest,
     getAdminKey,
+    agencyTenancy,
     liveStreams,
     audioChannels,
     audioIdentity,
@@ -48,13 +49,72 @@ function registerAgency(app, io, deps) {
     return false;
   }
 
+  /**
+   * Accepts either the legacy global key (which sees every tenant) or a
+   * per-agency credential from the tenancy module. `req.agencyScope` carries
+   * the tenant so each route can narrow its own data; a route that ignores it
+   * would leak another agency's roster.
+   */
   function requireAgency(req, res, next) {
+    const ctx = agencyTenancy?.resolveContext?.(req);
+    if (ctx?.scope) {
+      req.agencyAuthed = true;
+      req.agencyCtx = ctx;
+      req.agencyScope = ctx.scope === 'super' ? null : ctx.agency;
+      return next();
+    }
     if (!getAgencyKey() && !getAdminKey?.()) {
       return res.status(503).json({ error: 'Agency panel not configured' });
     }
     if (!isAgencyRequest(req)) return res.status(401).json({ error: 'Unauthorized' });
     req.agencyAuthed = true;
-    next();
+    req.agencyScope = null;
+    return next();
+  }
+
+  /** Only the creators belonging to the calling tenant (all, for super). */
+  function scopeCreators(req, rows) {
+    const tenant = req.agencyScope;
+    if (!tenant) return rows;
+    return rows.filter((c) => c.agency_id === tenant.id);
+  }
+
+  /** Lives are keyed by creatorId, so scope them through the roster. */
+  function scopeLives(req, lives) {
+    const tenant = req.agencyScope;
+    if (!tenant) return lives;
+    const mine = new Set((localDb.creators || [])
+      .filter((c) => c.agency_id === tenant.id)
+      .map((c) => c.id));
+    return lives.filter((l) => mine.has(l.creatorId));
+  }
+
+  /**
+   * Platform-wide levers (global settings, minting Nuts out of nothing, the
+   * shared audio rooms) stay with the operator. A tenant agency gets its own
+   * mint pool instead, which is bounded.
+   */
+  function requireSuper(req, res, next) {
+    requireAgency(req, res, () => {
+      if (req.agencyScope) {
+        return res.status(403).json({ error: 'Platform operator access required' });
+      }
+      return next();
+    });
+  }
+
+  /** True when the tenant may act on this creator id. */
+  async function ownsCreator(req, creatorId) {
+    const tenant = req.agencyScope;
+    if (!tenant) return true;
+    if (!creatorId) return false;
+    const local = (localDb.creators || []).find((c) => c.id === creatorId);
+    if (local) return local.agency_id === tenant.id;
+    if (supabase) {
+      const { data } = await supabase.from('creators').select('agency_id').eq('id', creatorId).maybeSingle();
+      return !!data && data.agency_id === tenant.id;
+    }
+    return false;
   }
 
   // Ensure agency settings defaults
@@ -63,23 +123,31 @@ function registerAgency(app, io, deps) {
   if (settings.minWithdrawalNuts == null) settings.minWithdrawalNuts = 10000;
   if (settings.agencyAnnouncements == null) settings.agencyAnnouncements = '';
 
-  app.get('/api/agency/overview', requireAgency, async (_req, res) => {
-    const lives = (await liveStreams?.listActive?.()) || [];
+  app.get('/api/agency/overview', requireAgency, async (req, res) => {
+    const lives = scopeLives(req, (await liveStreams?.listActive?.()) || []);
     let audioList = [];
     try {
       audioList = audioChannels?.listChannelsPublic?.() || audioChannels?.listForAdmin?.() || [];
     } catch {
       audioList = [];
     }
-    const creators = localDb.creators || [];
+    const creators = scopeCreators(req, localDb.creators || []);
     const pendingCreators = creators.filter((c) => c.status === 'pending').length;
-    const withdrawals = (localDb.withdrawals || []).filter((w) => w.status === 'pending');
+    const tenant = req.agencyScope;
+    const mineIds = new Set(creators.map((c) => c.id));
+    const withdrawals = (localDb.withdrawals || []).filter(
+      (w) => w.status === 'pending' && (!tenant || mineIds.has(w.creator_id)),
+    );
     res.json({
       ok: true,
+      scope: req.agencyCtx?.scope || 'super',
+      agency: tenant ? agencyTenancy?.publicAgency?.(tenant) : null,
+      mint: tenant ? agencyTenancy?.mintView?.(tenant) : null,
       overview: {
         activeLives: lives.length,
         liveViewers: lives.reduce((n, l) => n + (l.viewerCount || 0), 0),
         audioRooms: Array.isArray(audioList) ? audioList.length : 0,
+        creatorCount: creators.length,
         pendingCreators,
         pendingWithdrawals: withdrawals.length,
         nutsPerUsd: settings.nutsPayoutPerUsd || NUTS_PER_USD,
@@ -91,7 +159,7 @@ function registerAgency(app, io, deps) {
     });
   });
 
-  app.get('/api/agency/creators', requireAgency, async (_req, res) => {
+  app.get('/api/agency/creators', requireAgency, async (req, res) => {
     let creators = [];
     let withdrawals = [];
     if (supabase) {
@@ -103,9 +171,14 @@ function registerAgency(app, io, deps) {
       creators = [...(localDb.creators || [])].reverse();
       withdrawals = [...(localDb.withdrawals || [])].reverse();
     }
+    creators = scopeCreators(req, creators);
+    if (req.agencyScope) {
+      const mineIds = new Set(creators.map((c) => c.id));
+      withdrawals = withdrawals.filter((w) => mineIds.has(w.creator_id));
+    }
     res.json({
       ok: true,
-      creators,
+      creators: creators.map((c) => creatorSecurity.stripCreatorSecrets(c)),
       withdrawals,
       nutsPerUsd: settings.nutsPayoutPerUsd || NUTS_PER_USD,
       minWithdrawalNuts: settings.minWithdrawalNuts || 10000,
@@ -116,6 +189,9 @@ function registerAgency(app, io, deps) {
     const { creatorId, status, reason } = req.body || {};
     if (!applyCreatorStatus || !creatorApprovalDeps) {
       return res.status(501).json({ error: 'Approval module unavailable' });
+    }
+    if (!await ownsCreator(req, creatorId)) {
+      return res.status(403).json({ error: 'That creator is not in your agency' });
     }
     try {
       const result = await applyCreatorStatus(creatorApprovalDeps(), {
@@ -145,15 +221,28 @@ function registerAgency(app, io, deps) {
     try {
       let { creatorIds, status, reason, pendingOnly } = req.body || {};
       status = status || 'approved';
+      const tenant = req.agencyScope;
       if (pendingOnly) {
         let list = [];
         if (supabase) {
-          const { data } = await supabase.from('creators').select('id').eq('status', 'pending');
+          const q = supabase.from('creators').select('id').eq('status', 'pending');
+          const { data } = await (tenant ? q.eq('agency_id', tenant.id) : q);
           list = (data || []).map((r) => r.id);
         } else {
-          list = (localDb.creators || []).filter((c) => c.status === 'pending').map((c) => c.id);
+          list = (localDb.creators || [])
+            .filter((c) => c.status === 'pending' && (!tenant || c.agency_id === tenant.id))
+            .map((c) => c.id);
         }
         creatorIds = list;
+      } else if (tenant) {
+        // An explicit id list must still be filtered, or a tenant could bulk
+        // approve the whole platform by passing arbitrary ids.
+        const allowed = [];
+        for (const id of [...new Set((creatorIds || []).map(String))]) {
+          // eslint-disable-next-line no-await-in-loop
+          if (await ownsCreator(req, id)) allowed.push(id);
+        }
+        creatorIds = allowed;
       }
       const result = await applyCreatorStatusBulk(creatorApprovalDeps(), {
         creatorIds,
@@ -179,6 +268,9 @@ function registerAgency(app, io, deps) {
       if (data) withdrawal = data;
     }
     if (!withdrawal) return res.status(404).json({ error: 'Not found' });
+    if (!await ownsCreator(req, withdrawal.creator_id)) {
+      return res.status(403).json({ error: 'That withdrawal is not from your agency' });
+    }
     withdrawal.status = status;
     withdrawal.admin_note = String(note || '').slice(0, 500);
     withdrawal.updated_at = new Date().toISOString();
@@ -195,23 +287,39 @@ function registerAgency(app, io, deps) {
     res.json({ ok: true, withdrawal });
   });
 
-  app.get('/api/agency/lives', requireAgency, async (_req, res) => {
-    res.json({ ok: true, lives: (await liveStreams?.listActive?.()) || [] });
+  app.get('/api/agency/lives', requireAgency, async (req, res) => {
+    res.json({ ok: true, lives: scopeLives(req, (await liveStreams?.listActive?.()) || []) });
   });
 
   app.post('/api/agency/lives/:id/end', requireAgency, async (req, res) => {
+    const all = (await liveStreams?.listActive?.()) || [];
+    const live = all.find((l) => l.id === req.params.id);
+    if (!live) return res.status(404).json({ error: 'Live not found' });
+    if (!await ownsCreator(req, live.creatorId)) {
+      return res.status(403).json({ error: 'That live is not from your agency' });
+    }
     req.agencyAuthed = true;
     const result = await liveStreams?.endLive?.(req.params.id, 'agency_force');
-    res.json(result || { ok: false, error: 'Lives module unavailable' });
+    return res.json(result || { ok: false, error: 'Lives module unavailable' });
   });
 
   app.post('/api/agency/lives/battle/start', requireAgency, async (req, res) => {
-    const result = await liveStreams?.startBattle?.(req.body?.liveIdA, req.body?.liveIdB);
+    const { liveIdA, liveIdB } = req.body || {};
+    const all = (await liveStreams?.listActive?.()) || [];
+    for (const id of [liveIdA, liveIdB]) {
+      const live = all.find((l) => l.id === id);
+      if (!live) return res.status(404).json({ error: 'Live not found' });
+      // eslint-disable-next-line no-await-in-loop
+      if (!await ownsCreator(req, live.creatorId)) {
+        return res.status(403).json({ error: 'Both lives must be from your agency' });
+      }
+    }
+    const result = await liveStreams?.startBattle?.(liveIdA, liveIdB);
     if (!result?.ok) return res.status(400).json(result || { ok: false });
-    res.json(result);
+    return res.json(result);
   });
 
-  app.get('/api/agency/audio', requireAgency, (_req, res) => {
+  app.get('/api/agency/audio', requireSuper, (_req, res) => {
     let channels = [];
     try {
       if (typeof audioChannels?.listForAdmin === 'function') channels = audioChannels.listForAdmin();
@@ -222,7 +330,7 @@ function registerAgency(app, io, deps) {
     res.json({ ok: true, channels });
   });
 
-  app.post('/api/agency/audio/:channelId/action', requireAgency, async (req, res) => {
+  app.post('/api/agency/audio/:channelId/action', requireSuper, async (req, res) => {
     if (typeof audioChannels?.adminAction === 'function') {
       const result = await audioChannels.adminAction(req.params.channelId, req.body || {});
       return res.json(result);
@@ -241,7 +349,9 @@ function registerAgency(app, io, deps) {
     });
   });
 
-  app.post('/api/agency/nuts/adjust', requireAgency, async (req, res) => {
+  // Creates Nuts with no backing, so it is operator-only. Tenant agencies sell
+  // from their bounded mint pool via POST /api/agency/mint/sell instead.
+  app.post('/api/agency/nuts/adjust', requireSuper, async (req, res) => {
     const username = String(req.body?.username || '').trim().toLowerCase();
     const delta = Math.floor(Number(req.body?.delta) || 0);
     if (!username || !delta) return res.status(400).json({ error: 'username and delta required' });
@@ -269,7 +379,8 @@ function registerAgency(app, io, deps) {
     });
   });
 
-  app.post('/api/agency/settings', requireAgency, (req, res) => {
+  // These are platform-global (payout rate, go-live policy) — not per-tenant.
+  app.post('/api/agency/settings', requireSuper, (req, res) => {
     const body = req.body || {};
     if (body.liveGoLivePolicy === 'approved' || body.liveGoLivePolicy === 'applied') {
       settings.liveGoLivePolicy = body.liveGoLivePolicy;

@@ -46,6 +46,42 @@ export default function CreatorVerifyModal({
   const [statusQuery, setStatusQuery] = useState('');
   const [statusResult, setStatusResult] = useState(null);
   const [forgot, setForgot] = useState({ open: false, id: '', msg: '' });
+  // Agency invite: an accepted code approves the creator instantly.
+  const [invite, setInvite] = useState('');
+  const [inviteInfo, setInviteInfo] = useState(null);   // { agencyName, recruiterName }
+  const [inviteError, setInviteError] = useState('');
+  const [inviteChecking, setInviteChecking] = useState(false);
+
+  // Agency invite links land on /?creator=1&invite=CODE — prefill from there.
+  useEffect(() => {
+    if (!open) return;
+    try {
+      const fromUrl = new URLSearchParams(window.location.search).get('invite');
+      if (fromUrl) setInvite(fromUrl.trim().toUpperCase());
+    } catch { /* no URL access */ }
+  }, [open]);
+
+  // Resolve the code to an agency name so the applicant sees who invited them.
+  useEffect(() => {
+    const code = invite.trim().toUpperCase();
+    if (code.length < 6) { setInviteInfo(null); setInviteError(''); return undefined; }
+    let cancelled = false;
+    setInviteChecking(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/agency/invite/${encodeURIComponent(code)}`);
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (res.ok && data.ok) { setInviteInfo(data.invite); setInviteError(''); }
+        else { setInviteInfo(null); setInviteError(data.error || 'That invite code is not valid'); }
+      } catch {
+        if (!cancelled) { setInviteInfo(null); setInviteError('Could not check that code right now'); }
+      } finally {
+        if (!cancelled) setInviteChecking(false);
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); setInviteChecking(false); };
+  }, [invite]);
 
   useEffect(() => {
     if (!open) {
@@ -145,6 +181,8 @@ export default function CreatorVerifyModal({
       form.email,
       form.password,
       form.confirmPassword,
+      // Only send a code we already resolved to a real agency.
+      { agencyInvite: inviteInfo ? invite.trim().toUpperCase() : undefined },
     );
     setBusy(false);
     if (!res.success) {
@@ -155,8 +193,10 @@ export default function CreatorVerifyModal({
       handle: res.handle || form.handle,
       email: res.email || form.email,
       accessCode: res.accessCode,
-      status: 'pending',
+      status: res.status || 'pending',
       message: res.message,
+      agencyName: res.agencyName,
+      canGoLive: res.canGoLive,
     });
   };
 
@@ -258,8 +298,16 @@ export default function CreatorVerifyModal({
         {done ? (
           <div className="mm-creator-verify__done">
             <div className="mm-creator-verify__done-icon">✓</div>
-            <h3>Application saved</h3>
+            <h3>{done.canGoLive ? `Approved — welcome to ${done.agencyName || 'the program'}` : 'Application saved'}</h3>
             <p>{done.message || 'Pending admin review. You will log in with your password after approval.'}</p>
+            {done.canGoLive && (
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 mb-1">
+                <p className="text-xs font-bold text-emerald-200">You can go live right now</p>
+                <p className="text-[11px] text-emerald-100/70 mt-1">
+                  Log in below, open the creator dashboard, and start a stream. No approval wait.
+                </p>
+              </div>
+            )}
             <div className="mm-creator-verify__card">
               <div><span>Handle</span><strong>@{done.handle}</strong></div>
               <div><span>Email</span><strong>{done.email}</strong></div>
@@ -296,6 +344,30 @@ export default function CreatorVerifyModal({
 
             {step === 0 && (
               <div className="space-y-3">
+                <label className="mm-audio-id-label">
+                  Agency invite code <span className="text-white/35">(optional)</span>
+                  <input
+                    className="mm-audio-id-input"
+                    value={invite}
+                    onChange={(e) => setInvite(e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 12))}
+                    placeholder="e.g. K7PQ2MRT"
+                  />
+                </label>
+                {inviteChecking && <p className="text-[11px] text-white/40">Checking code…</p>}
+                {inviteInfo && (
+                  <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
+                    <p className="text-xs font-bold text-emerald-200">
+                      Invited by {inviteInfo.agencyName}
+                      {inviteInfo.recruiterName ? ` · ${inviteInfo.recruiterName}` : ''}
+                    </p>
+                    <p className="text-[11px] text-emerald-100/70 mt-1">
+                      You&apos;ll be approved instantly and can start a live stream as soon as you log in — no waiting for review.
+                    </p>
+                  </div>
+                )}
+                {inviteError && invite.trim().length >= 6 && (
+                  <p className="text-[11px] text-rose-300">{inviteError}</p>
+                )}
                 <label className="mm-audio-id-label">
                   Creator handle
                   <input

@@ -47,12 +47,17 @@ async function mintParticipantToken({
   isCreator = false,
   canPublish = true,
   canSubscribe = true,
+  canPublishData = true,
   roomAdmin = false,
+  identitySuffix = '',
+  ttl = '2h',
 }) {
   if (!isConfigured()) {
     throw new Error('LiveKit is not configured on this server');
   }
-  const identity = String(socketId);
+  // A suffix keeps a second connection (e.g. watching an HP opponent's room)
+  // from evicting that person's real participant session in the same room.
+  const identity = `${socketId}${identitySuffix || ''}`;
   const room = sfuRoomName(roomId);
   const at = new AccessToken(
     process.env.LIVEKIT_API_KEY.trim(),
@@ -66,7 +71,7 @@ async function mintParticipantToken({
         country: String(country || '').slice(0, 8),
         isCreator: !!isCreator,
       }),
-      ttl: '2h',
+      ttl,
     }
   );
   at.addGrant({
@@ -74,7 +79,7 @@ async function mintParticipantToken({
     room,
     canPublish,
     canSubscribe,
-    canPublishData: true,
+    canPublishData: !!canPublishData,
     roomAdmin: !!roomAdmin,
   });
   const token = await at.toJwt();

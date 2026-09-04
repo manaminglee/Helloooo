@@ -41,6 +41,7 @@ const { registerDmChat } = require('./dmChat');
 const { registerMarketEngine } = require('./marketEngine');
 const { registerCreatorKyc } = require('./creatorKyc');
 const { registerAgency } = require('./agency');
+const { registerAgencyTenancy } = require('./agencyTenancy');
 const { registerModeration } = require('./moderation');
 const { createMatchQueue } = require('./matchQueue');
 const { createInfra } = require('./infra');
@@ -79,8 +80,9 @@ const supabaseUrl = (process.env.SUPABASE_URL || '').trim();
 const supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '').trim();
 let supabase = null;
 
-// Local DB State (Fallback)
-const LOCAL_DB_PATH = path.join(__dirname, 'data', 'manadb.json');
+// Local DB State (Fallback). LOCAL_DB_DIR lets a test run against a scratch
+// directory instead of clobbering the developer's real data.
+const LOCAL_DB_PATH = path.join(process.env.LOCAL_DB_DIR || path.join(__dirname, 'data'), 'manadb.json');
 let localDb = {
   creators: [],
   referral_logs: [],
@@ -900,8 +902,33 @@ function emitOnlineCount() {
 const app = express();
 app.set('trust proxy', 1);
 
+// CSP was previously off entirely. The directives below are derived from what
+// the client actually loads, so an injected <script src> pointing at an
+// attacker's host is refused even though index.html still needs
+// 'unsafe-inline' for its bootstrap script and Tailwind's inline styles.
+// connect-src stays broad because the LiveKit and Supabase hosts are
+// per-deployment env values, not fixed origins.
 app.use(helmet({
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: {
+      'default-src': ["'self'"],
+      'script-src': ["'self'", "'unsafe-inline'", 'blob:', 'https://challenges.cloudflare.com', 'https://checkout.razorpay.com'],
+      'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      'font-src': ["'self'", 'data:', 'https://fonts.gstatic.com'],
+      'img-src': ["'self'", 'data:', 'blob:', 'https:'],
+      'media-src': ["'self'", 'data:', 'blob:'],
+      'worker-src': ["'self'", 'blob:'],
+      'connect-src': ["'self'", 'https:', 'wss:', 'blob:', 'data:'],
+      'frame-src': ["'self'", 'https://challenges.cloudflare.com', 'https://api.razorpay.com'],
+      // Nothing here is meant to be embedded or to load plugins, and a
+      // stray <base> tag would repoint every relative asset URL.
+      'frame-ancestors': ["'none'"],
+      'object-src': ["'none'"],
+      'base-uri': ["'self'"],
+      'form-action': ["'self'"],
+    },
+  },
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
@@ -909,6 +936,9 @@ app.use(helmet({
 // One origin allowlist for BOTH HTTP CORS and Socket.IO CORS. Keeping these in
 // sync matters: a domain allowed over HTTP but not for sockets shows up to
 // users as an endless "connecting…" state.
+// localhost is deliberately absent in production: paired with credentials:true
+// it would let any page a user runs locally make authenticated calls against
+// live accounts. Point FRONTEND_ORIGIN at a staging host instead when needed.
 const ALLOWED_ORIGINS = NODE_ENV === 'production'
   ? [
     'https://helloooo.site',
@@ -916,7 +946,6 @@ const ALLOWED_ORIGINS = NODE_ENV === 'production'
     'https://manamingle.site',
     'https://www.manamingle.site',
     process.env.FRONTEND_ORIGIN,
-    'http://localhost:5173',
   ].filter(Boolean)
   : true;
 
@@ -1231,12 +1260,22 @@ app.post('/api/validate-url', async (req, res) => {
 });
 
 app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
-  const { handle, platform, link, email, password } = req.body || {};
+  const { handle, platform, link, email, password, agencyInvite } = req.body || {};
   const ip = getClientIp(req);
 
   const rate = creatorSecurity.checkRegisterRate(ip);
   if (!rate.allowed) {
     return res.status(429).json({ error: `Too many applications from this network. Retry in ${rate.retryAfterSec}s.` });
+  }
+
+  // Validated up front so a bad code fails before we create a creator row.
+  // The code is only consumed once the insert has actually succeeded.
+  let inviteCheck = null;
+  if (agencyInvite) {
+    inviteCheck = agencyRef.current?.checkInvite?.(agencyInvite);
+    if (!inviteCheck?.ok) {
+      return res.status(400).json({ error: inviteCheck?.error || 'Invalid agency invite code' });
+    }
   }
 
   const handleCheck = creatorSecurity.validateHandle(handle);
@@ -1278,8 +1317,15 @@ app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
     bio: '',
     password: null,
     password_hash,
+    agency_id: null,
+    agency_member_id: null,
+    agency_invite_code: null,
     created_at: new Date().toISOString()
   };
+
+  // The rest of the agency binding (and status: 'approved') is applied from
+  // the claim result further down, once the use has actually been reserved.
+  if (inviteCheck?.ok) entry.agency_invite_code = inviteCheck.invite.code;
 
   /** Insert — never silently drop email or password_hash (auth-critical). */
   async function insertCreatorRow(row) {
@@ -1333,23 +1379,57 @@ app.post('/api/creators/register', creatorRegisterLimiter, async (req, res) => {
     const { data: emailTaken } = await supabase.from('creators').select('id').ilike('email', entry.email).maybeSingle();
     if (emailTaken) return res.status(400).json({ error: 'Email already registered to another creator.' });
 
+    // Claim the invite here rather than at the top of the handler: consumeInvite
+    // check-and-increments with no await inside it, so racing signups on the
+    // last use of a code cannot both win. Everything above this line is a
+    // rejection path that must not burn a use.
+    let joinedAgency = null;
+    if (inviteCheck?.ok) {
+      const claimed = agencyRef.current?.consumeInvite?.(entry.agency_invite_code, entry);
+      if (!claimed?.ok) {
+        // Someone took the last use while we were checking uniqueness.
+        return res.status(400).json({ error: claimed?.error || 'That invite is no longer available' });
+      }
+      joinedAgency = claimed.agency.name;
+      Object.assign(entry, claimed.patch);
+    }
+
     const inserted = await insertCreatorRow(entry);
     if (!inserted.ok) {
+      // Give the use back — the creator this claim was for does not exist.
+      if (joinedAgency) agencyRef.current?.releaseInvite?.(entry.agency_invite_code);
       if (inserted.conflict) return res.status(400).json({ error: 'Handle, email, or access code already registered.' });
       return res.status(500).json({ error: inserted.message || 'Database save failed. Please try again.' });
     }
 
+    if (joinedAgency) {
+      // Approved creators are expected in localDb (that is where the gift and
+      // commission paths look them up), so mirror the row like approval does.
+      if (!Array.isArray(localDb.creators)) localDb.creators = [];
+      if (!localDb.creators.some((c) => c.id === entry.id)) localDb.creators.push({ ...entry });
+      saveLocalDb();
+    }
+
     res.json({
       success: true,
-      message: 'Application submitted. Log in with your handle and password after approval.',
+      message: joinedAgency
+        ? `You're in under ${joinedAgency} — log in with your handle and password and you can go live right away.`
+        : 'Application submitted. Log in with your handle and password after approval.',
       accessCode: referral_code,
       handle: entry.handle_name,
       email: entry.email,
-      status: 'pending',
+      status: entry.status,
+      agencyName: joinedAgency,
+      canGoLive: entry.status === 'approved',
     });
 
     // Side-effects after response — never turn a successful register into a 500.
-    notifyCreatorAction(entry, {
+    notifyCreatorAction(entry, joinedAgency ? {
+      type: 'approved',
+      title: `Welcome to ${joinedAgency}`,
+      message: `Your ${joinedAgency} invite approved you instantly — you can start a live stream right now.`,
+      important: true,
+    } : {
       type: 'application_submitted',
       title: 'Application received',
       message: 'Your creator application is pending review. You will be notified here when an admin updates your status.',
@@ -3041,6 +3121,14 @@ app.post('/api/ai/moderate', async (req, res) => {
 const clientBuild = path.join(__dirname, '..', 'client', 'dist');
 const clientExists = fs.existsSync(path.join(clientBuild, 'index.html'));
 if (clientExists) {
+  // Vite fingerprints everything under /assets, so those can be cached for a
+  // year — a rebuild changes the filename. Everything else (manifest, icons,
+  // service worker) keeps the default revalidate-every-load behaviour.
+  app.use('/assets', express.static(path.join(clientBuild, 'assets'), {
+    index: false,
+    immutable: true,
+    maxAge: '1y',
+  }));
   app.use(express.static(clientBuild, { index: false }));
 }
 app.get(/^(?!\/api|\/socket\.io|\/health)/, (req, res, next) => {
@@ -3166,6 +3254,12 @@ const audioIdentity = registerAudioIdentity(app, io, {
 
 /** Late-bound market engine (payments register before full wiring). */
 const marketRef = { current: null };
+/**
+ * Late-bound agency tenancy. The gift path needs its commission hook, but the
+ * tenancy module needs the market engine for Nuts→INR, which registers after
+ * lives. A ref breaks the cycle without reordering the whole file.
+ */
+const agencyRef = { current: null };
 
 registerPayments(app, {
   persistence,
@@ -3278,6 +3372,7 @@ const liveStreams = registerLiveStreams(app, io, {
       details: String(details || ''),
     });
   },
+  settleAgencyCommission: (args) => agencyRef.current?.settleCommission?.(args),
   rateLimit: (key, opts) => infra.rateLimit(key, opts),
   // Resolved lazily: Redis connects after this module is registered. With it,
   // live rooms are shared across instances; without it, single-process memory.
@@ -3329,6 +3424,53 @@ registerCreatorKyc(app, io, {
   notifyCreatorAction,
 });
 
+// Multi-tenant agencies: rosters, invites, members, mint pool, commissions.
+// Registered after the market engine so Nuts→INR quoting is available.
+const agencyTenancy = registerAgencyTenancy(app, io, {
+  localDb,
+  saveLocalDb,
+  supabase,
+  audioIdentity,
+  sanitize,
+  audit: moderation.audit,
+  getMarket: () => marketRef.current,
+  getSuperKey: () => (process.env.AGENCY_ADMIN_KEY || '').trim() || getAdminKey?.() || null,
+});
+agencyRef.current = agencyTenancy;
+
+/* ---- Admin-only agency management (mint an agency, tune it, rotate keys) ---- */
+app.post('/api/admin/agencies', requireAdmin, async (req, res) => {
+  const result = await agencyTenancy.createAgency(req.body || {});
+  res.status(result.ok ? 200 : 400).json(result);
+});
+
+app.get('/api/admin/agencies', requireAdmin, (_req, res) => {
+  res.json({ ok: true, agencies: agencyTenancy.listAgencies() });
+});
+
+app.get('/api/admin/agencies/:id', requireAdmin, (req, res) => {
+  const agency = agencyTenancy.agencyById(req.params.id);
+  if (!agency) return res.status(404).json({ error: 'Agency not found' });
+  return res.json({
+    ok: true,
+    agency: agencyTenancy.publicAgency(agency),
+    mint: agencyTenancy.mintView(agency),
+    members: agencyTenancy.membersOf(agency.id).map(agencyTenancy.publicMember),
+    creators: agencyTenancy.rosterOf(agency),
+    earnings: agencyTenancy.earningsOf(agency, { limit: 50 }),
+  });
+});
+
+app.post('/api/admin/agencies/:id', requireAdmin, (req, res) => {
+  const result = agencyTenancy.updateAgency(req.params.id, req.body || {});
+  res.status(result.ok ? 200 : 400).json(result);
+});
+
+app.post('/api/admin/agencies/:id/rotate-key', requireAdmin, async (req, res) => {
+  const result = await agencyTenancy.rotateKey(req.params.id);
+  res.status(result.ok ? 200 : 404).json(result);
+});
+
 registerAgency(app, io, {
   settings,
   localDb,
@@ -3336,6 +3478,7 @@ registerAgency(app, io, {
   supabase,
   isAdminRequest,
   getAdminKey,
+  agencyTenancy,
   liveStreams,
   applyCreatorStatus,
   applyCreatorStatusBulk,

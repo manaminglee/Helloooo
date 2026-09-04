@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { API_BASE } from '../config/apiBase';
 import VirtualMarketPanel from './VirtualMarketPanel';
+import AdminAgenciesPanel from './AdminAgenciesPanel';
 
 /**
  * Helloooo Admin Dashboard v2.5
@@ -766,6 +767,7 @@ export function AdminDashboard({ onJoinRoom }) {
     { id: 'creators', label: 'Creators', icon: '⭐', badge: creators.filter(c => c.status === 'pending').length },
     { id: 'room-monitoring', label: 'Live Monitor', icon: '👁️' },
     { id: 'economy', label: 'Economy', icon: '🪙' },
+    { id: 'agencies', label: 'Agencies', icon: '🏢' },
     { id: 'market', label: 'Market', icon: '📈' },
     { id: 'audio', label: 'Audio Rooms', icon: '🎙️', badge: audioChannels.length },
     { id: 'security', label: 'Security', icon: '🛡️' },
@@ -1519,6 +1521,8 @@ export function AdminDashboard({ onJoinRoom }) {
               <VirtualMarketPanel mode="admin" adminKey={key} username="admin" />
             </div>
           )}
+
+          {activeTab === 'agencies' && <AdminAgenciesPanel adminKey={key} />}
 
           {activeTab === 'economy' && (
             <div className="space-y-10 animate-fade-in">

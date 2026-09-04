@@ -13,6 +13,20 @@ const { registerLiveStreams } = require('./liveStreams');
 const { createLiveStore } = require('./liveStore');
 const { createFakeRedis } = require('./__fakeredis');
 const { filterText, buildWordList, createRateLimiter } = require('./liveModeration');
+const { GIFTS } = require('./giftCatalog');
+
+/* Costs come from the catalog, not literals, so a repricing cannot silently
+   turn these wallet assertions into false failures. */
+const giftCost = (id) => {
+  const found = GIFTS.find((x) => x.id === id);
+  if (!found) throw new Error(`__livetest: gift "${id}" is not in the catalog`);
+  return found.cost;
+};
+const CHEAP = 'soft_spark';
+const OTHER = 'pulse_heart';
+const BIG = 'gravity_crown';
+const CHEAP_COST = giftCost(CHEAP);
+const BIG_COST = giftCost(BIG);
 
 process.env.LIVEKIT_URL = 'wss://test.livekit.cloud';
 process.env.LIVEKIT_API_KEY = 'devkey';
@@ -133,23 +147,23 @@ async function suite(label, sharedRedis) {
 
   /* gifts */
   const before = wallets.get('alice');
-  const g1 = await alice.fire('live:gift', { liveId, giftId: 'rose', nonce: 'n-1' });
+  const g1 = await alice.fire('live:gift', { liveId, giftId: CHEAP, nonce: 'n-1' });
   assert.strictEqual(g1.ok, true, g1.error);
-  assert.strictEqual(wallets.get('alice'), before - 5);
+  assert.strictEqual(wallets.get('alice'), before - CHEAP_COST);
   assert.strictEqual(g1.comboCount, 1);
   ok('gift debits the wallet server-side');
 
-  const replay = await alice.fire('live:gift', { liveId, giftId: 'rose', nonce: 'n-1' });
+  const replay = await alice.fire('live:gift', { liveId, giftId: CHEAP, nonce: 'n-1' });
   assert.strictEqual(replay.ok, false);
   assert.strictEqual(replay.duplicate, true);
-  assert.strictEqual(wallets.get('alice'), before - 5);
+  assert.strictEqual(wallets.get('alice'), before - CHEAP_COST);
   ok('replayed nonce is rejected and never charges twice');
 
-  assert.strictEqual((await alice.fire('live:gift', { liveId, giftId: 'rose', nonce: 'n-2' })).comboCount, 2);
-  assert.strictEqual((await alice.fire('live:gift', { liveId, giftId: 'rose', nonce: 'n-3' })).comboCount, 3);
+  assert.strictEqual((await alice.fire('live:gift', { liveId, giftId: CHEAP, nonce: 'n-2' })).comboCount, 2);
+  assert.strictEqual((await alice.fire('live:gift', { liveId, giftId: CHEAP, nonce: 'n-3' })).comboCount, 3);
   ok('repeat gifts build a combo counter');
 
-  assert.strictEqual((await alice.fire('live:gift', { liveId, giftId: 'heart', nonce: 'n-4' })).comboCount, 1);
+  assert.strictEqual((await alice.fire('live:gift', { liveId, giftId: OTHER, nonce: 'n-4' })).comboCount, 1);
   ok('a different gift starts its own combo');
 
   const broke = await alice.fire('live:gift', { liveId, giftId: 'universe', nonce: 'n-5' });
@@ -163,7 +177,7 @@ async function suite(label, sharedRedis) {
 
   const stats = await engine.hostStats(await engine.getLive(liveId));
   assert.strictEqual(stats.giftCount, 4);
-  assert.strictEqual(stats.coinsReceived, 25);
+  assert.strictEqual(stats.coinsReceived, CHEAP_COST * 3 + giftCost(OTHER));
   assert.strictEqual(stats.topGifters[0].username, 'Alice');
   assert.strictEqual(stats.topGifters[0].count, 4);
   ok('host stats track gifts, coins and top gifter');
@@ -208,7 +222,7 @@ async function suite(label, sharedRedis) {
   const aliceRow = list.viewers.find((v) => v.username === 'Alice');
   assert.ok(aliceRow.badges.includes('moderator'));
   assert.ok(aliceRow.badges.includes('top_gifter'));
-  assert.strictEqual(aliceRow.giftedCoins, 25);
+  assert.strictEqual(aliceRow.giftedCoins, CHEAP_COST * 3 + giftCost(OTHER));
   ok('viewer list carries badges and gift totals');
 
   /* reactions */
@@ -274,9 +288,9 @@ async function crossInstance() {
   assert.strictEqual(await a.engine.store.viewerCount(liveId), 1);
   ok('instance A counts the viewer that joined on B');
 
-  const gift = await zoe.fire('live:gift', { liveId, giftId: 'crown', nonce: 'x-1' });
+  const gift = await zoe.fire('live:gift', { liveId, giftId: BIG, nonce: 'x-1' });
   assert.strictEqual(gift.ok, true, gift.error);
-  assert.strictEqual(b.wallets.get('zoe'), 400);
+  assert.strictEqual(b.wallets.get('zoe'), 500 - BIG_COST);
   const statsOnA = await a.engine.hostStats(await a.engine.getLive(liveId));
   assert.strictEqual(statsOnA.giftCount, 1);
   assert.strictEqual(statsOnA.topGifters[0].username, 'Zoe');
@@ -285,12 +299,12 @@ async function crossInstance() {
   // The nonce store is shared, so a replay on the OTHER instance is refused —
   // this is the case a per-process Map could never catch.
   a.users.set('zoe2', { audioIdentity: { username: 'Zoe', level: 5 } });
-  a.wallets.set('zoe', 400);
+  a.wallets.set('zoe', 500 - BIG_COST);
   const zoeOnA = a.makeSocket('zoe2', '7.7.7.7');
   await zoeOnA.fire('live:join', { liveId });
-  const replay = await zoeOnA.fire('live:gift', { liveId, giftId: 'crown', nonce: 'x-1' });
+  const replay = await zoeOnA.fire('live:gift', { liveId, giftId: BIG, nonce: 'x-1' });
   assert.strictEqual(replay.duplicate, true);
-  assert.strictEqual(a.wallets.get('zoe'), 400);
+  assert.strictEqual(a.wallets.get('zoe'), 500 - BIG_COST);
   ok('a replayed nonce is refused on a DIFFERENT instance');
 
   await hostA.fire('live:mute', { liveId, targetSocketId: 'zoe1' });

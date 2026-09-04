@@ -161,5 +161,14 @@ Thumbs.db
 test-results/
 playwright-report/
 blob-report/
+
+# Local JSON fallback DB — real user rows when Supabase is unconfigured
+server/data/
+
+# Scratch harnesses and pre-refactor copies, kept out of the deploy
+backups/
+server/__gametest.js
+server/__selftest.js
+server/_orig_index_test.js
 # Vite config cache artifacts (auto-generated)
 client/vite.config.js.timestamp-*.mjs

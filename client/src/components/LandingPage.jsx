@@ -26,6 +26,7 @@ import CreatorVerifyModal from './CreatorVerifyModal';
 import CreatorHub from './CreatorHub';
 import { clearCreatorSession, getCreatorSessionToken } from '../utils/creatorAuth';
 import { VirtualMarketRateChip } from './VirtualMarketPanel';
+import { LandingSideMenu } from './LandingSideMenu';
 
 // Below-the-fold / secondary UI — keep landing first paint light.
 const MiniTrendChart = lazyRetry(() =>
@@ -204,7 +205,14 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [statusCheckCode, setStatusCheckCode] = useState('');
   const [statusCheckResult, setStatusCheckResult] = useState(null); // null | 'not_found' | { ...creator }
   const [checkingStatus, setCheckingStatus] = useState(false);
-  const [showCreatorModal, setShowCreatorModal] = useState(false);
+  // An agency invite link (/?creator=1&invite=CODE) has to land directly on the
+  // creator application, otherwise the recipient sees the plain landing page.
+  const [showCreatorModal, setShowCreatorModal] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      return p.get('creator') === '1' || p.has('invite');
+    } catch { return false; }
+  });
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
@@ -261,6 +269,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [creatorFormError, setCreatorFormError] = useState('');
   const [featuredCreators, setFeaturedCreators] = useState([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
 
   useEffect(() => {
     try {
@@ -748,11 +757,11 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 </div>
               </button>
             </div>
-            <div className="mm-landing-header__actions">
+            <div className="mm-landing-header__actions mm-hide-mobile">
               <button
                 type="button"
                 onClick={openCreatorFlow}
-                className="mm-hide-mobile mm-compact-btn px-3.5 py-2 rounded-xl border border-violet-500/25 bg-violet-500/10 text-xs font-semibold text-violet-200 hover:bg-violet-500/20 transition-colors"
+                className="mm-compact-btn px-3.5 py-2 rounded-xl border border-violet-500/25 bg-violet-500/10 text-xs font-semibold text-violet-200 hover:bg-violet-500/20 transition-colors"
               >
                 For Creators
               </button>
@@ -780,14 +789,14 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
               )}
               {creatorStatus && (
                 <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                  <div className="mm-hide-mobile flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-fuchsia-500/15 to-indigo-500/10 border border-violet-500/25 rounded-full text-[9px] font-black text-violet-200/90 uppercase tracking-tight max-w-[140px] md:max-w-none">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-fuchsia-500/15 to-indigo-500/10 border border-violet-500/25 rounded-full text-[9px] font-black text-violet-200/90 uppercase tracking-tight max-w-[140px] md:max-w-none">
                     <span className="truncate">@{creatorStatus.handle_name}</span>
                     {creatorStatus.status === 'approved' && <BlueTick />}
                   </div>
                   <button
                     type="button"
                     onClick={() => setShowDashboardModal(true)}
-                    className="mm-hide-mobile mm-compact-btn px-2 py-1.5 bg-white/10 border border-white/15 text-white/90 rounded-lg text-xs font-medium hover:bg-white/15 transition-all"
+                    className="mm-compact-btn px-2 py-1.5 bg-white/10 border border-white/15 text-white/90 rounded-lg text-xs font-medium hover:bg-white/15 transition-all"
                   >Dashboard</button>
                   <button
                     type="button"
@@ -801,6 +810,17 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 </div>
               )}
             </div>
+            <button
+              type="button"
+              className="mm-hide-desktop mm-landing-menu-btn"
+              onClick={() => setShowMobileMenu(true)}
+              aria-label="Open menu"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+              {(creatorUnreadCount > 0) && <span className="mm-landing-menu-btn__dot" aria-hidden />}
+            </button>
           </div>
         </header>
       )}
@@ -1340,11 +1360,34 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
       {/* CREATOR DASHBOARD MODAL */}
       {showDashboardModal && creatorStatus && (
         <div className="fixed inset-0 z-[5000] flex flex-col bg-[#050505] animate-in-zoom overflow-hidden" onClick={() => setShowDashboardModal(false)}>
+          <div className="mm-creator-dash-bar mm-hide-desktop">
+            <button
+              type="button"
+              className="mm-landing-menu-btn"
+              onClick={(e) => { e.stopPropagation(); setShowMobileMenu(true); }}
+              aria-label="Open menu"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+            </button>
+            <div className="mm-creator-dash-bar__title">
+              <span>Creator dashboard</span>
+              <strong>@{creatorStatus.handle_name}</strong>
+            </div>
+            <button
+              type="button"
+              className="mm-creator-dash-bar__exit"
+              onClick={(e) => { e.stopPropagation(); setShowDashboardModal(false); }}
+            >
+              Exit
+            </button>
+          </div>
           <div className="flex-1 overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="max-w-6xl mx-auto px-8 py-20">
+            <div className="max-w-6xl mx-auto px-4 sm:px-8 py-6 sm:py-20">
 
               {/* TOP HEADER */}
-              <div className="flex justify-between items-center mb-16 px-4">
+              <div className="mm-hide-mobile flex justify-between items-center mb-16 px-4">
                 <div className="flex items-center gap-4">
                   <div className="w-1.5 h-10 bg-violet-400 rounded-full animate-pulse" />
                   <div>
@@ -1702,6 +1745,36 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             </div>
           </div>
         </div>
+      )}
+
+      {showMobileMenu && (
+        <LandingSideMenu
+          open={showMobileMenu}
+          onClose={() => setShowMobileMenu(false)}
+          creatorStatus={creatorStatus}
+          connected={connected}
+          balance={balance}
+          streak={streak}
+          canClaim={canClaim}
+          nextClaim={nextClaim}
+          claimCoins={claimCoins}
+          registered={registered}
+          currentActiveSeconds={currentActiveSeconds}
+          socketIsCreator={socketIsCreator}
+          onlineCount={onlineCount}
+          country={country}
+          creatorNotifications={creatorNotifications}
+          creatorUnreadCount={creatorUnreadCount}
+          onOpenSettings={() => setShowSettings(true)}
+          onOpenDashboard={() => setShowDashboardModal(true)}
+          onOpenCreatorFlow={openCreatorFlow}
+          onOpenNotifications={() => setShowDashboardModal(true)}
+          onMarkNotificationsRead={markCreatorNotificationsRead}
+          onLogout={async () => {
+            await logout();
+            window.location.reload();
+          }}
+        />
       )}
 
       {showSettings && (

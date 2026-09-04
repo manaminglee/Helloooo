@@ -103,6 +103,7 @@ function registerLiveStreams(app, io, deps) {
     getCreatorForRequest,
     getSettings,
     creditCreatorCoins,
+    settleAgencyCommission, // optional: server/agencyTenancy.js commission hook
     getRedis,
     persistence,          // optional: server/livePersistence.js
     audit,
@@ -713,12 +714,24 @@ function registerLiveStreams(app, io, deps) {
     };
     await recordGiftTransaction(tx);
 
-    if (typeof creditCreatorCoins === 'function') {
-      const creatorRow = (localDb.creators || []).find((c) => c.id === receiverCreatorId);
-      if (creatorRow) {
-        try { await creditCreatorCoins(receiverCreatorId, share, `live_gift:${gift.id}`, creatorRow); }
-        catch { /* the ledger already holds the truth */ }
-      }
+    const creatorRow = (localDb.creators || []).find((c) => c.id === receiverCreatorId) || null;
+    if (typeof creditCreatorCoins === 'function' && creatorRow) {
+      try { await creditCreatorCoins(receiverCreatorId, share, `live_gift:${gift.id}`, creatorRow); }
+      catch { /* the ledger already holds the truth */ }
+    }
+    // Agency commission is funded from gift.cost - share (the platform's cut),
+    // so it runs after the creator has already been paid in full.
+    if (typeof settleAgencyCommission === 'function') {
+      try {
+        settleAgencyCommission({
+          creatorId: receiverCreatorId,
+          creatorRow,
+          giftCost: gift.cost,
+          creatorShare: share,
+          giftId: gift.id,
+          liveId: room.id,
+        });
+      } catch (e) { console.warn('[LIVE_GIFT] agency commission failed:', e.message); }
     }
     try {
       const market = typeof getMarket === 'function' ? getMarket() : null;
@@ -807,6 +820,8 @@ function registerLiveStreams(app, io, deps) {
     const id = generateId?.() || rid(6);
     const battle = {
       id, liveA: a.id, liveB: b.id, handleA: a.handle, handleB: b.handle,
+      displayA: a.displayName || a.handle, displayB: b.displayName || b.handle,
+      avatarA: a.avatarUrl || null, avatarB: b.avatarUrl || null,
       scoreA: 0, scoreB: 0, startedAt: nowMs(),
       endsAt: nowMs() + BATTLE_DURATION_MS, status: 'active',
     };
@@ -822,6 +837,17 @@ function registerLiveStreams(app, io, deps) {
     const t = setTimeout(() => { void endBattle(id, 'timeout'); }, BATTLE_DURATION_MS + 500);
     if (t.unref) t.unref();
     return { ok: true, battle };
+  }
+
+  /**
+   * End whichever battle a live is in. Used when one side goes away, so the
+   * split-screen collapses on both sides at once instead of waiting for the
+   * host grace window or the 7-minute timer.
+   */
+  async function endBattleForLive(liveId, reason) {
+    const room = await store.getRoom(liveId);
+    if (!room?.battleId) return { ok: false };
+    return endBattle(room.battleId, reason);
   }
 
   async function endBattle(battleId, reason = 'ended') {
@@ -1389,6 +1415,8 @@ function registerLiveStreams(app, io, deps) {
         out.push({
           id: r.id,
           handle: r.handle,
+          displayName: r.displayName || r.handle,
+          avatarUrl: r.avatarUrl || null,
           title: r.title,
           viewerCount: await store.viewerCount(r.id),
         });
@@ -1406,12 +1434,18 @@ function registerLiveStreams(app, io, deps) {
       }
       if (mine.battleId || target.battleId) { cb?.({ ok: false, error: 'Already in a battle' }); return; }
       if (!target.hostSocketId) { cb?.({ ok: false, error: 'Opponent host is not reachable' }); return; }
+      // Both sides travel with the invite so the receiver can render the
+      // A-vs-B card without a second lookup.
       io.to(target.hostSocketId).emit('live:hp-invite', {
         fromLiveId: mine.id,
         handle: mine.handle,
-        displayName: mine.displayName,
-        avatarUrl: mine.avatarUrl,
+        fromHandle: mine.handle,
+        displayName: mine.displayName || mine.handle,
+        avatarUrl: mine.avatarUrl || null,
         targetLiveId: target.id,
+        targetHandle: target.handle,
+        targetDisplayName: target.displayName || target.handle,
+        targetAvatarUrl: target.avatarUrl || null,
         at: nowMs(),
       });
       audit?.('live_hp_invite', { fromLiveId: mine.id, targetLiveId: target.id });
@@ -1441,6 +1475,7 @@ function registerLiveStreams(app, io, deps) {
           fromLiveId,
           byLiveId: mine?.id || null,
           handle: mine?.handle || null,
+          avatarUrl: mine?.avatarUrl || null,
         });
       }
       cb?.({ ok: true });
@@ -1623,6 +1658,69 @@ function registerLiveStreams(app, io, deps) {
       if (cb) cb(out); else socket.emit('live:token', out);
     });
 
+    // ---- HP opponent media token -------------------------------------------
+    // Lets this room render the opponent's camera side by side. The opponent
+    // live is resolved from the server's own battle record — never from the
+    // caller — and the grant is watch-only, so nobody can use this to publish
+    // into, moderate, or data-message another creator's room.
+    on('live:hp-token', async (payload, cb) => {
+      const reply = (out) => { if (cb) cb(out); else socket.emit('live:hp-token', out); };
+      const room = await roomOf(payload);
+      if (!room || room.status !== 'live') { reply({ ok: false, error: 'Live offline' }); return; }
+
+      const isHost = isHostSocket(room, socket);
+      if (!isHost && !(await store.getViewer(room.id, socket.id))) {
+        reply({ ok: false, error: 'Join the live first', retryable: true });
+        return;
+      }
+      if (!room.battleId) { reply({ ok: false, error: 'No HP battle running' }); return; }
+
+      const battle = await store.getBlob(`battle:${room.battleId}`);
+      if (!battle || battle.status !== 'active') {
+        reply({ ok: false, error: 'No HP battle running' });
+        return;
+      }
+      const opponentLiveId = battle.liveA === room.id ? battle.liveB : battle.liveA;
+      const opponent = await store.getRoom(opponentLiveId);
+      if (!opponent || opponent.status !== 'live') {
+        // The other side already went away — collapse the battle now.
+        await endBattle(battle.id, 'opponent_gone');
+        reply({ ok: false, error: 'Opponent is offline' });
+        return;
+      }
+
+      const tokenPayload = await livekitRooms.mintParticipantToken({
+        socketId: socket.id,
+        roomId: opponent.roomName,
+        nickname: 'hp-watch',
+        isCreator: false,
+        canPublish: false,
+        canSubscribe: true,
+        canPublishData: false,
+        roomAdmin: false,
+        identitySuffix: ':hp',
+        ttl: '30m',
+      });
+      reply({
+        ok: true,
+        ...tokenPayload,
+        battleId: battle.id,
+        liveId: room.id,
+        opponentLiveId,
+        side: battle.liveA === room.id ? 'A' : 'B',
+      });
+    });
+
+    // A host can drop out of the battle without ending their live.
+    on('live:hp-leave', async (payload, cb) => {
+      const room = await roomOf(payload);
+      if (!room) { cb?.({ ok: false, error: 'Live not found' }); return; }
+      if (!isHostSocket(room, socket)) { cb?.({ ok: false, error: 'Host only' }); return; }
+      if (!room.battleId) { cb?.({ ok: true }); return; }
+      await endBattle(room.battleId, 'host_left');
+      cb?.({ ok: true });
+    });
+
     // ---- disconnect --------------------------------------------------------
     socket.on('disconnect', async () => {
       try {
@@ -1642,6 +1740,11 @@ function registerLiveStreams(app, io, deps) {
           }
 
           if (room.hostSocketId !== socket.id) continue;
+
+          // The split screen cannot survive a missing camera, so an HP battle
+          // ends the moment a host drops — it does not wait out the grace
+          // window the live itself gets for a reconnect.
+          if (room.battleId) await endBattle(room.battleId, 'host_disconnect');
 
           io.to(`live:${liveId}`).emit('live:host-reconnecting', { liveId, graceMs: HOST_GRACE_MS });
           const staleSocketId = socket.id;
@@ -1674,6 +1777,7 @@ function registerLiveStreams(app, io, deps) {
     endLive,
     startBattle,
     endBattle,
+    endBattleForLive,
     attachSocketHandlers,
     publicLive,
     canCreatorGoLive,

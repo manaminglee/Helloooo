@@ -8,9 +8,9 @@ import { useLiveBodyLock } from '../../hooks/useLiveViewport';
 import { hapticTap } from '../../utils/haptics';
 import CreatorVerifyModal from '../CreatorVerifyModal';
 import { MmIcon } from '../icons/MmIcon';
-import { HellooooLoader } from '../HellooooBrand';
 import { Avatar } from './LiveBits';
 import LiveRoom from './LiveRoom';
+import { detectFaceInImage, preloadFaceDetection } from '../../utils/detectFaceInImage';
 
 function validateTitle(raw) {
   const t = String(raw || '').trim();
@@ -29,14 +29,53 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
   useLiveBodyLock();
   const fileRef = useRef(null);
   const previewRef = useRef(null);
+  const wallpaperReqRef = useRef(0);
+
+  useEffect(() => { preloadFaceDetection(); }, []);
 
   const [title, setTitle] = useState('');
   const [wallpaperUrl, setWallpaperUrl] = useState('');
+  /** @type {'missing'|'validating'|'ok'|'no_face'|'error'} */
+  const [wallpaperStatus, setWallpaperStatus] = useState('missing');
   const [liveObj, setLiveObj] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [needLogin, setNeedLogin] = useState(!getCreatorSessionToken());
   const [creator, setCreator] = useState(null);
+
+  // --- wallpaper + face check -----------------------------------------------
+  const validateWallpaper = useCallback(async (dataUrl, { persist = true } = {}) => {
+    const req = ++wallpaperReqRef.current;
+    setWallpaperUrl(dataUrl);
+    setWallpaperStatus('validating');
+    setError('');
+    try {
+      const hasFace = await detectFaceInImage(dataUrl);
+      if (req !== wallpaperReqRef.current) return false;
+      if (!hasFace) {
+        setWallpaperStatus('no_face');
+        setError('Cover photo must clearly show your face.');
+        return false;
+      }
+      setWallpaperStatus('ok');
+      if (persist) {
+        try {
+          await fetch(`${API_BASE}/api/lives/wallpaper`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },
+            credentials: 'include',
+            body: JSON.stringify({ wallpaperUrl: dataUrl }),
+          });
+        } catch { /* saved locally — server sync is best-effort */ }
+      }
+      return true;
+    } catch {
+      if (req !== wallpaperReqRef.current) return false;
+      setWallpaperStatus('error');
+      setError('Could not verify cover photo — try another image.');
+      return false;
+    }
+  }, []);
 
   // --- creator session ------------------------------------------------------
   useEffect(() => {
@@ -59,14 +98,16 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
         }
         setNeedLogin(false);
         setCreator(data.data);
-        if (data.data.live_wallpaper_url) setWallpaperUrl(data.data.live_wallpaper_url);
         setTitle((t) => t || `${data.data.handle_name} Live`);
+        if (data.data.live_wallpaper_url) {
+          void validateWallpaper(data.data.live_wallpaper_url, { persist: false });
+        }
       } catch {
         if (!cancelled) setError('Could not verify creator session.');
       }
     })();
     return () => { cancelled = true; };
-  }, [needLogin]);
+  }, [needLogin, validateWallpaper]);
 
   // --- camera + mic preview -------------------------------------------------
   const preview = useMediaPreview({
@@ -82,11 +123,11 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
     return () => clearTimeout(t);
   }, [preview.ready]);
 
-  // --- wallpaper ------------------------------------------------------------
   const onPickWallpaper = (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file?.type?.startsWith('image/')) return;
-    if (file.size > 1.5e6) { setError('Wallpaper must be under 1.5MB'); return; }
+    if (file.size > 1.5e6) { setError('Cover photo must be under 1.5MB'); return; }
     const reader = new FileReader();
     reader.onload = () => {
       const img = new Image();
@@ -97,25 +138,24 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
         canvas.height = Math.round(img.height * scale);
         canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
-        setWallpaperUrl(dataUrl);
-        try {
-          await fetch(`${API_BASE}/api/lives/wallpaper`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },
-            credentials: 'include',
-            body: JSON.stringify({ wallpaperUrl: dataUrl }),
-          });
-        } catch { /* wallpaper is cosmetic — never blocks going live */ }
+        await validateWallpaper(dataUrl);
       };
       img.src = String(reader.result);
     };
     reader.readAsDataURL(file);
   };
 
+  const openCoverPicker = () => fileRef.current?.click();
+
   // --- lifecycle ------------------------------------------------------------
   const start = async () => {
     if (!getCreatorSessionToken()) { setNeedLogin(true); return; }
     if (!socket?.id) { setError('Not connected yet — wait a moment and retry.'); return; }
+    if (wallpaperStatus !== 'ok' || !wallpaperUrl) {
+      setError('Upload a cover photo with your face visible before going live.');
+      openCoverPicker();
+      return;
+    }
     const check = validateTitle(title);
     if (!check.ok) { setError(check.error); return; }
 
@@ -242,8 +282,27 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
   // --- pre-live setup ------------------------------------------------------
   // Deliberately the same full-screen frame the audience will get, so what the
   // creator frames here is exactly what ships.
-  const canStart = preview.ready && !busy && socket?.connected;
-  const blocker = preview.error || error;
+  const canStart = preview.ready && !busy && socket?.connected && wallpaperStatus === 'ok';
+  const blocker = preview.error || (wallpaperStatus === 'no_face' || wallpaperStatus === 'error' ? error : '');
+  const coverRequired = wallpaperStatus === 'missing' || wallpaperStatus === 'no_face';
+
+  const goLiveLabel = (() => {
+    if (busy) return 'Starting…';
+    if (!socket?.connected) return 'Connecting…';
+    if (!preview.ready) return 'Starting camera…';
+    if (wallpaperStatus === 'validating') return 'Checking face…';
+    if (coverRequired) return 'Upload cover photo';
+    if (wallpaperStatus !== 'ok') return 'Upload cover photo';
+    return 'Go Live';
+  })();
+
+  const onGoLiveClick = () => {
+    if (wallpaperStatus !== 'ok') {
+      openCoverPicker();
+      return;
+    }
+    void start();
+  };
 
   return (
     <div className="live-root">
@@ -261,7 +320,8 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
         />
         {!preview.ready && !preview.error && (
           <div className="live-state live-state--transparent">
-            <HellooooLoader transparent size={120} label="Starting camera…" />
+            <div className="live-state__spinner" aria-hidden />
+            <p className="live-state__label">Starting camera…</p>
           </div>
         )}
       </div>
@@ -284,8 +344,8 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
         <header className="live-top">
           <div className="live-host">
             <Avatar
-              className="live-host__avatar"
-              src={creator?.avatar_url}
+              className={`live-host__avatar${wallpaperStatus === 'validating' ? ' live-host__avatar--busy' : ''}${coverRequired ? ' live-host__avatar--required' : ''}`}
+              src={wallpaperUrl || null}
               name={creator?.handle_name}
             />
             <span className="live-host__text">
@@ -340,12 +400,14 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
               <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPickWallpaper} />
               <button
                 type="button"
-                className="live-rail__btn"
-                onClick={() => fileRef.current?.click()}
-                aria-label="Choose a backdrop image"
+                className={`live-rail__btn${coverRequired ? ' live-rail__btn--required' : ''}${wallpaperStatus === 'ok' ? ' live-rail__btn--ok' : ''}`}
+                onClick={openCoverPicker}
+                aria-label="Upload cover photo with your face"
               >
                 <MmIcon name="image" size={19} />
-                <span className="live-rail__label">Cover</span>
+                <span className="live-rail__label">
+                  {wallpaperStatus === 'validating' ? 'Checking…' : coverRequired ? 'Cover *' : 'Cover'}
+                </span>
               </button>
             </span>
           </div>
@@ -395,6 +457,12 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
             />
           </label>
 
+          {coverRequired && !preview.error && (
+            <p className="prelive-wallpaper-hint">
+              Upload a cover photo that shows your face — required before you can go live.
+            </p>
+          )}
+
           {blocker && (
             <p className="prelive-error">
               {blocker}
@@ -408,14 +476,11 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
 
           <button
             type="button"
-            className="prelive-go"
-            disabled={!canStart}
-            onClick={start}
+            className={`prelive-go${coverRequired ? ' prelive-go--needs-cover' : ''}`}
+            disabled={busy || wallpaperStatus === 'validating' || (!canStart && wallpaperStatus !== 'missing' && wallpaperStatus !== 'no_face')}
+            onClick={onGoLiveClick}
           >
-            {busy ? 'Starting…'
-              : !socket?.connected ? 'Connecting…'
-              : !preview.ready ? 'Waiting for camera…'
-              : 'Go Live'}
+            {goLiveLabel}
           </button>
         </div>
       </div>

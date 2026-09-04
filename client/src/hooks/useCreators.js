@@ -51,7 +51,7 @@ export function useCreators() {
     fetchStatus();
   }, [fetchStatus]);
 
-  const registerCreator = async (handle, platform, link, email, password, confirmPassword) => {
+  const registerCreator = async (handle, platform, link, email, password, confirmPassword, { agencyInvite } = {}) => {
     const handleCheck = validateCreatorHandle(handle);
     if (!handleCheck.ok) return { success: false, error: handleCheck.error };
     const platformCheck = validateCreatorPlatform(platform);
@@ -73,10 +73,13 @@ export function useCreators() {
           link: linkCheck.link,
           email: emailCheck.email,
           password: passCheck.password,
+          // An agency invite auto-approves the creator server-side.
+          agencyInvite: agencyInvite ? String(agencyInvite).trim().toUpperCase() : undefined,
         }),
       });
       const data = await res.json();
       if (res.ok) {
+        await fetchStatus();
         return {
           success: true,
           accessCode: data.accessCode,
@@ -84,6 +87,8 @@ export function useCreators() {
           email: data.email,
           status: data.status || 'pending',
           message: data.message,
+          agencyName: data.agencyName || null,
+          canGoLive: !!data.canGoLive,
         };
       }
       return { success: false, error: data.error || 'Registration failed' };
