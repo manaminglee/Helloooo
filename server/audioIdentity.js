@@ -648,11 +648,15 @@ function registerAudioIdentity(app, io, deps) {
     await ensureHydrated();
     const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
     const token = String(req.headers['x-audio-session'] || req.query?.token || '');
+    if (!token) {
+      // Soft miss — avoid noisy 401 in browser console on every page load
+      return res.json({ ok: false, error: 'Not signed in' });
+    }
     const session = getSession(token);
-    if (!session) return res.status(401).json({ ok: false, error: 'Not signed in' });
+    if (!session) return res.json({ ok: false, error: 'Not signed in' });
     touchIpSession(ip);
     const rec = identities.get(session.username);
-    if (!rec) return res.status(404).json({ ok: false, error: 'Identity not found' });
+    if (!rec) return res.json({ ok: false, error: 'Identity not found' });
     res.json({ ok: true, identity: publicView(rec) });
   });
 
@@ -660,7 +664,8 @@ function registerAudioIdentity(app, io, deps) {
     try {
       const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
       const result = await restoreByIp(ip);
-      if (!result.ok) return res.status(401).json(result);
+      // Soft miss — guests without a recent IP session are normal
+      if (!result.ok) return res.json({ ok: false, error: result.error || 'No session' });
       res.json(result);
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message || 'Restore failed' });

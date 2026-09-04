@@ -112,42 +112,43 @@ export function useAudioIdentity(socket) {
         if (getCreatorSessionToken()) {
           setHasCreatorSession(true);
           const ok = await loginFromCreator();
-          if (!cancelled) {
-            if (ok) return;
-            setCreatorLinkFailed(true);
-          }
+          if (cancelled) return;
+          if (ok) return;
+          setCreatorLinkFailed(true);
           // Fall through to normal audio restore if creator link failed
         }
 
-        if (token) {
+        let currentToken = token;
+        if (currentToken) {
           const res = await fetch(`${API_BASE}/api/audio-identity/me`, {
-            headers: { 'x-audio-session': token },
+            headers: { 'x-audio-session': currentToken },
             credentials: 'include',
           });
-          if (!cancelled && res.ok) {
-            const data = await res.json();
-            if (data.identity) {
-              setIdentity(data.identity);
-              attachSocket(token);
-              return;
-            }
-          }
-        }
-        const restore = await fetch(`${API_BASE}/api/audio-identity/restore-ip`, { credentials: 'include' });
-        if (!cancelled && restore.ok) {
-          const data = await restore.json();
-          if (data.ok && data.token && data.identity) {
-            setToken(data.token);
+          const data = await res.json().catch(() => ({}));
+          if (cancelled) return;
+          if (data?.ok && data.identity) {
             setIdentity(data.identity);
-            try { sessionStorage.setItem(STORAGE_KEY, data.token); } catch { /* ignore */ }
-            if (data.identity?.username) persistUsername(data.identity.username);
-            attachSocket(data.token);
+            attachSocket(currentToken);
             return;
           }
+          // Stale session token after server restart — clear it
+          currentToken = null;
+          setToken(null);
+          try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
         }
-        if (token && socket) attachSocket(token);
+
+        const restore = await fetch(`${API_BASE}/api/audio-identity/restore-ip`, { credentials: 'include' });
+        const restored = await restore.json().catch(() => ({}));
+        if (cancelled) return;
+        if (restored?.ok && restored.token && restored.identity) {
+          setToken(restored.token);
+          setIdentity(restored.identity);
+          try { sessionStorage.setItem(STORAGE_KEY, restored.token); } catch { /* ignore */ }
+          if (restored.identity?.username) persistUsername(restored.identity.username);
+          attachSocket(restored.token);
+        }
       } catch {
-        if (token && socket) attachSocket(token);
+        /* offline / network — leave signed-out */
       } finally {
         if (!cancelled) setHydrating(false);
       }
@@ -260,10 +261,14 @@ export function useAudioIdentity(socket) {
         headers: { 'x-audio-session': token },
         credentials: 'include',
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.identity) setIdentity(data.identity);
+      const data = await res.json().catch(() => ({}));
+      if (data?.ok && data.identity) {
+        setIdentity(data.identity);
+        return;
       }
+      setIdentity(null);
+      setToken(null);
+      try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
     } catch { /* ignore */ }
   }, [token]);
 
