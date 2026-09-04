@@ -529,6 +529,14 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
         /* sessionStorage unavailable */
       }
     }
+    if (mode === 'lives') {
+      setScanning(true);
+      setTimeout(() => {
+        onJoin('general', nick, mode, null, meta);
+        setScanning(false);
+      }, 350);
+      return;
+    }
     if (mode === 'group_video' || mode === 'group_text') {
       setScanning(true);
       setTimeout(() => {
@@ -1869,10 +1877,11 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
               </div>
 
               {/* QUICK ACTIONS */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-10 px-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 mb-10 px-4">
                 <button type="button" onClick={() => jumpFromDashboard('video')} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-violet-500/30 hover:text-violet-300 transition-all">1:1 Video</button>
                 <button type="button" onClick={() => jumpFromDashboard('group_video')} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-violet-500/30 hover:text-violet-300 transition-all">Group Video</button>
                 <button type="button" onClick={() => jumpFromDashboard('group_text')} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-violet-500/30 hover:text-violet-300 transition-all">Voice Room</button>
+                <button type="button" onClick={() => jumpFromDashboard('lives')} className="py-3 px-3 rounded-2xl bg-rose-500/10 border border-rose-500/25 text-[9px] font-black uppercase tracking-widest text-rose-200 hover:border-rose-400/50 hover:text-rose-100 transition-all">Go Live</button>
                 <button type="button" onClick={() => { setProfileForm({ bio: creatorStatus.bio || '', avatar: creatorStatus.avatar_url || '' }); setShowProfileModal(true); }} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-emerald-500/30 hover:text-emerald-300 transition-all">Edit Profile</button>
                 <button type="button" onClick={() => { if (referralUrl) { navigator.clipboard.writeText(referralUrl); showAlert('Copied', 'Referral link copied.'); } }} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-indigo-500/30 hover:text-indigo-300 transition-all">Copy Referral</button>
                 <button type="button" onClick={() => { setShowDashboardModal(false); setShowForgotPasswordModal(true); }} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-amber-500/30 hover:text-amber-300 transition-all">Reset Password</button>

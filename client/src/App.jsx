@@ -16,6 +16,8 @@ import { applyPageSeo, applyPrivateSessionSeo } from './utils/seo';
 import { useAudioIdentity } from './hooks/useAudioIdentity';
 // Lazy load off-screen and secondary modules for extreme performance
 const AdminDashboard = lazyRetry(() => import('./components/AdminDashboard'));
+const AgencyDashboard = lazyRetry(() => import('./components/AgencyDashboard'));
+const LivesApp = lazyRetry(() => import('./components/lives/LivesApp'));
 const TextChat = lazyRetry(() => import('./components/TextChat'));
 const GroupVideoRoom = lazyRetry(() => import('./components/GroupVideoRoom'));
 const GroupTextRoom = lazyRetry(() => import('./components/GroupTextRoom'));
@@ -35,8 +37,8 @@ const LoadingFallback = () => (
   </div>
 );
 
-const STATES = { LANDING: 'landing', CHAT: 'chat', ADMIN: 'admin', CREATOR_PROFILE: 'creator_profile' };
-const MODES = { TEXT: 'text', VIDEO: 'video', GROUP_TEXT: 'group_text', GROUP_VIDEO: 'group_video' };
+const STATES = { LANDING: 'landing', CHAT: 'chat', ADMIN: 'admin', AGENCY: 'agency', CREATOR_PROFILE: 'creator_profile' };
+const MODES = { TEXT: 'text', VIDEO: 'video', GROUP_TEXT: 'group_text', GROUP_VIDEO: 'group_video', LIVES: 'lives' };
 
 export default function App() {
   return (
@@ -56,6 +58,7 @@ function AppShell() {
 
   const [appState, setAppState] = useState(() => {
     if (window.location.pathname === '/matrix-admin') return STATES.ADMIN;
+    if (window.location.pathname === '/agency') return STATES.AGENCY;
     return STATES.LANDING;
   });
   const [mode, setMode] = useState(null);
@@ -98,6 +101,10 @@ function AppShell() {
       applyPrivateSessionSeo('Admin');
       return;
     }
+    if (appState === STATES.AGENCY) {
+      applyPrivateSessionSeo('Agency');
+      return;
+    }
     if (appState === STATES.CREATOR_PROFILE) return;
     if (appState === STATES.CHAT && mode) {
       const labels = {
@@ -105,6 +112,7 @@ function AppShell() {
         [MODES.TEXT]: 'Text Chat',
         [MODES.GROUP_VIDEO]: 'Group Video',
         [MODES.GROUP_TEXT]: 'Voice Room',
+        [MODES.LIVES]: 'Lives',
       };
       applyPrivateSessionSeo(labels[mode] || 'Chat');
     }
@@ -377,6 +385,13 @@ function AppShell() {
 
   const renderContent = () => {
     if (appState === STATES.ADMIN) return <AdminDashboard onJoinRoom={handleAdminJoin} />;
+    if (appState === STATES.AGENCY) {
+      return (
+        <Suspense fallback={<LoadingFallback />}>
+          <AgencyDashboard />
+        </Suspense>
+      );
+    }
     if (isBlocked) {
       return (
         <div className="min-h-screen bg-realm-void flex items-center justify-center p-6 text-white font-sans text-center">
@@ -421,6 +436,20 @@ function AppShell() {
             setJoinMeta={setJoinMeta}
             country={country}
           />
+        </div>
+      );
+    }
+    if (mode === MODES.LIVES) {
+      return (
+        <div className="mm-page-enter">
+          <Suspense fallback={<LoadingFallback />}>
+            <LivesApp
+              socket={socket}
+              identityHook={audioIdentityHook}
+              isCreator={isCreator}
+              onExit={handleBack}
+            />
+          </Suspense>
         </div>
       );
     }

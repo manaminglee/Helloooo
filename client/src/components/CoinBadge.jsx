@@ -37,7 +37,7 @@ export function CoinBadge({
   const triggerRef = useRef(null);
 
   const rewardDur = registered ? HOURLY_SECONDS : VERIFY_SECONDS;
-  const rewardLabel = registered ? '+30 coins / hour active' : '+40 coins when verified';
+  const rewardLabel = registered ? '+30 Nuts / hour active' : '+40 Nuts when verified';
 
   useEffect(() => {
     setLocalActive(currentActiveSeconds);
@@ -158,7 +158,7 @@ export function CoinBadge({
               ? `${formatMmSs(remaining)} remaining`
               : registered
                 ? 'Hourly reward ready on next cycle'
-                : 'Verification complete — coins credited'}
+                : 'Verification complete — Nuts credited'}
           </p>
 
           {canClaim && (

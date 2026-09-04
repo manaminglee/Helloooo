@@ -6,12 +6,13 @@ const TIER_STYLES = {
   rare: 'border-sky-400/40 shadow-[0_0_12px_rgba(56,189,248,0.15)]',
   epic: 'border-fuchsia-400/40 shadow-[0_0_14px_rgba(232,121,249,0.18)]',
   legendary: 'border-amber-400/50 shadow-[0_0_18px_rgba(251,191,36,0.25)]',
+  mega: 'border-rose-400/60 shadow-[0_0_22px_rgba(251,113,133,0.35)]',
 };
 
 const ROLE_SHORT = { host: 'Admin', moderator: 'Co', speaker: 'Stage', listener: 'View' };
 
 /**
- * Gift picker with profile targets, send-to-one / send-to-all, and coin packages.
+ * Gift picker with profile targets, send-to-one / send-to-all, and Nuts packages.
  */
 export function GiftDrawer({
   socket,
@@ -64,7 +65,7 @@ export function GiftDrawer({
     const onBought = ({ coins: added, balance }) => {
       if (balance !== undefined) setDisplayCoins(balance);
       else if (added) setDisplayCoins((c) => c + added);
-      setNotice({ type: 'ok', text: `+${added} coins added` });
+      setNotice({ type: 'ok', text: `+${added} Nuts added` });
       setTab('gifts');
       setTimeout(() => setNotice(null), 2500);
     };

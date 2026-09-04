@@ -1,9 +1,9 @@
 /**
- * Expanded gift catalog — fruits, flowers, landmarks, premium, and more.
- * Costs are in Helloooo coins. creatorShare is the fraction credited to recipient.
+ * Expanded gift catalog — fruits, flowers, landmarks, premium, mega live gifts.
+ * Costs are in Nuts (stored as coins in wallets). creatorShare = fraction to recipient.
  */
-function g(id, name, cost, icon, category, tier, creatorShare) {
-  return { id, name, cost, icon, category, tier, creatorShare };
+function g(id, name, cost, icon, category, tier, creatorShare, anim = null) {
+  return { id, name, cost, icon, category, tier, creatorShare, anim: anim || tier };
 }
 
 const GIFTS = [
@@ -65,6 +65,14 @@ const GIFTS = [
   g('dragon', 'Dragon', 750, '🐉', 'premium', 'legendary', 0.8),
   g('champagne', 'Champagne', 180, '🍾', 'premium', 'epic', 0.75),
   g('cake', 'Celebration Cake', 60, '🎂', 'classic', 'rare', 0.7),
+
+  // Mega / live-tier Nuts gifts (big animations)
+  g('nut_storm', 'Nut Storm', 2500, '🌰', 'mega', 'mega', 0.78, 'mega'),
+  g('golden_nut', 'Golden Nut', 5000, '✨', 'mega', 'mega', 0.8, 'mega'),
+  g('phoenix', 'Phoenix', 10000, '🔥', 'mega', 'legendary', 0.82, 'legendary'),
+  g('meteor', 'Meteor Shower', 15000, '☄️', 'mega', 'legendary', 0.85, 'legendary'),
+  g('castle', 'Royal Castle', 25000, '🏰', 'mega', 'legendary', 0.85, 'legendary'),
+  g('universe', 'Universe', 50000, '🌌', 'mega', 'legendary', 0.88, 'legendary'),
 ];
 
 const CATEGORIES = [
@@ -75,14 +83,19 @@ const CATEGORIES = [
   { id: 'spectacles', label: 'Spectacles' },
   { id: 'classic', label: 'Classic' },
   { id: 'premium', label: 'Premium' },
+  { id: 'mega', label: 'Mega Live' },
 ];
 
-/** Virtual coin packages (credited after successful checkout / test purchase). */
+/** Nuts packages (~10,000 Nuts = $1). Field `coins` is wallet credit amount. */
 const COIN_PACKAGES = [
-  { id: 'coins_100', name: 'Starter', coins: 100, priceUsd: 0.99, priceInr: 99, icon: '🪙' },
-  { id: 'coins_500', name: 'Popular', coins: 500, priceUsd: 3.99, priceInr: 349, icon: '💰', badge: 'Best' },
-  { id: 'coins_1200', name: 'Pro Bundle', coins: 1200, priceUsd: 7.99, priceInr: 699, icon: '💎' },
-  { id: 'coins_3000', name: 'Creator Pack', coins: 3000, priceUsd: 14.99, priceInr: 1299, icon: '👑' },
+  { id: 'nuts_1k', name: 'Starter', coins: 1000, priceUsd: 0.99, priceInr: 99, icon: '🌰', label: 'Nuts' },
+  { id: 'nuts_5k', name: 'Popular', coins: 5000, priceUsd: 4.99, priceInr: 449, icon: '✨', badge: 'Best', label: 'Nuts' },
+  { id: 'nuts_10k', name: 'Fan Pack', coins: 10000, priceUsd: 9.99, priceInr: 899, icon: '💎', label: 'Nuts' },
+  { id: 'nuts_25k', name: 'VIP Bundle', coins: 25000, priceUsd: 19.99, priceInr: 1799, icon: '👑', label: 'Nuts' },
+  { id: 'nuts_50k', name: 'Whale Pack', coins: 50000, priceUsd: 39.99, priceInr: 3499, icon: '🚀', label: 'Nuts' },
+  { id: 'nuts_100k', name: 'Agency Pack', coins: 100000, priceUsd: 69.99, priceInr: 5999, icon: '🏰', label: 'Nuts' },
 ];
 
-module.exports = { GIFTS, CATEGORIES, COIN_PACKAGES };
+const NUTS_PER_USD = 10000;
+
+module.exports = { GIFTS, CATEGORIES, COIN_PACKAGES, NUTS_PER_USD };

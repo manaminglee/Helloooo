@@ -23,8 +23,16 @@ const LOGIN_LOCK_MS = 15 * 60 * 1000;
 const MAX_REGISTER_PER_IP = 3;
 const REGISTER_WINDOW_MS = 60 * 60 * 1000;
 
+/** 10,000 Nuts = $1. Display helper still named computeEarningsRs for callers; returns USD cents-as-rupee-display field historically used as earnings_rs. */
+const NUTS_PER_USD = 10000;
+
+function computeEarningsUsd(nuts) {
+  return Math.floor(Math.max(0, Number(nuts) || 0) / NUTS_PER_USD * 100) / 100;
+}
+
+/** Legacy name: now stores USD value (10k Nuts = $1), not INR slabs. */
 function computeEarningsRs(coins) {
-  return Math.floor(Math.max(0, Number(coins) || 0) / 10000) * 150;
+  return computeEarningsUsd(coins);
 }
 
 function normalizeHandle(raw) {
@@ -300,6 +308,8 @@ async function markResetTokenUsed(supabase, localDb, saveLocalDb, token) {
 module.exports = {
   ALLOWED_PLATFORMS,
   HANDLE_REGEX,
+  NUTS_PER_USD,
+  computeEarningsUsd,
   computeEarningsRs,
   normalizeHandle,
   validateHandle,

@@ -329,7 +329,7 @@ export function AudioCoinShop({ open, onClose, identity, onBalanceUpdate }) {
       const data = await res.json();
       if (!res.ok) {
         setMsg(res.status === 503
-          ? 'Coin shop is offline right now — try again later or earn coins in rooms.'
+          ? 'Nuts shop is offline right now — try again later or earn Nuts in rooms.'
           : (data.error || 'Checkout failed'));
         return;
       }
@@ -346,7 +346,7 @@ export function AudioCoinShop({ open, onClose, identity, onBalanceUpdate }) {
         });
         const v = await verify.json();
         if (v.ok) {
-          setMsg(`+${pack.coins} coins added! Level ${v.identity?.level || '—'}`);
+          setMsg(`+${pack.coins} Nuts added! Level ${v.identity?.level || '—'}`);
           onBalanceUpdate?.(v.identity);
         } else setMsg(v.error || 'Test purchase failed');
         return;
@@ -365,8 +365,8 @@ export function AudioCoinShop({ open, onClose, identity, onBalanceUpdate }) {
   return (
     <div className="mm-modal-overlay z-[600]" onClick={onClose}>
       <div className="mm-modal-surface max-w-sm" onClick={(e) => e.stopPropagation()}>
-        <h3 className="mm-audio-coin-shop__title">Recharge coins</h3>
-        <p className="mm-audio-coin-shop__bal">Balance: <strong>{identity?.coins ?? 0}</strong> · Lv {identity?.level ?? 0}</p>
+        <h3 className="mm-audio-coin-shop__title">Recharge Nuts</h3>
+        <p className="mm-audio-coin-shop__bal">Balance: <strong>{identity?.coins ?? 0}</strong> Nuts · Lv {identity?.level ?? 0}</p>
         <div className="space-y-2 mt-3">
           {packages.map((p) => (
             <button
@@ -377,7 +377,7 @@ export function AudioCoinShop({ open, onClose, identity, onBalanceUpdate }) {
               onClick={() => buy(p)}
             >
               <span>{p.icon} {p.name}</span>
-              <span>{p.coins} coins · ₹{p.priceInr}</span>
+              <span>{p.coins} Nuts · ₹{p.priceInr}</span>
             </button>
           ))}
         </div>

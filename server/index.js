@@ -31,6 +31,8 @@ const livekitRooms = require('./livekitRooms');
 const { registerRaceGame } = require('./raceGame');
 const { registerEconomy } = require('./economy');
 const { registerAudioIdentity } = require('./audioIdentity');
+const { registerLiveStreams } = require('./liveStreams');
+const { registerAgency } = require('./agency');
 const { registerModeration } = require('./moderation');
 const { createMatchQueue } = require('./matchQueue');
 const { createInfra } = require('./infra');
@@ -206,6 +208,10 @@ const settings = {
   safetyAiEnabled: true,
   coinsEnabled: true,
   guestRegistration: true,
+  liveGoLivePolicy: 'approved', // 'approved' | 'applied'
+  nutsPayoutPerUsd: 10000,
+  minWithdrawalNuts: 10000,
+  agencyAnnouncements: '',
   adScripts: {
     hero: '',
     sidebar: '',
@@ -2470,6 +2476,12 @@ app.post('/api/admin/settings', requireAdmin, (req, res) => {
   Object.keys(settings).forEach((k) => {
     if (k === 'adScripts' && body.adScripts && typeof body.adScripts === 'object') {
       settings.adScripts = { ...settings.adScripts, ...body.adScripts };
+    } else if (k === 'liveGoLivePolicy' && (body.liveGoLivePolicy === 'approved' || body.liveGoLivePolicy === 'applied')) {
+      settings.liveGoLivePolicy = body.liveGoLivePolicy;
+    } else if ((k === 'nutsPayoutPerUsd' || k === 'minWithdrawalNuts') && typeof body[k] === 'number' && body[k] >= 0) {
+      settings[k] = Math.floor(body[k]);
+    } else if (k === 'agencyAnnouncements' && typeof body.agencyAnnouncements === 'string') {
+      settings.agencyAnnouncements = body.agencyAnnouncements.slice(0, 2000);
     } else if (typeof body[k] === 'boolean' && typeof settings[k] === 'boolean') {
       settings[k] = body[k];
     }
@@ -3114,6 +3126,52 @@ raceGame = registerRaceGame(app, io, {
   audit: moderation.audit,
 });
 
+const liveStreams = registerLiveStreams(app, io, {
+  users,
+  sanitize,
+  generateId: () => crypto.randomBytes(8).toString('hex'),
+  localDb,
+  saveLocalDb,
+  supabase,
+  audioIdentity,
+  getCreatorForRequest,
+  getSettings: () => settings,
+  creditCreatorCoins: async (creatorId, amount, details, creatorRow) => {
+    const creator = creatorRow || (localDb.creators || []).find((c) => c.id === creatorId);
+    if (!creator) return null;
+    return creatorSecurity.creditCreatorCoins(supabase, localDb, saveLocalDb, creator, amount, {
+      type: 'live_gift',
+      details: String(details || ''),
+    });
+  },
+  rateLimit: (key, opts) => infra.rateLimit(key, opts),
+  audit: moderation.audit,
+});
+
+registerAgency(app, io, {
+  settings,
+  localDb,
+  saveLocalDb,
+  supabase,
+  isAdminRequest,
+  getAdminKey,
+  liveStreams,
+  audioChannels: {
+    ...audioChannels,
+    listForAdmin: () => {
+      try {
+        return [...(audioChannels.channels?.values?.() || [])].map((c) =>
+          audioChannels.publicChannel ? audioChannels.publicChannel(c) : { id: c.id, topic: c.topic, members: c.members?.size }
+        );
+      } catch {
+        return [];
+      }
+    },
+  },
+  audioIdentity,
+  audit: moderation.audit,
+});
+
 // API 404 fallback — must be after registerEnhancements (rooms/public, creators, etc.)
 app.all('/api/*', (req, res) => {
   res.status(404).json({ error: 'API endpoint not found' });
@@ -3193,6 +3251,7 @@ io.on('connection', (socket) => {
   audioIdentity.attachSocketHandlers(socket, ip, users);
   audioChannels.attachSocketHandlers(socket, ip);
   raceGame.attachSocketHandlers(socket, ip);
+  liveStreams.attachSocketHandlers(socket);
 
   // Uniform handler registration: wraps every handler in try/catch so a failing
   // async handler logs and emits `error` instead of an unhandled rejection.

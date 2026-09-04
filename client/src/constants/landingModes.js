@@ -36,4 +36,13 @@ export const LANDING_MODE_CARDS = [
     accent: 'from-amber-500/20 to-orange-500/10',
     ring: 'group-hover:border-amber-400/50',
   },
+  {
+    id: 'lives',
+    icon: '🔴',
+    name: 'Lives',
+    hint: 'Watch creators · gift Nuts',
+    tag: 'Hot',
+    accent: 'from-rose-500/25 to-amber-500/10',
+    ring: 'group-hover:border-rose-400/50',
+  },
 ];

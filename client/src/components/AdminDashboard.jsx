@@ -784,6 +784,13 @@ export function AdminDashboard({ onJoinRoom }) {
             ))}
           </nav>
 
+          <a
+            href="/agency"
+            className="mx-2 px-5 py-3.5 rounded-2xl text-[11px] font-black uppercase tracking-widest text-amber-200/80 bg-amber-500/10 border border-amber-500/25 hover:bg-amber-500/20 transition-all"
+          >
+            Agency → Creators & Nuts
+          </a>
+
           <div className="mt-auto space-y-4">
             <div className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 shadow-inner">
               <div className="text-[8px] font-black uppercase text-white/10 mb-4 tracking-widest px-1 italic">Diagnostics</div>
@@ -1690,7 +1697,7 @@ export function AdminDashboard({ onJoinRoom }) {
                   { field: 'allowDevTools', label: 'Developer Tools', desc: 'Allow browser console access', active: stats?.allowDevTools },
                   { field: 'maintenanceMode', label: 'Maintenance Mode', desc: 'Disable platform access for maintenance', active: stats?.maintenanceMode, color: 'bg-rose-500' },
                   { field: 'safetyAiEnabled', label: 'Safety System Monitor', desc: 'Behavioural filtering systems', active: stats?.safetyAiEnabled, color: 'bg-cyan-500' },
-                  { field: 'coinsEnabled', label: 'Coin Management', desc: 'Authorize coin circulation', active: stats?.coinsEnabled !== false },
+                  { field: 'coinsEnabled', label: 'Nuts / Coin Management', desc: 'Authorize Nuts circulation', active: stats?.coinsEnabled !== false },
                   { field: 'guestRegistration', label: 'Guest Access', desc: 'Allow anonymous user mapping', active: stats?.guestRegistration !== false },
                 ].map(f => (
                   <div key={f.field} className="p-10 rounded-[40px] bg-white/[0.02] border border-white/5 flex flex-col justify-between group hover:border-cyan-500/30 transition-all min-h-[180px] shadow-2xl relative overflow-hidden">
