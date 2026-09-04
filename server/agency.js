@@ -64,7 +64,7 @@ function registerAgency(app, io, deps) {
   if (settings.agencyAnnouncements == null) settings.agencyAnnouncements = '';
 
   app.get('/api/agency/overview', requireAgency, async (_req, res) => {
-    const lives = liveStreams?.listActive?.() || [];
+    const lives = (await liveStreams?.listActive?.()) || [];
     let audioList = [];
     try {
       audioList = audioChannels?.listChannelsPublic?.() || audioChannels?.listForAdmin?.() || [];
@@ -195,8 +195,8 @@ function registerAgency(app, io, deps) {
     res.json({ ok: true, withdrawal });
   });
 
-  app.get('/api/agency/lives', requireAgency, (_req, res) => {
-    res.json({ ok: true, lives: liveStreams?.listActive?.() || [] });
+  app.get('/api/agency/lives', requireAgency, async (_req, res) => {
+    res.json({ ok: true, lives: (await liveStreams?.listActive?.()) || [] });
   });
 
   app.post('/api/agency/lives/:id/end', requireAgency, async (req, res) => {

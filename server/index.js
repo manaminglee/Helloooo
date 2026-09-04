@@ -34,6 +34,7 @@ const { registerRaceGame } = require('./raceGame');
 const { registerEconomy } = require('./economy');
 const { registerAudioIdentity } = require('./audioIdentity');
 const { registerLiveStreams } = require('./liveStreams');
+const { createLivePersistence } = require('./livePersistence');
 const { registerAgency } = require('./agency');
 const { registerModeration } = require('./moderation');
 const { createMatchQueue } = require('./matchQueue');
@@ -3203,8 +3204,12 @@ raceGame = registerRaceGame(app, io, {
   audit: moderation.audit,
 });
 
+// Analytics writer for the live tables — buffered, no-op without Supabase.
+const livePersistence = createLivePersistence({ supabase });
+
 const liveStreams = registerLiveStreams(app, io, {
   users,
+  persistence: livePersistence,
   sanitize,
   generateId: () => crypto.randomBytes(8).toString('hex'),
   localDb,
@@ -3222,6 +3227,9 @@ const liveStreams = registerLiveStreams(app, io, {
     });
   },
   rateLimit: (key, opts) => infra.rateLimit(key, opts),
+  // Resolved lazily: Redis connects after this module is registered. With it,
+  // live rooms are shared across instances; without it, single-process memory.
+  getRedis: () => infra.getRedis?.() || null,
   audit: moderation.audit,
 });
 

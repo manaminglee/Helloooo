@@ -1,12 +1,49 @@
 import { useEffect, useState } from 'react';
 import { useLivesList } from '../../hooks/useLiveStream';
 import { AudioIdentityGate } from '../AudioIdentityGate';
-import { NutsSymbol } from '../NutsSymbol';
 import { isMobileLiveDevice } from '../../utils/liveDevice';
 import { getCreatorSessionToken } from '../../utils/creatorAuth';
+import { useLiveBodyLock } from '../../hooks/useLiveViewport';
+import { Avatar, compact } from './LiveBits';
+
+function elapsed(startedAt) {
+  const mins = Math.max(0, Math.round((Date.now() - (startedAt || Date.now())) / 60000));
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+function LiveCard({ live, onOpen }) {
+  return (
+    <button type="button" className="feed-card" onClick={() => onOpen(live.id)}>
+      <div
+        className="feed-card__thumb"
+        style={live.wallpaperUrl ? { backgroundImage: `url(${live.wallpaperUrl})` } : undefined}
+      >
+        {!live.wallpaperUrl && (
+          <Avatar className="feed-card__ghost" src={live.avatarUrl} name={live.handle} />
+        )}
+        <span className="feed-card__badge">
+          <span className="live-badge-live__dot" />
+          LIVE
+        </span>
+        <span className="feed-card__viewers">👥 {compact(live.viewerCount || 0)}</span>
+        <span className="feed-card__time">{elapsed(live.startedAt)}</span>
+      </div>
+
+      <div className="feed-card__meta">
+        <Avatar className="feed-card__avatar" src={live.avatarUrl} name={live.handle} />
+        <span className="feed-card__text">
+          <span className="feed-card__name">{live.displayName || live.handle}</span>
+          <span className="feed-card__title">{live.title}</span>
+        </span>
+      </div>
+    </button>
+  );
+}
 
 /**
- * Discovery page for active in-app lives.
+ * Discovery grid for active lives. Same visual language as the room, so the
+ * transition into a stream does not feel like entering a different product.
  */
 export default function LivesFeed({
   identityHook,
@@ -18,121 +55,108 @@ export default function LivesFeed({
 }) {
   const { isSignedIn, hydrating, loginFromCreator, creatorLinkFailed } = identityHook;
   const { lives, loading, error, refresh, livekit } = useLivesList(6000);
-  const [gate, setGate] = useState(false);
   const [creatorLinking, setCreatorLinking] = useState(false);
   const showCreate = canCreateLive || isCreator;
   const creatorSession = !!getCreatorSessionToken();
 
-  useEffect(() => {
-    document.body.classList.add('mm-lives-mode');
-    return () => document.body.classList.remove('mm-lives-mode');
-  }, []);
+  useLiveBodyLock();
 
   useEffect(() => {
     if (isSignedIn || !creatorSession || hydrating || creatorLinkFailed) return undefined;
     let cancelled = false;
     setCreatorLinking(true);
     (async () => {
-      const ok = await loginFromCreator?.();
+      await loginFromCreator?.();
       if (!cancelled) setCreatorLinking(false);
-      if (ok) setGate(false);
     })();
     return () => { cancelled = true; };
   }, [isSignedIn, creatorSession, hydrating, loginFromCreator, creatorLinkFailed]);
 
   if (!isMobileLiveDevice()) {
     return (
-      <div className="mm-live-desktop-block">
-        <NutsSymbol size={40} />
-        <h1 className="mm-h2 mt-4 text-white">Lives are mobile-only</h1>
-        <p className="mm-body mt-2">Open Helloooo on your phone to watch and gift creators.</p>
+      <div className="live-desktop-block">
+        <p style={{ fontSize: 18, fontWeight: 800 }}>Lives are mobile-only</p>
+        <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 14, maxWidth: 300 }}>
+          Open this page on your phone to watch and gift creators.
+        </p>
         {showCreate && (
-          <button type="button" className="mm-btn mm-btn--primary mt-6" onClick={onGoLive}>
-            Create Live (host studio)
+          <button type="button" className="live-btn live-btn--primary" onClick={onGoLive}>
+            Open host studio
           </button>
         )}
-        <button type="button" className="mm-btn mm-btn--ghost mt-4" onClick={onExit}>Back home</button>
+        <button type="button" className="live-btn" onClick={onExit}>Back home</button>
       </div>
     );
   }
 
   if ((hydrating || creatorLinking) && !creatorLinkFailed && !isSignedIn) {
     return (
-      <div className="mm-live-shell mm-live-shell--center">
-        <p className="text-white/70 text-sm">
+      <div className="live-desktop-block">
+        <div className="live-state__spinner" />
+        <p style={{ color: 'rgba(255,255,255,0.65)', fontSize: 14 }}>
           {creatorSession ? 'Signing in with your creator account…' : 'Restoring identity…'}
         </p>
       </div>
     );
   }
 
-  if (!isSignedIn || gate) {
+  if (!isSignedIn) {
     return (
       <AudioIdentityGate
         variant="fullscreen"
         identityHook={identityHook}
         onCancel={onExit}
-        onSignedIn={() => setGate(false)}
+        onSignedIn={refresh}
       />
     );
   }
 
   return (
-    <div className="mm-lives-feed">
-      <header className="mm-lives-feed__hero">
-        <button type="button" className="mm-live-icon-btn" onClick={onExit} aria-label="Back">←</button>
-        <div>
-          <p className="mm-eyebrow">Live now</p>
-          <h1 className="mm-h2 text-white mt-1">Lives</h1>
+    <div className="feed-root">
+      <header className="feed-top">
+        <button type="button" className="live-icon-btn" onClick={onExit} aria-label="Back">←</button>
+        <div className="feed-top__title">
+          <span className="feed-top__eyebrow">Live now</span>
+          <h1 className="feed-top__h1">Lives</h1>
         </div>
-        <button type="button" className="mm-btn mm-btn--ghost text-xs" onClick={refresh}>↻</button>
+        <button type="button" className="live-icon-btn" onClick={refresh} aria-label="Refresh">↻</button>
       </header>
 
-      {showCreate && (
-        <button type="button" className="mm-lives-go-live" onClick={onGoLive}>
-          <span className="mm-lives-go-live__dot" /> Create Live
-        </button>
-      )}
-
-      {!livekit?.enabled && (
-        <p className="mm-lives-feed__warn">LiveKit is not configured on the server — streams may not play.</p>
-      )}
-      {error && <p className="mm-audio-id-error px-4">{error}</p>}
-      {loading && !lives.length && <p className="text-white/40 text-center py-10">Loading…</p>}
-
-      <div className="mm-lives-feed__grid">
-        {lives.map((live) => (
-          <button
-            key={live.id}
-            type="button"
-            className="mm-lives-card"
-            onClick={() => onOpenLive(live.id)}
-          >
-            <div
-              className="mm-lives-card__thumb"
-              style={live.wallpaperUrl ? { backgroundImage: `url(${live.wallpaperUrl})` } : undefined}
-            >
-              <span className="mm-lives-card__live">LIVE</span>
-              <span className="mm-lives-card__viewers">{live.viewerCount || 0}</span>
-            </div>
-            <div className="mm-lives-card__meta">
-              <strong>@{live.handle}</strong>
-              <span>{live.title}</span>
-            </div>
+      <div className="feed-body">
+        {showCreate && (
+          <button type="button" className="feed-golive" onClick={onGoLive}>
+            <span className="feed-golive__dot" />
+            Go Live
           </button>
-        ))}
-      </div>
+        )}
 
-      {!loading && !lives.length && (
-        <div className="text-center py-16 text-white/45">
-          <p>No one is live yet.</p>
-          {showCreate && (
-            <button type="button" className="mm-btn mm-btn--primary mt-4" onClick={onGoLive}>
-              Be the first — Create Live
-            </button>
-          )}
+        {!livekit?.enabled && (
+          <p className="feed-warn">Streaming isn&apos;t configured on the server — playback may fail.</p>
+        )}
+        {error && <p className="feed-warn feed-warn--error">{error}</p>}
+
+        {loading && !lives.length && (
+          <div className="feed-empty"><div className="live-state__spinner" /></div>
+        )}
+
+        <div className="feed-grid">
+          {lives.map((live) => (
+            <LiveCard key={live.id} live={live} onOpen={onOpenLive} />
+          ))}
         </div>
-      )}
+
+        {!loading && !lives.length && (
+          <div className="feed-empty">
+            <span style={{ fontSize: 40 }}>📡</span>
+            <p style={{ fontSize: 15, fontWeight: 700 }}>No one is live yet</p>
+            {showCreate && (
+              <button type="button" className="live-btn live-btn--primary" onClick={onGoLive}>
+                Be the first
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

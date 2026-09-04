@@ -32,6 +32,7 @@ export default function LivesApp({
     return (
       <LiveStudio
         socket={socket}
+        identityHook={identityHook}
         creatorsHook={creatorsHook}
         onExit={() => {
           if (initialCreateLive) onExit?.();

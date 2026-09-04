@@ -12,9 +12,11 @@
     "dev": "node server/index.js",
     "dev:client": "cd client && npm run dev",
     "build": "cd client && npm run build",
-    "test": "playwright test",
+    "test": "node server/__livetest.js && playwright test",
     "test:e2e": "playwright test",
-    "test:smoke": "playwright test e2e/smoke.spec.js"
+    "test:smoke": "playwright test e2e/smoke.spec.js",
+    "test:live": "node server/__livetest.js",
+    "test:e2e:live": "playwright test e2e/live-api.spec.js e2e/live-mobile.spec.js"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",

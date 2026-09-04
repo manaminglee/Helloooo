@@ -20,7 +20,11 @@ export function useLiveKitLive({
   const [hasMedia, setHasMedia] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState('');
+  const [micEnabled, setMicEnabled] = useState(true);
+  const [camEnabled, setCamEnabled] = useState(true);
+  const [facingMode, setFacingMode] = useState('user');
   const roomRef = useRef(null);
+  const facingRef = useRef('user');
   const localTracksRef = useRef([]);
   const remoteAudioElsRef = useRef([]);
   const clarityTimerRef = useRef(null);
@@ -92,14 +96,35 @@ export function useLiveKitLive({
         setHasMedia(false);
         hasMediaRef.current = false;
 
-        const tokenRes = await new Promise((resolve, reject) => {
+        /* On reconnect the socket re-sends creator:auth, and that ack can land
+           AFTER our first token request — the server marks that rejection
+           `retryable` rather than treating it as a real permission failure, so
+           a host coming back on a flaky network reclaims their own stream
+           instead of having the live torn down. */
+        const requestToken = () => new Promise((resolve, reject) => {
           const t = setTimeout(() => reject(new Error('Live token timeout')), 10000);
           socket.emit('live:token', { liveId, asHost }, (payload) => {
             clearTimeout(t);
             if (payload?.ok) resolve(payload);
-            else reject(new Error(payload?.error || 'Token failed'));
+            else {
+              const err = new Error(payload?.error || 'Token failed');
+              err.retryable = !!payload?.retryable;
+              reject(err);
+            }
           });
         });
+
+        let tokenRes = null;
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          try {
+            tokenRes = await requestToken();
+            break;
+          } catch (err) {
+            if (!err.retryable || attempt === 3 || cancelled) throw err;
+            await new Promise((r) => setTimeout(r, 400 + attempt * 600));
+          }
+        }
+        if (!tokenRes) throw new Error('Could not get a live token');
         if (cancelled) return;
 
         const room = new Room({
@@ -221,7 +246,7 @@ export function useLiveKitLive({
               autoGainControl: true,
             },
             video: {
-              facingMode: 'user',
+              facingMode: facingRef.current,
               resolution: { width: 720, height: 1280, frameRate: 30 },
             },
           });
@@ -270,11 +295,85 @@ export function useLiveKitLive({
     };
   }, [enabled, socket, liveId, asHost, videoElRef, mirrorLocal, disconnect, markMedia, startClarityWatch]);
 
+  /* ---- host media controls -------------------------------------------- */
+
+  const toggleMic = useCallback(async () => {
+    const room = roomRef.current;
+    if (!room?.localParticipant) return micEnabled;
+    const next = !micEnabled;
+    try {
+      await room.localParticipant.setMicrophoneEnabled(next);
+      setMicEnabled(next);
+      return next;
+    } catch {
+      return micEnabled;
+    }
+  }, [micEnabled]);
+
+  const toggleCam = useCallback(async () => {
+    const room = roomRef.current;
+    if (!room?.localParticipant) return camEnabled;
+    const next = !camEnabled;
+    try {
+      await room.localParticipant.setCameraEnabled(next);
+      setCamEnabled(next);
+      return next;
+    } catch {
+      return camEnabled;
+    }
+  }, [camEnabled]);
+
+  /**
+   * Flip front/back camera by republishing a new track. The old track is
+   * unpublished and stopped first so Android does not hold two camera handles.
+   */
+  const switchCamera = useCallback(async () => {
+    const room = roomRef.current;
+    if (!room?.localParticipant) return;
+    const next = facingRef.current === 'user' ? 'environment' : 'user';
+    try {
+      const oldTrack = localTracksRef.current.find(
+        (t) => t.kind === Track.Kind.Video || t.kind === 'video',
+      );
+      const [newTrack] = await createLocalTracks({
+        audio: false,
+        video: { facingMode: next, resolution: { width: 720, height: 1280, frameRate: 30 } },
+      });
+      if (!newTrack) return;
+      if (oldTrack) {
+        try { await room.localParticipant.unpublishTrack(oldTrack); } catch { /* */ }
+        try { oldTrack.stop(); } catch { /* */ }
+        localTracksRef.current = localTracksRef.current.filter((t) => t !== oldTrack);
+      }
+      await room.localParticipant.publishTrack(newTrack, { source: Track.Source.Camera });
+      localTracksRef.current.push(newTrack);
+      const el = videoElRef?.current;
+      if (el) {
+        newTrack.attach(el);
+        el.muted = true;
+        el.playsInline = true;
+        // Only the selfie camera is mirrored.
+        el.style.transform = next === 'user' && mirrorLocal ? 'scaleX(-1)' : '';
+        void el.play?.().catch(() => {});
+      }
+      facingRef.current = next;
+      setFacingMode(next);
+    } catch {
+      /* keep the existing camera on failure */
+    }
+  }, [videoElRef, mirrorLocal]);
+
   return {
     connected,
     hasMedia,
     connecting: connecting && !hasMedia,
     error,
     disconnect,
+    micEnabled,
+    camEnabled,
+    facingMode,
+    toggleMic,
+    toggleCam,
+    switchCamera,
   };
 }
