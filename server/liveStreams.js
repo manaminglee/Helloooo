@@ -24,7 +24,9 @@ const { buildWordList, filterText, createRateLimiter } = require('./liveModerati
 // ---------------------------------------------------------------------------
 const COMMENT_MAX = 200;
 const COMMENT_HISTORY = 60;
-const BATTLE_DURATION_MS = 5 * 60 * 1000;
+const BATTLE_DURATION_MS = 7 * 60 * 1000;
+const REMATCH_WINDOW_MS = 60 * 1000;   // both hosts must ask to rematch within this
+const CREATOR_SHARE_DEFAULT = 0.7;     // fallback split when a gift lacks its own
 
 const PRESENCE_FLUSH_MS = 1000;
 const PRESENCE_LOCK_MS = 900;      // cross-instance dedupe of the count packet
@@ -48,6 +50,28 @@ const LIMITS = {
 
 const GIFT_BY_ID = new Map(GIFTS.map((g) => [g.id, g]));
 const FULLSCREEN_TIERS = new Set(['legendary', 'mega']);
+
+// Platform-wide creator share for live gifts. A per-gift creatorShare still
+// wins when present; this is the transparency baseline surfaced in stats.
+function creatorSharePct() {
+  const raw = Number(process.env.LIVE_GIFT_CREATOR_SHARE);
+  if (Number.isFinite(raw) && raw > 0 && raw <= 1) return raw;
+  return CREATOR_SHARE_DEFAULT;
+}
+
+/** Gift-cut transparency block for a given gross Nut amount. */
+function giftCutBreakdown(grossNuts) {
+  const share = creatorSharePct();
+  const gross = Math.max(0, Math.floor(Number(grossNuts) || 0));
+  const creatorNuts = Math.floor(gross * share);
+  return {
+    creatorSharePct: share,
+    platformCutPct: Math.round((1 - share) * 10000) / 10000,
+    grossNuts: gross,
+    creatorNuts,
+    platformNuts: gross - creatorNuts,
+  };
+}
 
 const nowMs = () => Date.now();
 const rid = (bytes = 8) => crypto.randomBytes(bytes).toString('hex');
@@ -82,6 +106,9 @@ function registerLiveStreams(app, io, deps) {
     getRedis,
     persistence,          // optional: server/livePersistence.js
     audit,
+    socialFollow,         // optional: server/socialFollow.js (mutual-follow gate)
+    notifyFollowers,      // optional: (creator) => void, pings followers on go-live
+    getMarket,            // optional: () => virtual market engine
   } = deps;
 
   const INSTANCE = process.env.INSTANCE_ID || `${process.pid}-${rid(3)}`;
@@ -96,6 +123,10 @@ function registerLiveStreams(app, io, deps) {
    * live id. Room state itself lives in the store.
    */
   const local = new Map();
+
+  // Pending rematch asks: battleId -> { [liveId]: askedAt }. When both sides of
+  // a just-ended battle ask within REMATCH_WINDOW_MS, we start a fresh battle.
+  const rematchAsks = new Map();
 
   function localOf(liveId) {
     let l = local.get(liveId);
@@ -199,6 +230,7 @@ function registerLiveStreams(app, io, deps) {
       startedAt: room.startedAt,
       status: room.status,
       battleId: room.battleId || null,
+      guestSocketId: room.guestSocketId || null,
       levelBadge: room.levelBadge || null,
       displayLevel: room.displayLevel || 0,
       nutsEarned: room.nutsEarned || 0,
@@ -241,6 +273,7 @@ function registerLiveStreams(app, io, deps) {
       topGifters: top,
       recentGift: room.recentGift ? JSON.parse(room.recentGift) : null,
       durationMs: nowMs() - (room.startedAt || nowMs()),
+      ...giftCutBreakdown(room.coinsGross || 0),
     };
   }
 
@@ -371,10 +404,21 @@ function registerLiveStreams(app, io, deps) {
     }
     for (const r of await store.listActive()) {
       if (r.creatorId === creator.id && r.status === 'live') {
+        // Resume the existing live instead of 400 — common after a Safari
+        // tab freeze / socket blip left the room open.
+        await store.updateRoom(r.id, {
+          hostSocketId: socketId,
+          hostInstance: INSTANCE,
+          ...(title ? { title: String(title).slice(0, 80) } : {}),
+          ...(wallpaperUrl ? { wallpaperUrl } : {}),
+        });
+        const l = localOf(r.id);
+        l.hosted = true;
+        const fresh = await store.getRoom(r.id);
         return {
-          ok: false,
-          error: 'You already have an active live.',
-          live: publicLive(r, await store.viewerCount(r.id)),
+          ok: true,
+          resumed: true,
+          live: publicLive(fresh || r, await store.viewerCount(r.id)),
         };
       }
     }
@@ -400,6 +444,7 @@ function registerLiveStreams(app, io, deps) {
       startedAt: nowMs(),
       status: 'live',
       battleId: null,
+      guestSocketId: null,
       pinnedComment: null,
       commentsDisabled: false,
       slowModeMs: 0,
@@ -427,7 +472,57 @@ function registerLiveStreams(app, io, deps) {
 
     audit?.('live_start', { liveId: id, creatorId: creator.id, handle: creator.handle_name });
     io.emit('live:list-updated', { lives: await listActive() });
+
+    // Ping followers who are online so they can hop into the room.
+    try { await notifyGoLive(creator, room); } catch (e) { console.error('[live] notifyGoLive', e.message); }
+
     return { ok: true, live: publicLive(room, 0) };
+  }
+
+  /**
+   * Tell this creator's online followers that they went live. We resolve the
+   * follower keys from the social graph, then map each key to any connected
+   * socket by matching its audio identity or creator persona.
+   */
+  async function notifyGoLive(creator, room) {
+    const payload = {
+      liveId: room.id,
+      creatorId: creator.id,
+      handle: creator.handle_name,
+      displayName: room.displayName,
+      avatarUrl: room.avatarUrl,
+      title: room.title,
+      startedAt: room.startedAt,
+    };
+
+    // The host app may own the fan-out (push notifications, cross-instance,
+    // etc.). When it provides notifyFollowers we defer to it to avoid emitting
+    // the same event twice; otherwise we fan out here from the social graph.
+    if (typeof notifyFollowers === 'function') {
+      try { await notifyFollowers(creator, payload); } catch (e) { console.error('[live] notifyFollowers dep', e.message); }
+      return;
+    }
+
+    if (socialFollow?.listFollowers) {
+      const targetKey = socialFollow.makeKey
+        ? socialFollow.makeKey('creator', creator.id)
+        : `creator:${creator.id}`;
+      const followerKeys = new Set(socialFollow.listFollowers(targetKey) || []);
+      if (followerKeys.size) {
+        try {
+          for (const socket of io.sockets.sockets.values()) {
+            const u = users?.get?.(socket.id);
+            if (!u) continue;
+            const uname = u.audioIdentity?.username
+              ? `audio:${String(u.audioIdentity.username).toLowerCase()}` : null;
+            const ckey = (u.isCreator && u.creatorData?.id) ? `creator:${u.creatorData.id}` : null;
+            if ((uname && followerKeys.has(uname)) || (ckey && followerKeys.has(ckey))) {
+              socket.emit('live:creator-started', payload);
+            }
+          }
+        } catch (e) { console.error('[live] follower fanout', e.message); }
+      }
+    }
   }
 
   async function persistWallpaper(creatorId, url) {
@@ -581,7 +676,7 @@ function registerLiveStreams(app, io, deps) {
       };
     }
 
-    const share = Math.floor(gift.cost * (gift.creatorShare || 0.7));
+    const share = Math.floor(gift.cost * (gift.creatorShare || creatorSharePct()));
     let receiverCreatorId = room.creatorId;
 
     if (room.battleId) {
@@ -625,6 +720,21 @@ function registerLiveStreams(app, io, deps) {
         catch { /* the ledger already holds the truth */ }
       }
     }
+    try {
+      const market = typeof getMarket === 'function' ? getMarket() : null;
+      market?.recordGiftEarnings?.({
+        id: tx.id,
+        giftId: gift.id,
+        giftName: gift.name,
+        liveId: room.id,
+        senderKey: walletKey,
+        creatorId: receiverCreatorId,
+        giftCoins: gift.cost,
+        creatorSharePct: gift.creatorShare || creatorSharePct(),
+        creatorCoins: share,
+        marketRate: market.getRate?.(),
+      });
+    } catch { /* market is optional */ }
     try { await audioIdentity.giftXp?.(walletKey, gift.cost, share); } catch { /* */ }
 
     const recentGift = {
@@ -1257,10 +1367,220 @@ function registerLiveStreams(app, io, deps) {
       cb?.({ ok: true });
     });
 
+    // ---- HP battle invites -------------------------------------------------
+    // The room this socket is currently hosting (a creator hosts at most one).
+    async function myHostedRoom() {
+      for (const r of await store.listActive()) {
+        if (r.status === 'live' && isHostSocket(r, socket)) return r;
+      }
+      return null;
+    }
+
+    // List other live rooms a host can challenge to an HP battle.
+    on('live:hp-list', async (_payload, cb) => {
+      const mine = await myHostedRoom();
+      const rooms = await store.listActive();
+      const out = [];
+      for (const r of rooms) {
+        if (r.status !== 'live') continue;
+        if (mine && r.id === mine.id) continue;
+        if (mine && r.creatorId === mine.creatorId) continue;
+        if (r.battleId) continue;                       // already battling
+        out.push({
+          id: r.id,
+          handle: r.handle,
+          title: r.title,
+          viewerCount: await store.viewerCount(r.id),
+        });
+      }
+      cb?.({ ok: true, lives: out });
+    });
+
+    on('live:hp-invite', async (payload, cb) => {
+      const mine = await myHostedRoom();
+      if (!mine) { cb?.({ ok: false, error: 'Start your live first' }); return; }
+      const target = await store.getRoom(String(payload?.targetLiveId || ''));
+      if (!target || target.status !== 'live') { cb?.({ ok: false, error: 'That live is offline' }); return; }
+      if (target.id === mine.id || target.creatorId === mine.creatorId) {
+        cb?.({ ok: false, error: 'Cannot battle yourself' }); return;
+      }
+      if (mine.battleId || target.battleId) { cb?.({ ok: false, error: 'Already in a battle' }); return; }
+      if (!target.hostSocketId) { cb?.({ ok: false, error: 'Opponent host is not reachable' }); return; }
+      io.to(target.hostSocketId).emit('live:hp-invite', {
+        fromLiveId: mine.id,
+        handle: mine.handle,
+        displayName: mine.displayName,
+        avatarUrl: mine.avatarUrl,
+        targetLiveId: target.id,
+        at: nowMs(),
+      });
+      audit?.('live_hp_invite', { fromLiveId: mine.id, targetLiveId: target.id });
+      cb?.({ ok: true });
+    });
+
+    on('live:hp-accept', async (payload, cb) => {
+      const mine = await myHostedRoom();
+      if (!mine) { cb?.({ ok: false, error: 'Start your live first' }); return; }
+      const fromLiveId = String(payload?.fromLiveId || '');
+      const from = await store.getRoom(fromLiveId);
+      if (!from || from.status !== 'live') { cb?.({ ok: false, error: 'Inviter is no longer live' }); return; }
+      const result = await startBattle(fromLiveId, mine.id);
+      if (!result.ok) { cb?.(result); return; }
+      if (from.hostSocketId) {
+        io.to(from.hostSocketId).emit('live:hp-accepted', { battle: result.battle, byLiveId: mine.id });
+      }
+      cb?.(result);
+    });
+
+    on('live:hp-decline', async (payload, cb) => {
+      const mine = await myHostedRoom();
+      const fromLiveId = String(payload?.fromLiveId || '');
+      const from = await store.getRoom(fromLiveId);
+      if (from?.hostSocketId) {
+        io.to(from.hostSocketId).emit('live:hp-declined', {
+          fromLiveId,
+          byLiveId: mine?.id || null,
+          handle: mine?.handle || null,
+        });
+      }
+      cb?.({ ok: true });
+    });
+
+    // Both hosts must ask to rematch within REMATCH_WINDOW_MS to restart.
+    on('live:battle-rematch', async (payload, cb) => {
+      const mine = await myHostedRoom();
+      if (!mine) { cb?.({ ok: false, error: 'Start your live first' }); return; }
+
+      // Resolve the opponent: prefer battleId, else explicit opponentLiveId.
+      let opponentLiveId = String(payload?.opponentLiveId || '');
+      let key = String(payload?.battleId || '');
+      if (!opponentLiveId && key) {
+        const battle = await store.getBlob(`battle:${key}`);
+        if (battle) opponentLiveId = battle.liveA === mine.id ? battle.liveB : battle.liveA;
+      }
+      if (!opponentLiveId) { cb?.({ ok: false, error: 'No opponent to rematch' }); return; }
+      if (!key) key = [mine.id, opponentLiveId].sort().join(':');
+
+      const opponent = await store.getRoom(opponentLiveId);
+      if (!opponent || opponent.status !== 'live') { cb?.({ ok: false, error: 'Opponent is no longer live' }); return; }
+      if (mine.battleId || opponent.battleId) { cb?.({ ok: false, error: 'Already in a battle' }); return; }
+
+      const now = nowMs();
+      const asks = rematchAsks.get(key) || {};
+      // Drop stale asks outside the window.
+      for (const k of Object.keys(asks)) if (now - asks[k] > REMATCH_WINDOW_MS) delete asks[k];
+      asks[mine.id] = now;
+      rematchAsks.set(key, asks);
+
+      const bothAsked = asks[mine.id] && asks[opponentLiveId]
+        && Math.abs(asks[mine.id] - asks[opponentLiveId]) <= REMATCH_WINDOW_MS;
+
+      if (bothAsked) {
+        rematchAsks.delete(key);
+        const result = await startBattle(mine.id, opponentLiveId);
+        if (!result.ok) { cb?.(result); return; }
+        const payloadOut = { battle: result.battle, rematch: true };
+        io.to(`live:${mine.id}`).emit('live:battle:start', payloadOut);
+        io.to(`live:${opponentLiveId}`).emit('live:battle:start', payloadOut);
+        cb?.(result);
+        return;
+      }
+
+      // Notify the opponent host that a rematch was requested.
+      if (opponent.hostSocketId) {
+        io.to(opponent.hostSocketId).emit('live:battle-rematch', {
+          fromLiveId: mine.id, handle: mine.handle, windowMs: REMATCH_WINDOW_MS, at: now,
+        });
+      }
+      cb?.({ ok: true, pending: true, windowMs: REMATCH_WINDOW_MS });
+    });
+
+    // ---- co-live guest (mutual-follow gated) -------------------------------
+    on('live:join-request', async (payload, cb) => {
+      const room = await roomOf(payload);
+      if (!room || room.status !== 'live') { cb?.({ ok: false, error: 'Live is offline' }); return; }
+      if (room.guestSocketId) { cb?.({ ok: false, error: 'A guest is already on stage' }); return; }
+      if (isHostSocket(room, socket)) { cb?.({ ok: false, error: 'You are the host' }); return; }
+
+      const profile = (await store.getViewer(room.id, socket.id)) || viewerProfile(socket);
+      const viewerKey = profile.key ? `audio:${profile.key}` : null;
+      if (!viewerKey) { cb?.({ ok: false, error: 'Sign in to request co-live', needAuth: true }); return; }
+
+      // Mutual follow between the viewer and the host creator is required.
+      if (socialFollow?.isMutual) {
+        const hostKey = socialFollow.makeKey
+          ? socialFollow.makeKey('creator', room.creatorId)
+          : `creator:${room.creatorId}`;
+        if (!socialFollow.isMutual(viewerKey, hostKey)) {
+          cb?.({ ok: false, error: 'You and the host must follow each other to join' });
+          return;
+        }
+      }
+
+      if (room.hostSocketId) {
+        io.to(room.hostSocketId).emit('live:join-request', {
+          liveId: room.id,
+          socketId: socket.id,
+          username: profile.username,
+          avatarUrl: profile.avatarUrl,
+          nameColor: profile.nameColor,
+          key: profile.key,
+          at: nowMs(),
+        });
+      }
+      cb?.({ ok: true, pending: true });
+    });
+
+    on('live:join-accept', async (payload, cb) => {
+      const room = await roomOf(payload);
+      if (!room) { cb?.({ ok: false, error: 'Live offline' }); return; }
+      if (!requireHost(room, cb)) return;
+      const guestSocketId = String(payload?.socketId || '');
+      if (!guestSocketId) { cb?.({ ok: false, error: 'guest socketId required' }); return; }
+      const guest = await store.getViewer(room.id, guestSocketId);
+      await store.updateRoom(room.id, { guestSocketId });
+      io.to(guestSocketId).emit('live:join-accepted', { liveId: room.id });
+      io.to(`live:${room.id}`).emit('live:guest-joined', {
+        liveId: room.id,
+        socketId: guestSocketId,
+        username: guest?.username || 'Guest',
+        avatarUrl: guest?.avatarUrl || null,
+        nameColor: guest?.nameColor || null,
+      });
+      audit?.('live_guest_joined', { liveId: room.id, guestSocketId });
+      cb?.({ ok: true });
+    });
+
+    on('live:join-decline', async (payload, cb) => {
+      const room = await roomOf(payload);
+      if (!room) { cb?.({ ok: false, error: 'Live offline' }); return; }
+      if (!requireHost(room, cb)) return;
+      const guestSocketId = String(payload?.socketId || '');
+      if (guestSocketId) io.to(guestSocketId).emit('live:join-declined', { liveId: room.id });
+      cb?.({ ok: true });
+    });
+
+    on('live:guest-leave', async (payload, cb) => {
+      const room = await roomOf(payload);
+      if (!room) { cb?.({ ok: false, error: 'Live offline' }); return; }
+      const guestSocketId = room.guestSocketId;
+      // The guest themselves, or the host, can end the co-live.
+      if (socket.id !== guestSocketId && !isHostSocket(room, socket)) {
+        cb?.({ ok: false, error: 'Not allowed' }); return;
+      }
+      if (guestSocketId) {
+        await store.updateRoom(room.id, { guestSocketId: null });
+        io.to(`live:${room.id}`).emit('live:guest-left', { liveId: room.id, socketId: guestSocketId });
+        audit?.('live_guest_left', { liveId: room.id, guestSocketId });
+      }
+      cb?.({ ok: true });
+    });
+
     // ---- media token -------------------------------------------------------
     on('live:token', async (payload, cb) => {
       const room = await roomOf(payload);
       const asHost = !!payload?.asHost;
+      const asGuest = !!payload?.asGuest;
       if (!room || room.status !== 'live') {
         const err = { ok: false, error: 'Live offline' };
         if (cb) cb(err); else socket.emit('live:error', err);
@@ -1273,6 +1593,13 @@ function registerLiveStreams(app, io, deps) {
         if (cb) cb(err); else socket.emit('live:error', err);
         return;
       }
+      // A co-live guest may publish only after the host accepted them.
+      const isGuestPublisher = asGuest && room.guestSocketId === socket.id;
+      if (asGuest && !isGuestPublisher) {
+        const err = { ok: false, error: 'Ask the host to bring you on stage first', retryable: true };
+        if (cb) cb(err); else socket.emit('live:error', err);
+        return;
+      }
       if (asHost) {
         await store.updateRoom(room.id, { hostSocketId: socket.id, hostInstance: INSTANCE });
         const l = localOf(room.id);
@@ -1280,6 +1607,7 @@ function registerLiveStreams(app, io, deps) {
         clearTimeout(l.hostGraceTimer);
         l.hostGraceTimer = null;
       }
+      const canPublish = asHost || isGuestPublisher;
       const u = users?.get?.(socket.id);
       const tokenPayload = await livekitRooms.mintParticipantToken({
         socketId: socket.id,
@@ -1287,7 +1615,7 @@ function registerLiveStreams(app, io, deps) {
         nickname: u?.audioIdentity?.username || u?.nickname || room.handle,
         country: u?.country || '',
         isCreator: asHost,
-        canPublish: asHost,
+        canPublish,
         canSubscribe: true,
         roomAdmin: asHost,
       });
@@ -1306,6 +1634,13 @@ function registerLiveStreams(app, io, deps) {
 
           const room = await store.getRoom(liveId);
           if (!room || room.status !== 'live') continue;
+
+          // A co-live guest dropping off ends the co-live cleanly.
+          if (room.guestSocketId === socket.id) {
+            await store.updateRoom(liveId, { guestSocketId: null });
+            io.to(`live:${liveId}`).emit('live:guest-left', { liveId, socketId: socket.id });
+          }
+
           if (room.hostSocketId !== socket.id) continue;
 
           io.to(`live:${liveId}`).emit('live:host-reconnecting', { liveId, graceMs: HOST_GRACE_MS });
@@ -1344,6 +1679,9 @@ function registerLiveStreams(app, io, deps) {
     canCreatorGoLive,
     hostStats,
     viewerList,
+    notifyGoLive,
+    giftCutBreakdown,
+    creatorSharePct,
     store,
     shutdown,
   };

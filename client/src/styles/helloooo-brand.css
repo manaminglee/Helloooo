@@ -109,3 +109,71 @@
   font-size: 0.62rem;
   letter-spacing: 0.14em;
 }
+
+/* Circular Helloooo loader */
+.helloooo-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  padding: 1.25rem;
+  text-align: center;
+  color: #fff;
+}
+.helloooo-loader--transparent {
+  background: transparent;
+}
+.helloooo-loader__ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.helloooo-loader__svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  animation: helloooo-spin 8s linear infinite;
+}
+.helloooo-loader__path-text {
+  fill: rgba(255, 255, 255, 0.72);
+  font-size: 7.2px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.helloooo-loader__core {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 58%;
+  height: 58%;
+  border-radius: 999px;
+  background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.14), rgba(8,10,18,0.92) 70%);
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.15), 0 12px 40px rgba(0,0,0,0.35);
+}
+.helloooo-loader__core .helloooo-brand {
+  font-size: clamp(0.85rem, 3.2vw, 1.05rem);
+}
+.helloooo-loader__label {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.helloooo-loader__hint {
+  margin: 0;
+  font-size: 0.72rem;
+  color: rgba(255,255,255,0.55);
+  max-width: 16rem;
+}
+@keyframes helloooo-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .helloooo-loader__svg { animation: none; }
+}
+

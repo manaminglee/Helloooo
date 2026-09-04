@@ -462,8 +462,9 @@ function registerAudioIdentity(app, io, deps) {
     if (isWeakPin(pinStr)) return { ok: false, error: 'Pick a less obvious PIN — avoid 1234, 1111, etc.' };
     const key = name.toLowerCase();
 
+    // PIN is checked with username on login — do not require globally unique PINs
+    // (only ~9k non-weak 4-digit codes exist; uniqueness blocks new signups).
     if (identities.has(key)) return { ok: false, error: 'Username taken — try another.' };
-    if (isPinTaken(pinStr)) return { ok: false, error: 'That PIN is already in use — pick a different 4-digit PIN.' };
     if (supabase) {
       const { data: existing } = await supabase
         .from('mm_audio_identities')
@@ -658,13 +659,14 @@ function registerAudioIdentity(app, io, deps) {
         userAgent: req.headers['user-agent'],
       });
       if (!result.ok) {
-        // 401 tells the client to drop its stored token and ask for the PIN.
-        return res.status(401).json({ ok: false, error: result.error, reason: result.reason });
+        // Soft miss — stale/expired device tokens are normal after logout or
+        // server restart. Avoid noisy Safari/iOS console 401s on every load.
+        return res.json({ ok: false, error: result.error, reason: result.reason });
       }
       const rec = identities.get(result.usernameKey);
       if (!rec) {
         await deviceTrust.revoke(result.usernameKey, result.deviceId);
-        return res.status(401).json({ ok: false, error: 'Sign in again.' });
+        return res.json({ ok: false, error: 'Sign in again.' });
       }
       const token = createSession(result.usernameKey, clientIp(req));
       res.json({

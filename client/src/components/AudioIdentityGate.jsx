@@ -8,6 +8,8 @@ import {
   isGradientNameColor,
   resolveNameStyle,
 } from '../utils/audioNameStyle';
+import { openRazorpayCoinCheckout } from '../utils/paymentCheckout';
+import { VirtualMarketRateChip } from './VirtualMarketPanel';
 
 function UsernameMirrorPreview({ username, nameColor }) {
   const display = username.trim() || 'YourName';
@@ -371,6 +373,18 @@ export function AudioCoinShop({ open, onClose, identity, onBalanceUpdate }) {
         } else setMsg(v.error || 'Test purchase failed');
         return;
       }
+      if (data.provider === 'razorpay' && data.orderId) {
+        try {
+          const v = await openRazorpayCoinCheckout(data);
+          if (v?.ok) {
+            setMsg(`+${pack.coins} Nuts added! Level ${v.identity?.level || '—'}`);
+            onBalanceUpdate?.(v.identity);
+          } else setMsg(v?.error || 'Payment verification failed');
+        } catch (e) {
+          if (e?.message !== 'Payment cancelled') setMsg(e.message || 'Payment failed');
+        }
+        return;
+      }
       if (data.checkoutUrl) {
         window.location.href = data.checkoutUrl;
       }
@@ -387,6 +401,8 @@ export function AudioCoinShop({ open, onClose, identity, onBalanceUpdate }) {
       <div className="mm-modal-surface max-w-sm" onClick={(e) => e.stopPropagation()}>
         <h3 className="mm-audio-coin-shop__title">Recharge Nuts</h3>
         <p className="mm-audio-coin-shop__bal">Balance: <strong>{identity?.coins ?? 0}</strong> Nuts · Lv {identity?.level ?? 0}</p>
+        <VirtualMarketRateChip className="mm-audio-coin-shop__rate" />
+        <p className="text-[9px] text-white/35 mt-1 mb-1">Prices below are package INR. Platform rate is for creator economy accounting only.</p>
         <div className="space-y-2 mt-3">
           {packages.map((p) => (
             <button

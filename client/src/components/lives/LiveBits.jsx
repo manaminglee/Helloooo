@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { MmIcon } from '../icons/MmIcon';
 import { GiftArt } from '../icons/GiftArt';
 import GiftAnimation3D from './GiftAnimation3D';
+import { HellooooLoader } from '../HellooooBrand';
 
 /* Small shared pieces of the live overlay. Everything here is memoised —
    these sit next to the video element and must not re-render on every tick. */
@@ -253,16 +254,19 @@ export function StateOverlay({ state, error }) {
   if (state === 'loading') {
     return (
       <div className="live-state live-state--transparent">
-        <div className="live-state__spinner" />
+        <HellooooLoader transparent label="" size={120} />
       </div>
     );
   }
   if (state === 'connecting') {
     return (
       <div className="live-state live-state--transparent">
-        <div className="live-state__spinner" />
-        <p className="live-state__label">Connecting to live…</p>
-        <p className="live-state__hint">Setting up video and audio</p>
+        <HellooooLoader
+          transparent
+          size={140}
+          label="Connecting…"
+          hint="Waiting for clear video & audio"
+        />
       </div>
     );
   }

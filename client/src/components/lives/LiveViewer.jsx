@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AudioIdentityGate } from '../AudioIdentityGate';
+import { HellooooLoader } from '../HellooooBrand';
 import { useLivesList } from '../../hooks/useLiveStream';
 import { isMobileLiveDevice } from '../../utils/liveDevice';
 import { getCreatorSessionToken } from '../../utils/creatorAuth';
@@ -82,10 +83,10 @@ export default function LiveViewer({ socket, identityHook, initialLiveId = null,
   if ((hydrating || creatorLinking) && !creatorLinkFailed && !isSignedIn) {
     return (
       <div className="live-desktop-block">
-        <div className="live-state__spinner" />
-        <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14 }}>
-          {creatorSession ? 'Signing in with your creator account…' : 'Restoring identity…'}
-        </p>
+        <HellooooLoader
+          size={132}
+          label={creatorSession ? 'Signing in…' : 'Restoring identity…'}
+        />
       </div>
     );
   }
@@ -104,8 +105,7 @@ export default function LiveViewer({ socket, identityHook, initialLiveId = null,
   if (loading && !ordered.length) {
     return (
       <div className="live-desktop-block">
-        <div className="live-state__spinner" />
-        <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14 }}>Loading lives…</p>
+        <HellooooLoader size={132} label="Loading lives…" />
       </div>
     );
   }
@@ -122,8 +122,26 @@ export default function LiveViewer({ socket, identityHook, initialLiveId = null,
 
   const current = ordered[Math.min(index, ordered.length - 1)];
 
+  const switchToLiveId = useCallback((liveId) => {
+    if (!liveId) return;
+    const i = ordered.findIndex((l) => l.id === liveId);
+    if (i >= 0) setIndex(i);
+  }, [ordered]);
+
+  // Tap right half → next live, left half → previous (complements swipe)
+  const onVideoTap = useCallback((e) => {
+    if (e.target?.closest?.('[data-interactive], button, input, .live-sheet, .live-composer')) return;
+    const x = e.clientX ?? e.changedTouches?.[0]?.clientX;
+    if (x == null) return;
+    const mid = window.innerWidth / 2;
+    setIndex((i) => {
+      if (x > mid) return Math.min(i + 1, ordered.length - 1);
+      return Math.max(i - 1, 0);
+    });
+  }, [ordered.length]);
+
   return (
-    <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+    <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onClick={onVideoTap}>
       <LiveRoom
         key={current.id}
         socket={socket}
@@ -132,6 +150,7 @@ export default function LiveViewer({ socket, identityHook, initialLiveId = null,
         identity={identity}
         identityHook={identityHook}
         onExit={onExit}
+        onSwitchBattleLive={switchToLiveId}
       />
     </div>
   );

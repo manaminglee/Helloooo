@@ -16,6 +16,7 @@ import { API_BASE } from './config/apiBase';
 import { lazyRetry, clearChunkReloadFlag } from './utils/lazyRetry';
 import { applyPageSeo, applyPrivateSessionSeo } from './utils/seo';
 import { useAudioIdentity } from './hooks/useAudioIdentity';
+import { HellooooLoader } from './components/HellooooBrand';
 // Lazy load off-screen and secondary modules for extreme performance
 const AdminDashboard = lazyRetry(() => import('./components/AdminDashboard'));
 const AgencyDashboard = lazyRetry(() => import('./components/AgencyDashboard'));
@@ -35,7 +36,7 @@ const CreatorPublicProfile = lazyRetry(() =>
 
 const LoadingFallback = () => (
   <div className="flex items-center justify-center min-h-[50vh] w-full">
-    <div className="w-12 h-12 border-4 border-violet-500/15 border-t-violet-400 rounded-full animate-spin shadow-[0_0_24px_rgba(167,139,250,0.25)]" />
+    <HellooooLoader size={140} label="Helloooo" hint="Loading..." transparent />
   </div>
 );
 

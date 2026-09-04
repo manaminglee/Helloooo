@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Room, RoomEvent, Track, createLocalTracks, ConnectionState } from 'livekit-client';
+import { drawFaceProcessedFrame, loadFaceLandmarker } from '../utils/faceBlurEngine';
 
 const CLARITY_TIMEOUT_MS = 20_000;
 
 /**
  * Subscribe to (or publish) an in-app live via LiveKit.
  * Exposes media readiness for connecting UI + auto-end after clarity timeout.
+ * Hosts can enable MediaPipe beauty on the published camera track.
+ *
+ * Connection effect deps are intentionally narrow — including callback
+ * identities previously caused connect↔disconnect loops on iOS Safari.
  */
 export function useLiveKitLive({
   enabled = false,
   socket,
   liveId,
   asHost = false,
+  asGuest = false,
   videoElRef = null,
   mirrorLocal = false,
+  beautyEnabled = true,
   onClarityTimeout = null,
 }) {
   const [connected, setConnected] = useState(false);
@@ -29,6 +36,17 @@ export function useLiveKitLive({
   const remoteAudioElsRef = useRef([]);
   const clarityTimerRef = useRef(null);
   const hasMediaRef = useRef(false);
+  const beautyRafRef = useRef(0);
+  const beautyCleanupRef = useRef(null);
+
+  const beautyEnabledRef = useRef(beautyEnabled);
+  beautyEnabledRef.current = beautyEnabled;
+  const mirrorLocalRef = useRef(mirrorLocal);
+  mirrorLocalRef.current = mirrorLocal;
+  const onClarityTimeoutRef = useRef(onClarityTimeout);
+  onClarityTimeoutRef.current = onClarityTimeout;
+  const videoElRefStable = useRef(videoElRef);
+  videoElRefStable.current = videoElRef;
 
   const clearRemoteAudio = useCallback(() => {
     remoteAudioElsRef.current.forEach((el) => {
@@ -41,11 +59,19 @@ export function useLiveKitLive({
     remoteAudioElsRef.current = [];
   }, []);
 
+  const stopBeautyPipeline = useCallback(() => {
+    if (beautyRafRef.current) cancelAnimationFrame(beautyRafRef.current);
+    beautyRafRef.current = 0;
+    try { beautyCleanupRef.current?.(); } catch { /* */ }
+    beautyCleanupRef.current = null;
+  }, []);
+
   const disconnect = useCallback(async () => {
     if (clarityTimerRef.current) {
       clearTimeout(clarityTimerRef.current);
       clarityTimerRef.current = null;
     }
+    stopBeautyPipeline();
     hasMediaRef.current = false;
     try {
       localTracksRef.current.forEach((t) => {
@@ -59,7 +85,7 @@ export function useLiveKitLive({
     setConnected(false);
     setHasMedia(false);
     setConnecting(false);
-  }, [clearRemoteAudio]);
+  }, [clearRemoteAudio, stopBeautyPipeline]);
 
   const markMedia = useCallback(() => {
     hasMediaRef.current = true;
@@ -78,13 +104,20 @@ export function useLiveKitLive({
       if (hasMediaRef.current) return;
       setError('Connection too weak — ending live');
       setConnecting(false);
-      onClarityTimeout?.();
+      onClarityTimeoutRef.current?.();
     }, CLARITY_TIMEOUT_MS);
-  }, [onClarityTimeout]);
+  }, []);
+
+  const disconnectRef = useRef(disconnect);
+  disconnectRef.current = disconnect;
+  const markMediaRef = useRef(markMedia);
+  markMediaRef.current = markMedia;
+  const startClarityWatchRef = useRef(startClarityWatch);
+  startClarityWatchRef.current = startClarityWatch;
 
   useEffect(() => {
     if (!enabled || !socket || !liveId) {
-      disconnect();
+      void disconnectRef.current();
       return undefined;
     }
     let cancelled = false;
@@ -96,14 +129,9 @@ export function useLiveKitLive({
         setHasMedia(false);
         hasMediaRef.current = false;
 
-        /* On reconnect the socket re-sends creator:auth, and that ack can land
-           AFTER our first token request — the server marks that rejection
-           `retryable` rather than treating it as a real permission failure, so
-           a host coming back on a flaky network reclaims their own stream
-           instead of having the live torn down. */
         const requestToken = () => new Promise((resolve, reject) => {
           const t = setTimeout(() => reject(new Error('Live token timeout')), 10000);
-          socket.emit('live:token', { liveId, asHost }, (payload) => {
+          socket.emit('live:token', { liveId, asHost, asGuest }, (payload) => {
             clearTimeout(t);
             if (payload?.ok) resolve(payload);
             else {
@@ -130,25 +158,28 @@ export function useLiveKitLive({
         const room = new Room({
           adaptiveStream: true,
           dynacast: true,
-          // Prefer higher clarity when available
           videoCaptureDefaults: asHost
-            ? { facingMode: 'user', resolution: { width: 720, height: 1280, frameRate: 30 } }
+            ? { facingMode: 'user', resolution: { width: 720, height: 1280, frameRate: 24 } }
             : undefined,
         });
         roomRef.current = room;
 
+        const mark = () => markMediaRef.current();
+        const watch = () => startClarityWatchRef.current();
+        const vRef = videoElRefStable.current;
+        const mirror = mirrorLocalRef.current;
+
         const attachRemoteVideo = (track) => {
-          const el = videoElRef?.current;
+          const el = vRef?.current;
           if (!el) return;
           track.attach(el);
           el.playsInline = true;
           el.setAttribute('playsinline', 'true');
           el.setAttribute('webkit-playsinline', 'true');
-          // Keep video element muted for autoplay; audio comes from dedicated elements
           el.muted = true;
           el.autoplay = true;
           void el.play?.().catch(() => {});
-          markMedia();
+          mark();
         };
 
         const attachRemoteAudio = (track) => {
@@ -157,20 +188,14 @@ export function useLiveKitLive({
           audio.autoplay = true;
           audio.playsInline = true;
           audio.setAttribute('playsinline', 'true');
+          audio.setAttribute('webkit-playsinline', 'true');
           audio.muted = false;
           audio.volume = 1;
-          audio.style.position = 'fixed';
-          audio.style.width = '1px';
-          audio.style.height = '1px';
-          audio.style.opacity = '0';
-          audio.style.pointerEvents = 'none';
+          audio.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none';
           document.body.appendChild(audio);
           remoteAudioElsRef.current.push(audio);
-          const tryPlay = () => {
-            void audio.play?.().catch(() => {});
-          };
+          const tryPlay = () => { void audio.play?.().catch(() => {}); };
           tryPlay();
-          // Unlock on first user gesture (iOS/Android autoplay policy)
           const unlock = () => {
             tryPlay();
             window.removeEventListener('touchstart', unlock);
@@ -178,7 +203,7 @@ export function useLiveKitLive({
           };
           window.addEventListener('touchstart', unlock, { once: true, passive: true });
           window.addEventListener('click', unlock, { once: true });
-          markMedia();
+          mark();
         };
 
         const attachRemote = (track) => {
@@ -195,22 +220,17 @@ export function useLiveKitLive({
               if (pub.track && !pub.isMuted) any = true;
             });
           });
-          if (any) {
-            markMedia();
-          } else {
+          if (any) mark();
+          else {
             hasMediaRef.current = false;
             setHasMedia(false);
-            startClarityWatch();
+            watch();
           }
         };
 
-        room.on(RoomEvent.TrackSubscribed, (track) => {
-          attachRemote(track);
-        });
+        room.on(RoomEvent.TrackSubscribed, (track) => attachRemote(track));
         room.on(RoomEvent.TrackUnsubscribed, (track) => {
-          track.detach().forEach((el) => {
-            try { el.remove(); } catch { /* */ }
-          });
+          track.detach().forEach((el) => { try { el.remove(); } catch { /* */ } });
           recheckRemoteMedia();
         });
         room.on(RoomEvent.TrackMuted, () => recheckRemoteMedia());
@@ -219,26 +239,33 @@ export function useLiveKitLive({
           recheckRemoteMedia();
         });
         room.on(RoomEvent.ConnectionStateChanged, (state) => {
-          if (state === ConnectionState.Connected) setConnected(true);
-          if (state === ConnectionState.Disconnected && !cancelled) {
-            setConnected(false);
-            hasMediaRef.current = false;
-            setHasMedia(false);
-            startClarityWatch();
+          if (cancelled) return;
+          if (state === ConnectionState.Connected) {
+            setConnected(true);
+            return;
           }
+          if (state === ConnectionState.Reconnecting) {
+            setConnected(false);
+            setConnecting(true);
+            return;
+          }
+          // Soft disconnect — LiveKit may recover. Do not remount this effect.
+          if (state === ConnectionState.Disconnected) setConnected(false);
         });
 
-        await room.connect(tokenRes.url, tokenRes.token, {
-          autoSubscribe: true,
-        });
+        await room.connect(tokenRes.url, tokenRes.token, { autoSubscribe: true });
         if (cancelled) {
           await room.disconnect();
           return;
         }
         setConnected(true);
-        startClarityWatch();
+        watch();
 
-        if (asHost) {
+        if (asHost || asGuest) {
+          // Let Safari finish releasing the studio preview camera handle.
+          await new Promise((r) => setTimeout(r, 150));
+          if (cancelled) return;
+
           const tracks = await createLocalTracks({
             audio: {
               echoCancellation: true,
@@ -247,32 +274,103 @@ export function useLiveKitLive({
             },
             video: {
               facingMode: facingRef.current,
-              resolution: { width: 720, height: 1280, frameRate: 30 },
+              resolution: { width: 720, height: 1280, frameRate: 24 },
             },
           });
           if (cancelled) {
             tracks.forEach((t) => t.stop());
             return;
           }
-          localTracksRef.current = tracks;
-          for (const track of tracks) {
-            const isVideo = track.kind === Track.Kind.Video || track.kind === 'video';
-            await room.localParticipant.publishTrack(track, {
-              source: isVideo ? Track.Source.Camera : Track.Source.Microphone,
+
+          const audioTrack = tracks.find((t) => t.kind === Track.Kind.Audio || t.kind === 'audio');
+          const videoTrack = tracks.find((t) => t.kind === Track.Kind.Video || t.kind === 'video');
+          localTracksRef.current = tracks.filter(Boolean);
+
+          if (audioTrack) {
+            await room.localParticipant.publishTrack(audioTrack, { source: Track.Source.Microphone });
+          }
+
+          let publishVideo = videoTrack;
+          if (videoTrack && beautyEnabledRef.current) {
+            try {
+              const landmarker = await loadFaceLandmarker();
+              const rawMsTrack = videoTrack.mediaStreamTrack;
+              const hidden = document.createElement('video');
+              hidden.playsInline = true;
+              hidden.muted = true;
+              hidden.autoplay = true;
+              hidden.setAttribute('playsinline', '');
+              hidden.setAttribute('webkit-playsinline', 'true');
+              hidden.style.cssText = 'position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;left:-9999px';
+              document.body.appendChild(hidden);
+              hidden.srcObject = new MediaStream([rawMsTrack]);
+              await hidden.play().catch(() => {});
+
+              const canvas = document.createElement('canvas');
+              const blurCanvas = document.createElement('canvas');
+              const ctx = canvas.getContext('2d', { alpha: false });
+              const blurCtx = blurCanvas.getContext('2d', { alpha: false });
+              const outStream = canvas.captureStream(24);
+              const beautyMsTrack = outStream.getVideoTracks()[0];
+
+              const loop = () => {
+                if (hidden.readyState >= 2) {
+                  drawFaceProcessedFrame(
+                    ctx,
+                    blurCtx,
+                    hidden,
+                    landmarker,
+                    false,
+                    performance.now(),
+                    'beauty',
+                  );
+                }
+                beautyRafRef.current = requestAnimationFrame(loop);
+              };
+              beautyRafRef.current = requestAnimationFrame(loop);
+              beautyCleanupRef.current = () => {
+                cancelAnimationFrame(beautyRafRef.current);
+                beautyRafRef.current = 0;
+                try { hidden.srcObject = null; hidden.remove(); } catch { /* */ }
+                try { beautyMsTrack.stop(); } catch { /* */ }
+              };
+
+              await room.localParticipant.publishTrack(beautyMsTrack, {
+                source: Track.Source.Camera,
+                name: 'beauty-cam',
+              });
+              publishVideo = null;
+              if (vRef?.current) {
+                const el = vRef.current;
+                el.srcObject = outStream;
+                el.muted = true;
+                el.playsInline = true;
+                el.setAttribute('playsinline', 'true');
+                el.setAttribute('webkit-playsinline', 'true');
+                if (mirror && facingRef.current === 'user') el.style.transform = 'scaleX(-1)';
+                void el.play?.().catch(() => {});
+              }
+            } catch {
+              publishVideo = videoTrack;
+            }
+          }
+
+          if (publishVideo) {
+            await room.localParticipant.publishTrack(publishVideo, {
+              source: Track.Source.Camera,
             });
-            if (isVideo && videoElRef?.current) {
-              track.attach(videoElRef.current);
-              const el = videoElRef.current;
+            if (vRef?.current) {
+              publishVideo.attach(vRef.current);
+              const el = vRef.current;
               el.muted = true;
               el.playsInline = true;
               el.setAttribute('playsinline', 'true');
-              if (mirrorLocal) el.style.transform = 'scaleX(-1)';
+              el.setAttribute('webkit-playsinline', 'true');
+              if (mirror && facingRef.current === 'user') el.style.transform = 'scaleX(-1)';
               void el.play?.().catch(() => {});
-              markMedia();
             }
           }
-          // Host needs clear cam+mic; if publish succeeded, media is ready
-          if (tracks.length) markMedia();
+          mark();
         } else {
           room.remoteParticipants.forEach((p) => {
             p.trackPublications.forEach((pub) => {
@@ -285,17 +383,16 @@ export function useLiveKitLive({
           setError(e.message || 'Live connect failed');
           setConnecting(false);
         }
-        await disconnect();
+        await disconnectRef.current();
       }
     })();
 
     return () => {
       cancelled = true;
-      disconnect();
+      void disconnectRef.current();
     };
-  }, [enabled, socket, liveId, asHost, videoElRef, mirrorLocal, disconnect, markMedia, startClarityWatch]);
-
-  /* ---- host media controls -------------------------------------------- */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, socket, liveId, asHost, asGuest]);
 
   const toggleMic = useCallback(async () => {
     const room = roomRef.current;
@@ -323,10 +420,6 @@ export function useLiveKitLive({
     }
   }, [camEnabled]);
 
-  /**
-   * Flip front/back camera by republishing a new track. The old track is
-   * unpublished and stopped first so Android does not hold two camera handles.
-   */
   const switchCamera = useCallback(async () => {
     const room = roomRef.current;
     if (!room?.localParticipant) return;
@@ -337,7 +430,7 @@ export function useLiveKitLive({
       );
       const [newTrack] = await createLocalTracks({
         audio: false,
-        video: { facingMode: next, resolution: { width: 720, height: 1280, frameRate: 30 } },
+        video: { facingMode: next, resolution: { width: 720, height: 1280, frameRate: 24 } },
       });
       if (!newTrack) return;
       if (oldTrack) {
@@ -347,21 +440,22 @@ export function useLiveKitLive({
       }
       await room.localParticipant.publishTrack(newTrack, { source: Track.Source.Camera });
       localTracksRef.current.push(newTrack);
-      const el = videoElRef?.current;
+      const el = videoElRefStable.current?.current;
       if (el) {
         newTrack.attach(el);
         el.muted = true;
         el.playsInline = true;
-        // Only the selfie camera is mirrored.
-        el.style.transform = next === 'user' && mirrorLocal ? 'scaleX(-1)' : '';
+        el.setAttribute('playsinline', 'true');
+        el.setAttribute('webkit-playsinline', 'true');
+        el.style.transform = next === 'user' && mirrorLocalRef.current ? 'scaleX(-1)' : '';
         void el.play?.().catch(() => {});
       }
       facingRef.current = next;
       setFacingMode(next);
     } catch {
-      /* keep the existing camera on failure */
+      /* keep existing camera */
     }
-  }, [videoElRef, mirrorLocal]);
+  }, []);
 
   return {
     connected,

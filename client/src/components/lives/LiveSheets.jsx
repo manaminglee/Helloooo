@@ -87,6 +87,7 @@ export function LiveUserSheet({
 }) {
   if (!user) return null;
   const act = (fn, ...args) => () => { fn?.(...args); onClose?.(); };
+  const canMod = !!(isModerator || isHost);
 
   return (
     <Sheet open title={`@${user.username}`} onClose={onClose}>
@@ -95,7 +96,8 @@ export function LiveUserSheet({
           <span><MmIcon name="at" size={16} /></span> Mention {user.username}
         </button>
 
-        {isModerator && user.commentId && (
+        {/* Regular viewers: mention only. Host/mod get moderation tools. */}
+        {canMod && user.commentId && (
           <>
             <button type="button" className="live-menu__item" onClick={act(onPin, user.commentId)}>
               <span><MmIcon name="pin" size={17} /></span> Pin this comment
@@ -106,7 +108,7 @@ export function LiveUserSheet({
           </>
         )}
 
-        {isModerator && user.socketId && (
+        {canMod && user.socketId && (
           <>
             <button type="button" className="live-menu__item live-menu__item--warn" onClick={act(onMute, user.socketId, user.muted)}>
               <span><MmIcon name={user.muted ? 'volume' : 'volumeOff'} size={17} /></span> {user.muted ? 'Unmute user' : 'Mute user'}
@@ -126,9 +128,11 @@ export function LiveUserSheet({
           </button>
         )}
 
-        <button type="button" className="live-menu__item live-menu__item--danger" onClick={act(onReport, user)}>
-          <span><MmIcon name="flag" size={17} /></span> Report
-        </button>
+        {canMod && (
+          <button type="button" className="live-menu__item live-menu__item--danger" onClick={act(onReport, user)}>
+            <span><MmIcon name="flag" size={17} /></span> Report
+          </button>
+        )}
       </div>
     </Sheet>
   );

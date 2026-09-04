@@ -75,11 +75,12 @@ async function stripeCheckoutSession({ product, ip, successUrl, cancelUrl }) {
   return { checkoutUrl: data.url, sessionId: data.id };
 }
 
-async function razorpayCreateOrder({ product, ip }) {
+async function razorpayCreateOrder({ product, ip, amountInrPaise = null, notes = null }) {
   const keyId = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_KEY_SECRET;
-  const p = PRODUCTS[product];
-  if (!keyId || !keySecret || !p) throw new Error('Razorpay not configured');
+  const p = product ? PRODUCTS[product] : null;
+  const amount = amountInrPaise != null ? amountInrPaise : p?.amountInr;
+  if (!keyId || !keySecret || amount == null) throw new Error('Razorpay not configured');
 
   const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
   const res = await fetch('https://api.razorpay.com/v1/orders', {
@@ -89,9 +90,9 @@ async function razorpayCreateOrder({ product, ip }) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      amount: p.amountInr,
+      amount,
       currency: 'INR',
-      notes: { product, ip },
+      notes: notes || { product: product || 'coins', ip },
     }),
   });
   const data = await res.json();
@@ -190,7 +191,7 @@ async function cashfreeVerifyOrder(orderId) {
 }
 
 function registerPayments(app, deps) {
-  const { persistence, blockedIps, io, users, audioIdentity } = deps;
+  const { persistence, blockedIps, io, users, audioIdentity, getMarket } = deps;
   const frontend = (process.env.FRONTEND_ORIGIN || 'http://localhost:5173').replace(/\/$/, '');
 
   async function fulfillCoinPackage(packageId, audioUsername, paymentMeta = {}) {
@@ -211,6 +212,22 @@ function registerPayments(app, deps) {
         orderId: paymentMeta.orderId || null,
         meta: paymentMeta,
       });
+    }
+    try {
+      const market = typeof getMarket === 'function' ? getMarket() : null;
+      market?.recordPurchase?.({
+        id: paymentMeta.paymentRef || undefined,
+        audioUsername: key,
+        packageId: pack.id,
+        coins: pack.coins,
+        currency: 'INR',
+        amountPaid: pack.priceInr,
+        provider: paymentMeta.provider || 'test',
+        providerTxId: paymentMeta.orderId || paymentMeta.paymentRef || null,
+        status: 'completed',
+      });
+    } catch (e) {
+      console.warn('[payments] market record failed:', e.message);
     }
     for (const [sid, user] of users.entries()) {
       if (String(user.audioIdentity?.username || '').toLowerCase() === key) {
@@ -339,7 +356,32 @@ function registerPayments(app, deps) {
         const order = await cashfreeCreateOrder({ packageId, ip, audioUsername, returnUrl });
         return res.json({ provider: 'cashfree', testMode, ...order });
       }
-      return res.status(503).json({ error: 'Coin checkout not configured — set CASHFREE_APP_ID or PAYMENT_TEST_MODE=true' });
+      if (provider === 'razorpay') {
+        const order = await razorpayCreateOrder({
+          product: null,
+          ip,
+          amountInrPaise: Math.round(Number(pack.priceInr) * 100),
+          notes: {
+            product: 'coins',
+            packageId: pack.id,
+            audioUsername,
+            ip,
+          },
+        });
+        return res.json({
+          provider: 'razorpay',
+          testMode,
+          packageId: pack.id,
+          coins: pack.coins,
+          audioUsername,
+          name: 'Helloooo',
+          description: `${pack.name} · ${pack.coins} Nuts`,
+          ...order,
+        });
+      }
+      return res.status(503).json({
+        error: 'Coin checkout not configured — set RAZORPAY_KEY_ID, CASHFREE_APP_ID, or PAYMENT_TEST_MODE=true',
+      });
     } catch (e) {
       res.status(500).json({ error: e.message || 'Order failed' });
     }
@@ -397,15 +439,45 @@ function registerPayments(app, deps) {
   });
 
   app.post('/api/payment/verify-razorpay', async (req, res) => {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, product } = req.body || {};
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      product,
+      packageId,
+      audioUsername,
+    } = req.body || {};
     if (!verifyRazorpaySignature(razorpay_order_id, razorpay_payment_id, razorpay_signature)) {
       return res.status(400).json({ ok: false, error: 'Invalid payment signature' });
     }
     // Idempotency: a consumed payment id can never be replayed for a second grant.
     const ref = `razorpay:${razorpay_payment_id}`;
     if (persistence.hasConsumedPayment?.(ref)) {
-      return res.json({ ok: true, alreadyProcessed: true, product: String(product || 'pro') });
+      return res.json({
+        ok: true,
+        alreadyProcessed: true,
+        product: String(product || (packageId ? 'coins' : 'pro')),
+      });
     }
+
+    // Nuts coin packs
+    if (packageId || product === 'coins') {
+      const result = await fulfillCoinPackage(String(packageId || ''), String(audioUsername || ''), {
+        paymentRef: ref,
+        provider: 'razorpay',
+        orderId: razorpay_order_id,
+      });
+      if (result.ok) {
+        await persistence.markPaymentConsumed?.(ref, {
+          provider: 'razorpay',
+          product: 'coins',
+          packageId,
+          audioUsername,
+        });
+      }
+      return res.json(result);
+    }
+
     const result = await fulfillPayment(String(product || 'pro'), clientIp(req));
     if (result.ok) await persistence.markPaymentConsumed?.(ref, { provider: 'razorpay', product: String(product || 'pro') });
     res.json(result);

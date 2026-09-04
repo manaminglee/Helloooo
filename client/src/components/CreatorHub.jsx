@@ -1,5 +1,6 @@
 import { getCreatorSessionToken } from '../utils/creatorAuth';
 import { NutsAmount } from './NutsSymbol';
+import VirtualMarketPanel from './VirtualMarketPanel';
 
 const ACTIONS = [
   {
@@ -118,6 +119,12 @@ export default function CreatorHub({
           </button>
         ))}
       </div>
+
+      <VirtualMarketPanel
+        mode="creator"
+        username={creator?.handle_name || 'creator'}
+        className="mm-creator-hub__market"
+      />
     </section>
   );
 }

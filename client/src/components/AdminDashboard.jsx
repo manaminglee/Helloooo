@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { API_BASE } from '../config/apiBase';
+import VirtualMarketPanel from './VirtualMarketPanel';
 
 /**
  * Helloooo Admin Dashboard v2.5
@@ -15,7 +16,7 @@ export function AdminDashboard({ onJoinRoom }) {
   const [announcement, setAnnouncement] = useState('');
   const [isKillswitchConfirm, setIsKillswitchConfirm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState('overview'); // overview, users, creators, room-monitoring, economy, security, ads, logic, admin-ai
+  const [activeTab, setActiveTab] = useState('overview'); // overview, users, creators, room-monitoring, economy, market, security, ads, logic, admin-ai
   const [creators, setCreators] = useState([]);
   const [creatorFilter, setCreatorFilter] = useState('pending'); // pending | approved | rejected | all
   const [approveBusy, setApproveBusy] = useState(null); // creatorId or 'bulk'
@@ -765,6 +766,7 @@ export function AdminDashboard({ onJoinRoom }) {
     { id: 'creators', label: 'Creators', icon: '⭐', badge: creators.filter(c => c.status === 'pending').length },
     { id: 'room-monitoring', label: 'Live Monitor', icon: '👁️' },
     { id: 'economy', label: 'Economy', icon: '🪙' },
+    { id: 'market', label: 'Market', icon: '📈' },
     { id: 'audio', label: 'Audio Rooms', icon: '🎙️', badge: audioChannels.length },
     { id: 'security', label: 'Security', icon: '🛡️' },
     { id: 'ads', label: 'Ads', icon: '💰' },
@@ -1501,6 +1503,20 @@ export function AdminDashboard({ onJoinRoom }) {
                   <button className="w-full py-5 bg-amber-500 text-black rounded-3xl text-[11px] font-black uppercase tracking-[0.4em] shadow-xl shadow-amber-900/40 hover:bg-white transition-all active:scale-95">Save Ads Configuration</button>
                 </form>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'market' && (
+            <div className="space-y-8 animate-fade-in">
+              <div className="px-2">
+                <h2 className="text-3xl font-black italic uppercase tracking-tight">
+                  Virtual <span className="text-emerald-400">Market</span>
+                </h2>
+                <p className="text-sm text-white/35 mt-2 max-w-xl">
+                  Platform Virtual Economy Rate for Nuts accounting. Not a real FX, crypto, or investment product.
+                </p>
+              </div>
+              <VirtualMarketPanel mode="admin" adminKey={key} username="admin" />
             </div>
           )}
 

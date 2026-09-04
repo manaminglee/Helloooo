@@ -34,6 +34,45 @@ export function HellooooBrand({ size = 'md', className = '', as: Tag = 'span' })
   );
 }
 
+/**
+ * Circular Helloooo loader — brand text orbits in a ring.
+ */
+export function HellooooLoader({
+  label = 'Connecting…',
+  hint = '',
+  size = 148,
+  className = '',
+  transparent = false,
+}) {
+  const text = 'Helloooo · Helloooo · ';
+  return (
+    <div
+      className={`helloooo-loader${transparent ? ' helloooo-loader--transparent' : ''} ${className}`.trim()}
+      role="status"
+      aria-live="polite"
+      aria-label={label}
+    >
+      <div className="helloooo-loader__ring" style={{ width: size, height: size }}>
+        <svg className="helloooo-loader__svg" viewBox="0 0 100 100" aria-hidden>
+          <defs>
+            <path id="helloooo-circle" d="M 50,50 m -36,0 a 36,36 0 1,1 72,0 a 36,36 0 1,1 -72,0" />
+          </defs>
+          <text className="helloooo-loader__path-text">
+            <textPath href="#helloooo-circle" startOffset="0%">
+              {text}
+            </textPath>
+          </text>
+        </svg>
+        <div className="helloooo-loader__core">
+          <HellooooBrand size="sm" />
+        </div>
+      </div>
+      {label ? <p className="helloooo-loader__label">{label}</p> : null}
+      {hint ? <p className="helloooo-loader__hint">{hint}</p> : null}
+    </div>
+  );
+}
+
 export function HellooooLockup({ logoSize = 40, brandSize = 'lg', showTagline = false, className = '' }) {
   return (
     <div className={`helloooo-lockup ${className}`.trim()}>

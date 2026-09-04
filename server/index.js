@@ -36,6 +36,9 @@ const { registerAudioIdentity } = require('./audioIdentity');
 const { registerLiveStreams } = require('./liveStreams');
 const { createLivePersistence } = require('./livePersistence');
 const { registerCreatorProfile } = require('./creatorProfile');
+const { registerSocialFollow } = require('./socialFollow');
+const { registerDmChat } = require('./dmChat');
+const { registerMarketEngine } = require('./marketEngine');
 const { registerCreatorKyc } = require('./creatorKyc');
 const { registerAgency } = require('./agency');
 const { registerModeration } = require('./moderation');
@@ -1806,6 +1809,15 @@ app.post('/api/creators/withdraw', async (req, res) => {
       // Keep the in-memory snapshot consistent with the persisted state.
       creator.coins_earned = 0;
       creator.earnings_rs = 0;
+      try {
+        marketRef.current?.recordWithdrawal?.({
+          coins: coinsToWithdraw,
+          creatorId: creator.id,
+        });
+        // Freeze INR estimate at the rate used for this withdrawal event
+        withdrawal.market_rate = marketRef.current?.getRate?.() || null;
+        withdrawal.amount_inr_est = marketRef.current?.nutsToInr?.(coinsToWithdraw) || null;
+      } catch { /* market optional */ }
       await creatorSecurity.logCreatorEvent(supabase, localDb, saveLocalDb, {
         creatorId: creator.id,
         eventType: 'withdrawal_requested',
@@ -3152,7 +3164,17 @@ const audioIdentity = registerAudioIdentity(app, io, {
   getCreatorForRequest,
 });
 
-registerPayments(app, { persistence, blockedIps, io, users, audioIdentity });
+/** Late-bound market engine (payments register before full wiring). */
+const marketRef = { current: null };
+
+registerPayments(app, {
+  persistence,
+  blockedIps,
+  io,
+  users,
+  audioIdentity,
+  getMarket: () => marketRef.current,
+});
 
 economy = registerEconomy(app, io, {
   users,
@@ -3209,6 +3231,14 @@ raceGame = registerRaceGame(app, io, {
 // Analytics writer for the live tables — buffered, no-op without Supabase.
 const livePersistence = createLivePersistence({ supabase });
 
+const socialFollow = registerSocialFollow(app, {
+  supabase,
+  localDb,
+  saveLocalDb,
+  audioIdentity,
+  getCreatorForRequest,
+});
+
 const liveStreams = registerLiveStreams(app, io, {
   users,
   persistence: livePersistence,
@@ -3220,6 +3250,26 @@ const liveStreams = registerLiveStreams(app, io, {
   audioIdentity,
   getCreatorForRequest,
   getSettings: () => settings,
+  socialFollow,
+  getMarket: () => marketRef.current,
+  // Ping this creator's online followers when they go live. We resolve follower
+  // keys from the social graph and emit to any connected socket whose audio
+  // identity or creator persona matches.
+  notifyFollowers: (creator, payload) => {
+    if (!creator?.id) return;
+    const targetKey = socialFollow.makeKey('creator', creator.id);
+    const followerKeys = new Set(socialFollow.listFollowers(targetKey) || []);
+    if (!followerKeys.size) return;
+    for (const socket of io.sockets.sockets.values()) {
+      const u = users.get(socket.id);
+      if (!u) continue;
+      const uname = u.audioIdentity?.username ? `audio:${String(u.audioIdentity.username).toLowerCase()}` : null;
+      const ckey = (u.isCreator && u.creatorData?.id) ? `creator:${u.creatorData.id}` : null;
+      if ((uname && followerKeys.has(uname)) || (ckey && followerKeys.has(ckey))) {
+        socket.emit('live:creator-started', payload);
+      }
+    }
+  },
   creditCreatorCoins: async (creatorId, amount, details, creatorRow) => {
     const creator = creatorRow || (localDb.creators || []).find((c) => c.id === creatorId);
     if (!creator) return null;
@@ -3234,6 +3284,27 @@ const liveStreams = registerLiveStreams(app, io, {
   getRedis: () => infra.getRedis?.() || null,
   audit: moderation.audit,
 });
+
+const dmChat = registerDmChat(app, io, {
+  supabase,
+  localDb,
+  saveLocalDb,
+  sanitize,
+  audioIdentity,
+  getCreatorForRequest,
+  users,
+});
+
+const virtualMarket = registerMarketEngine(app, io, {
+  supabase,
+  localDb,
+  saveLocalDb,
+  isAdminRequest,
+  sanitize,
+  audit: moderation.audit,
+  emitToAdmins,
+});
+marketRef.current = virtualMarket;
 
 // Public creator directory: 6-digit ID, score, rank, gifts board, search.
 registerCreatorProfile(app, io, {
@@ -3376,6 +3447,8 @@ io.on('connection', (socket) => {
   audioChannels.attachSocketHandlers(socket, ip);
   raceGame.attachSocketHandlers(socket, ip);
   liveStreams.attachSocketHandlers(socket);
+  dmChat.attachSocketHandlers(socket);
+  virtualMarket.attachSocketHandlers(socket);
 
   // Uniform handler registration: wraps every handler in try/catch so a failing
   // async handler logs and emits `error` instead of an unhandled rejection.

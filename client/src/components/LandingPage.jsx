@@ -25,6 +25,7 @@ import { validateCreatorUpi } from '../utils/creatorValidation';
 import CreatorVerifyModal from './CreatorVerifyModal';
 import CreatorHub from './CreatorHub';
 import { clearCreatorSession, getCreatorSessionToken } from '../utils/creatorAuth';
+import { VirtualMarketRateChip } from './VirtualMarketPanel';
 
 // Below-the-fold / secondary UI — keep landing first paint light.
 const MiniTrendChart = lazyRetry(() =>
@@ -1459,8 +1460,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       <div className="text-7xl font-black italic text-white flex items-baseline gap-4 tabular-nums">
                         ₹{creatorStatus.earnings_rs || 0}<span className="text-xl text-white/20">INR</span>
                       </div>
+                      <VirtualMarketRateChip className="mt-3" />
                       <p className="text-[11px] font-bold text-white/30 uppercase tracking-widest mt-4">Calculated from {creatorStatus.coins_earned || 0} lifetime creator coins</p>
-                      <p className="text-[9px] font-bold text-white/25 mt-2 max-w-md">INR unlocks in blocks of 10,000 coins (₹150 per block). Withdrawals require at least {CREATOR_MIN_WITHDRAWAL_COINS.toLocaleString()} coins.</p>
+                      <p className="text-[9px] font-bold text-white/25 mt-2 max-w-md">INR unlocks in blocks of 10,000 coins (₹150 per block). Withdrawals require at least {CREATOR_MIN_WITHDRAWAL_COINS.toLocaleString()} coins. Live estimate uses Platform Virtual Economy Rate — historical payouts keep the rate frozen at event time.</p>
                       {(() => {
                         const coins = creatorStatus.coins_earned || 0;
                         const pct = Math.min(100, (coins / CREATOR_MIN_WITHDRAWAL_COINS) * 100);

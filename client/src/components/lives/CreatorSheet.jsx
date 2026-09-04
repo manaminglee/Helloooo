@@ -4,6 +4,7 @@ import { NutsSymbol } from '../NutsSymbol';
 import { MmIcon } from '../icons/MmIcon';
 import { GiftArt } from '../icons/GiftArt';
 import { VerifiedBadge } from '../icons/VerifiedBadge';
+import { HellooooLoader } from '../HellooooBrand';
 import { Avatar, Sheet, compact } from './LiveBits';
 
 function since(iso) {
@@ -30,7 +31,7 @@ function Stat({ label, value, accent = false }) {
  * Loaded on open rather than with the room — most viewers never open it, and
  * the score/rank query is not something to run for every live in the feed.
  */
-export function CreatorSheet({ open, creatorKey, onClose, onWatchLive, onFollow, following }) {
+export function CreatorSheet({ open, creatorKey, onClose, onWatchLive, onFollow, following, onMessage }) {
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
@@ -67,7 +68,9 @@ export function CreatorSheet({ open, creatorKey, onClose, onWatchLive, onFollow,
     <Sheet open={open} title="Creator" onClose={onClose} tall>
       {error && <p className="creator-sheet__msg">{error}</p>}
       {!p && !error && (
-        <div className="creator-sheet__msg"><div className="live-state__spinner" /></div>
+        <div className="creator-sheet__msg">
+          <HellooooLoader transparent size={100} label="Loading profile…" />
+        </div>
       )}
 
       {p && (
@@ -104,7 +107,37 @@ export function CreatorSheet({ open, creatorKey, onClose, onWatchLive, onFollow,
             >
               {following ? 'Following' : 'Follow'}
             </button>
+            <button type="button" className="live-btn" onClick={() => onMessage?.(p)}>
+              Message
+            </button>
           </div>
+
+          {(p.profileLink || p.profile_link) && (
+            <a
+              className="creator-sheet__verify-link"
+              href={p.profileLink || p.profile_link}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Verify profile link
+              <MmIcon name="share" size={12} />
+            </a>
+          )}
+
+          {(p.giftCut || p.gifts?.cut) && (
+            <div className="creator-sheet__cut">
+              <h4>Gift transparency</h4>
+              <p>
+                Creator keeps <strong>{Math.round(((p.giftCut || p.gifts?.cut)?.creatorSharePct ?? 0.7) * 100)}%</strong>
+                {' · '}Platform cut <strong>{Math.round(((p.giftCut || p.gifts?.cut)?.platformCutPct ?? 0.3) * 100)}%</strong>
+              </p>
+              {(p.giftCut || p.gifts?.cut)?.grossNuts != null && (
+                <p className="creator-sheet__cut-nums">
+                  Gross {compact((p.giftCut || p.gifts.cut).grossNuts)} Nuts · You {compact((p.giftCut || p.gifts.cut).creatorNuts)} · Cut {compact((p.giftCut || p.gifts.cut).platformNuts)}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Rank first — it is the question the sheet exists to answer. */}
           <div className={`creator-sheet__rank creator-sheet__rank--${p.tier?.id || 'new'}`}>

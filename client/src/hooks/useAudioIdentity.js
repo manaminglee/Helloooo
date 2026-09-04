@@ -186,8 +186,8 @@ export function useAudioIdentity(socket) {
         }
 
         // Trusted device → exchange the rotating device token for a session.
-        // No PIN, no prompt. A 401 here means the token was revoked, expired or
-        // replayed, so we drop it and fall through to a normal sign-in.
+        // No PIN, no prompt. ok:false means the token was revoked/expired —
+        // drop it and fall through to a normal sign-in (server returns 200).
         const deviceToken = readDeviceToken();
         if (deviceToken) {
           const res = await fetch(`${API_BASE}/api/audio-identity/resume`, {
@@ -208,10 +208,9 @@ export function useAudioIdentity(socket) {
             attachSocket(data.token);
             return;
           }
-          if (res.status === 401) {
-            persistDeviceToken(null);
-            setDeviceTrusted(false);
-          }
+          // Any failed resume — clear device trust and continue bootstrap
+          persistDeviceToken(null);
+          setDeviceTrusted(false);
         }
 
         const restore = await fetch(`${API_BASE}/api/audio-identity/restore-ip`, { credentials: 'include' });

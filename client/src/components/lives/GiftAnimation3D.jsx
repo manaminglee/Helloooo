@@ -19,6 +19,14 @@ import { GiftArt } from '../icons/GiftArt';
  */
 
 const SCENES = {
+  epic: {
+    accent: '#a855f7',
+    accent2: '#38bdf8',
+    rings: 2,
+    shards: 8,
+    starfield: false,
+    hold: 3200,
+  },
   legendary: {
     accent: '#fbbf24',
     accent2: '#f97316',
@@ -38,7 +46,8 @@ const SCENES = {
 };
 
 export const GiftAnimation3D = memo(function GiftAnimation3D({ gift }) {
-  const scene = SCENES[gift?.anim] || SCENES[gift?.gift?.tier] || null;
+  const tier = gift?.anim || gift?.gift?.tier || gift?.tier;
+  const scene = SCENES[tier] || (tier === 'rare' ? SCENES.epic : null);
 
   // Shard angles are stable for the life of one animation, so React never
   // re-randomises them mid-flight on an unrelated re-render.
@@ -76,8 +85,9 @@ export const GiftAnimation3D = memo(function GiftAnimation3D({ gift }) {
   };
 
   return (
-    <div className={`g3d g3d--${gift.anim || 'legendary'}`} style={style} aria-hidden>
+    <div className={`g3d g3d--${tier || 'legendary'} g3d--gif`} style={style} aria-hidden>
       <div className="g3d__wash" />
+      <div className="g3d__pulse" />
 
       {scene.starfield && (
         <div className="g3d__stars">

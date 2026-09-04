@@ -114,3 +114,49 @@ export async function fetchPaymentConfig() {
   if (!res.ok) return null;
   return res.json();
 }
+
+/**
+ * Open Razorpay Checkout for a Nuts coin pack order created by the server.
+ */
+export async function openRazorpayCoinCheckout(order, { onSuccess, onError } = {}) {
+  const Razorpay = await loadRazorpayScript();
+  return new Promise((resolve, reject) => {
+    const rzp = new Razorpay({
+      key: order.keyId,
+      amount: order.amount,
+      currency: order.currency || 'INR',
+      name: order.name || 'Helloooo',
+      description: order.description || `${order.coins} Nuts`,
+      order_id: order.orderId,
+      theme: { color: '#d4a017' },
+      handler: async (response) => {
+        try {
+          const verify = await fetch(`${API_BASE}/api/payment/verify-razorpay`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              product: 'coins',
+              packageId: order.packageId,
+              audioUsername: order.audioUsername,
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            }),
+          });
+          const result = await verify.json();
+          if (!verify.ok || !result.ok) throw new Error(result.error || 'Verification failed');
+          onSuccess?.(result);
+          resolve(result);
+        } catch (e) {
+          onError?.(e);
+          reject(e);
+        }
+      },
+      modal: {
+        ondismiss: () => reject(new Error('Payment cancelled')),
+      },
+    });
+    rzp.open();
+  });
+}

@@ -137,5 +137,17 @@ export function useMediaPreview({ enabled = true, videoRef }) {
     return () => document.removeEventListener('visibilitychange', onVis);
   }, [enabled, open]);
 
-  return { facing, micOn, level, error, ready, flip, toggleMic, retry: () => open(), stop };
+  return {
+    facing,
+    micOn,
+    level,
+    error,
+    ready,
+    stream: streamRef.current,
+    getStream: () => streamRef.current,
+    flip,
+    toggleMic,
+    retry: () => open(),
+    stop,
+  };
 }

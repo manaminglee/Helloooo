@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { API_BASE } from '../../config/apiBase';
 import { useLiveRoom } from '../../hooks/useLiveRoom';
 import { useLiveKitLive } from '../../hooks/useLiveKitLive';
 import { useFloatingReactions } from '../../hooks/useFloatingReactions';
@@ -18,6 +19,11 @@ import {
   Avatar, CommentStream, HeartLayer, GiftBanners, FullscreenGift,
   StateOverlay, ReconnectBanner, LiveToast, ConfirmDialog, compact,
 } from './LiveBits';
+import { HellooooLoader } from '../HellooooBrand';
+import HpPartnerSheet from './HpPartnerSheet';
+import GuestJoinBar from './GuestJoinBar';
+import UserProfileSheet from './UserProfileSheet';
+import DmChatSheet from './DmChatSheet';
 
 const COMBO_MS = 4000;
 
@@ -38,6 +44,7 @@ export default function LiveRoom({
   identityHook,
   onExit,
   onEndLive,
+  onSwitchBattleLive = null,
 }) {
   const isHost = mode === 'host';
   const rootRef = useRef(null);
@@ -63,16 +70,8 @@ export default function LiveRoom({
     sendComment, sendGift, react, follow, moderation, toast,
   } = room;
 
-  const media = useLiveKitLive({
-    enabled: !!live?.id && roomState !== 'ended' && roomState !== 'removed',
-    socket,
-    liveId: live?.id,
-    asHost: isHost,
-    videoElRef: videoRef,
-    mirrorLocal: isHost,
-  });
-
-  // --- local UI state -------------------------------------------------------
+  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [beautyOn, setBeautyOn] = useState(true);
   const [text, setText] = useState('');
   const [giftOpen, setGiftOpen] = useState(false);
   const [viewersOpen, setViewersOpen] = useState(false);
@@ -82,10 +81,28 @@ export default function LiveRoom({
   const [shopOpen, setShopOpen] = useState(false);
   const [userSheet, setUserSheet] = useState(null);
   const [confirmEnd, setConfirmEnd] = useState(false);
-  const [combo, setCombo] = useState(null);   // { gift, count, key }
+  const [combo, setCombo] = useState(null);
   const [soundOn, setSoundOn] = useState(isHost);
   const [liked, setLiked] = useState(false);
-  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [hpOpen, setHpOpen] = useState(false);
+  const [dmPeer, setDmPeer] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
+  const [guestState, setGuestState] = useState(null);
+  const [battleSpark, setBattleSpark] = useState(false);
+  const [mutualFollow, setMutualFollow] = useState(false);
+
+  const [guestPublish, setGuestPublish] = useState(false);
+
+  const media = useLiveKitLive({
+    enabled: !!live?.id && roomState !== 'ended' && roomState !== 'removed',
+    socket,
+    liveId: live?.id,
+    asHost: isHost,
+    asGuest: !isHost && guestPublish,
+    videoElRef: videoRef,
+    mirrorLocal: isHost || guestPublish,
+    beautyEnabled: (isHost || guestPublish) && (live?.beautyEnabled !== false) && beautyOn,
+  });
 
   const comboTimer = useRef(null);
   const balance = identity?.coins ?? 0;
@@ -143,7 +160,74 @@ export default function LiveRoom({
     }
   }, [combo, sendGift, identityHook, armCombo]);
 
-  useEffect(() => () => clearTimeout(comboTimer.current), []);
+  useEffect(() => {
+    if (!socket || !live?.id) return undefined;
+    const onGuestAccepted = (p) => {
+      if (p.liveId !== live.id) return;
+      setGuestPublish(true);
+      setGuestState({ joined: true, username: identity?.username });
+    };
+    const onGuestReq = (p) => {
+      if (p.liveId !== live.id) return;
+      setGuestState({ pending: true, username: p.username, socketId: p.socketId });
+    };
+    const onGuestJoined = (p) => {
+      if (p.liveId !== live.id) return;
+      setGuestState({ joined: true, username: p.username, socketId: p.socketId, handle: p.handle });
+      setBattleSpark(true);
+      setTimeout(() => setBattleSpark(false), 1600);
+    };
+    const onGuestLeft = (p) => {
+      if (p.liveId !== live.id) return;
+      setGuestState(null);
+      setGuestPublish(false);
+    };
+    const onBattleStart = () => {
+      setBattleSpark(true);
+      setTimeout(() => setBattleSpark(false), 1800);
+    };
+    const onCreatorStarted = (payload) => {
+      try {
+        if (document.hidden && payload?.handle) {
+          import('../../utils/browserNotify').then((m) => {
+            m.notifyUser?.(`@${payload.handle} is live`, { body: payload.title || 'Tap to watch' });
+          });
+        }
+      } catch { /* */ }
+    };
+    socket.on('live:join-request', onGuestReq);
+    socket.on('live:join-accepted', onGuestAccepted);
+    socket.on('live:guest-joined', onGuestJoined);
+    socket.on('live:guest-left', onGuestLeft);
+    socket.on('live:battle:start', onBattleStart);
+    socket.on('live:creator-started', onCreatorStarted);
+    return () => {
+      socket.off('live:join-request', onGuestReq);
+      socket.off('live:join-accepted', onGuestAccepted);
+      socket.off('live:guest-joined', onGuestJoined);
+      socket.off('live:guest-left', onGuestLeft);
+      socket.off('live:battle:start', onBattleStart);
+      socket.off('live:creator-started', onCreatorStarted);
+    };
+  }, [socket, live?.id, identity?.username]);
+
+  // Mutual follow check for co-live button
+  useEffect(() => {
+    if (!identity?.username || !live?.handle || isHost) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const tok = localStorage.getItem('mm_audio_session') || '';
+        const res = await fetch(`${API_BASE}/api/social/mutual?target=creator:${encodeURIComponent(live.handle)}`, {
+          headers: tok ? { 'x-audio-session': tok } : {},
+          credentials: 'include',
+        });
+        const data = await res.json();
+        if (!cancelled) setMutualFollow(!!data?.mutual);
+      } catch { /* */ }
+    })();
+    return () => { cancelled = true; };
+  }, [identity?.username, live?.handle, isHost]);
 
   // --- comments -------------------------------------------------------------
   const submit = useCallback(async (e) => {
@@ -302,15 +386,36 @@ export default function LiveRoom({
             )}
 
             {battle && (
-              <div className="live-battle">
-                <div className="live-battle__a" style={{ flexGrow: Math.max(1, battle.scoreA) }}>
+              <div className={`live-battle${battleSpark ? ' live-battle--spark' : ''}`}>
+                <div
+                  className="live-battle__a"
+                  style={{ flexGrow: Math.max(1, battle.scoreA) }}
+                  data-interactive
+                  onClick={() => onSwitchBattleLive?.(battle.liveA)}
+                >
                   @{battle.handleA} · {compact(battle.scoreA)}
                 </div>
-                <div className="live-battle__b" style={{ flexGrow: Math.max(1, battle.scoreB) }}>
+                <div
+                  className="live-battle__b"
+                  style={{ flexGrow: Math.max(1, battle.scoreB) }}
+                  data-interactive
+                  onClick={() => onSwitchBattleLive?.(battle.liveB)}
+                >
                   @{battle.handleB} · {compact(battle.scoreB)}
                 </div>
               </div>
             )}
+
+            <GuestJoinBar
+              socket={socket}
+              liveId={live?.id}
+              isHost={isHost}
+              mutualFollow={mutualFollow}
+              guest={guestState}
+              onRequestJoin={() => {
+                socket?.emit('live:join-request', { liveId: live.id });
+              }}
+            />
 
             {pinnedComment && (
               <div className="live-pinned">
@@ -326,12 +431,19 @@ export default function LiveRoom({
 
             <CommentStream
               comments={comments}
-              onUser={(c) => setUserSheet({
-                username: c.username,
-                socketId: c.socketId,
-                commentId: c.id,
-                badges: c.badges,
-              })}
+              onUser={(c) => {
+                // Viewers: tapping a name only inserts @mention — no kick/block/remove.
+                if (!isModerator && !isHost) {
+                  mention(c.username);
+                  return;
+                }
+                setUserSheet({
+                  username: c.username,
+                  socketId: c.socketId,
+                  commentId: c.id,
+                  badges: c.badges,
+                });
+              }}
             />
           </div>
 
@@ -339,6 +451,29 @@ export default function LiveRoom({
           <div className="live-rail">
             {isHost ? (
               <>
+                <span className="live-rail__item">
+                  <button
+                    type="button"
+                    className={`live-rail__btn${beautyOn ? '' : ' live-rail__btn--off'}`}
+                    onClick={() => { hapticTap(); setBeautyOn((v) => !v); }}
+                    aria-label={beautyOn ? 'Beauty filter on' : 'Beauty filter off'}
+                    title="Beauty"
+                  >
+                    <span style={{ fontSize: 14, fontWeight: 900 }}>✨</span>
+                    <span className="live-rail__label">Beauty</span>
+                  </button>
+                </span>
+                <span className="live-rail__item">
+                  <button
+                    type="button"
+                    className="live-rail__btn"
+                    onClick={() => { hapticTap(); setHpOpen(true); }}
+                    aria-label="Helloooo Partner"
+                  >
+                    <span style={{ fontSize: 12, fontWeight: 900 }}>HP</span>
+                    <span className="live-rail__label">Partner</span>
+                  </button>
+                </span>
                 <span className="live-rail__item">
                   <button
                     type="button"
@@ -528,7 +663,14 @@ export default function LiveRoom({
         onClose={() => setViewersOpen(false)}
         onFetch={moderation.listViewers}
         canModerate={isModerator}
-        onPickUser={(u) => { setViewersOpen(false); setUserSheet(u); }}
+        onPickUser={(u) => {
+          setViewersOpen(false);
+          if (!isModerator && !isHost) {
+            mention(u.username);
+            return;
+          }
+          setUserSheet(u);
+        }}
       />
 
       <LiveUserSheet
@@ -585,6 +727,42 @@ export default function LiveRoom({
         onFollow={(handle) => follow(handle)}
         onClose={() => setCreatorOpen(false)}
         onWatchLive={() => setCreatorOpen(false)}
+        onMessage={(p) => {
+          setCreatorOpen(false);
+          setDmPeer({ key: `creator:${p.handle || p.id}`, label: `@${p.handle}` });
+        }}
+      />
+
+      <HpPartnerSheet
+        open={hpOpen}
+        onClose={() => setHpOpen(false)}
+        socket={socket}
+        liveId={live?.id}
+        battle={battle}
+      />
+
+      <UserProfileSheet
+        open={!!userProfile}
+        username={userProfile?.username}
+        following={false}
+        isCreatorViewer={isHost}
+        onClose={() => setUserProfile(null)}
+        onFollow={(u) => {
+          socket?.emit('social:follow', { targetKey: `audio:${u}` });
+        }}
+        onMessage={(u) => {
+          setUserProfile(null);
+          setDmPeer({ key: `audio:${u}`, label: `@${u}` });
+        }}
+      />
+
+      <DmChatSheet
+        open={!!dmPeer}
+        onClose={() => setDmPeer(null)}
+        socket={socket}
+        peerKey={dmPeer?.key}
+        peerLabel={dmPeer?.label}
+        identity={identity}
       />
 
       <ConfirmDialog

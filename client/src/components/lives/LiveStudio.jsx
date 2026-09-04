@@ -8,6 +8,7 @@ import { useLiveBodyLock } from '../../hooks/useLiveViewport';
 import { hapticTap } from '../../utils/haptics';
 import CreatorVerifyModal from '../CreatorVerifyModal';
 import { MmIcon } from '../icons/MmIcon';
+import { HellooooLoader } from '../HellooooBrand';
 import { Avatar } from './LiveBits';
 import LiveRoom from './LiveRoom';
 
@@ -73,7 +74,7 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
     videoRef: previewRef,
   });
 
-  // Hint fades on its own so it never becomes furniture.
+  const [beautyOn, setBeautyOn] = useState(true);
   const [showGuide, setShowGuide] = useState(true);
   useEffect(() => {
     if (!preview.ready) return undefined;
@@ -134,16 +135,33 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
+        // Resume path if server still returned the live payload
+        if (data.live?.id) {
+          preview.stop();
+          await new Promise((r) => setTimeout(r, 160));
+          setLiveObj({
+            ...data.live,
+            avatarUrl: creator?.avatar_url || data.live.avatarUrl || null,
+            displayName: creator?.display_name || creator?.handle_name || data.live.displayName,
+            verified: true,
+            beautyEnabled: beautyOn,
+          });
+          onStarted?.(data.live);
+          return;
+        }
         setError(data.error || 'Could not start live');
         if (res.status === 401) setNeedLogin(true);
         return;
       }
       preview.stop();   // release camera + mic so LiveKit can claim them
+      // Safari needs a beat after stopping preview getUserMedia
+      await new Promise((r) => setTimeout(r, 160));
       setLiveObj({
         ...data.live,
         avatarUrl: creator?.avatar_url || null,
         displayName: creator?.display_name || creator?.handle_name,
         verified: true,
+        beautyEnabled: beautyOn,
       });
       onStarted?.(data.live);
     } catch {
@@ -243,8 +261,7 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
         />
         {!preview.ready && !preview.error && (
           <div className="live-state live-state--transparent">
-            <div className="live-state__spinner" />
-            <p className="live-state__label">Starting camera…</p>
+            <HellooooLoader transparent size={120} label="Starting camera…" />
           </div>
         )}
       </div>
@@ -335,6 +352,16 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
         </div>
 
         <div className="live-bottom" data-interactive>
+          <div className="prelive-beauty">
+            <span>Beauty filter {beautyOn ? 'ON' : 'OFF'}</span>
+            <button
+              type="button"
+              className={`live-btn${beautyOn ? ' live-btn--primary' : ''}`}
+              onClick={() => setBeautyOn((v) => !v)}
+            >
+              {beautyOn ? '✨ Soft look' : 'Raw camera'}
+            </button>
+          </div>
           {/* Mic check — a dead mic should be obvious here, not to an audience. */}
           <div className="prelive-mic">
             <span className="prelive-mic__icon">

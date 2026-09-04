@@ -64,20 +64,14 @@ function clipFaceMesh(ctx, landmarks, w, h, mirror, expand = 1.1) {
   ctx.closePath();
 }
 
-/**
- * Draw one video frame with tracked face-region blur onto `ctx`.
- * `blurCtx` holds a full-frame blurred copy used as the face patch source.
- */
-export function drawFaceBlurFrame(ctx, blurCtx, video, landmarker, mirror, timestampMs) {
-  const w = video.videoWidth;
-  const h = video.videoHeight;
-  if (!w || !h) return false;
-
+function ensureCanvasSize(ctx, blurCtx, w, h) {
   if (ctx.canvas.width !== w) ctx.canvas.width = w;
   if (ctx.canvas.height !== h) ctx.canvas.height = h;
   if (blurCtx.canvas.width !== w) blurCtx.canvas.width = w;
   if (blurCtx.canvas.height !== h) blurCtx.canvas.height = h;
+}
 
+function drawBaseFrame(ctx, video, w, h, mirror) {
   ctx.save();
   if (mirror) {
     ctx.translate(w, 0);
@@ -85,6 +79,18 @@ export function drawFaceBlurFrame(ctx, blurCtx, video, landmarker, mirror, times
   }
   ctx.drawImage(video, 0, 0, w, h);
   ctx.restore();
+}
+
+/**
+ * Draw one video frame with tracked face-region blur onto `ctx`.
+ */
+export function drawFaceBlurFrame(ctx, blurCtx, video, landmarker, mirror, timestampMs) {
+  const w = video.videoWidth;
+  const h = video.videoHeight;
+  if (!w || !h) return false;
+
+  ensureCanvasSize(ctx, blurCtx, w, h);
+  drawBaseFrame(ctx, video, w, h, mirror);
 
   const results = landmarker.detectForVideo(video, timestampMs);
   const faces = results?.faceLandmarks;
@@ -109,4 +115,69 @@ export function drawFaceBlurFrame(ctx, blurCtx, video, landmarker, mirror, times
   }
 
   return true;
+}
+
+/**
+ * Soft beauty pass: gentle skin smooth + slight brighten/warm on the face oval.
+ */
+export function drawBeautyFrame(ctx, blurCtx, video, landmarker, mirror, timestampMs) {
+  const w = video.videoWidth;
+  const h = video.videoHeight;
+  if (!w || !h) return false;
+
+  ensureCanvasSize(ctx, blurCtx, w, h);
+  drawBaseFrame(ctx, video, w, h, mirror);
+
+  const results = landmarker.detectForVideo(video, timestampMs);
+  const faces = results?.faceLandmarks;
+  if (!faces?.length) {
+    ctx.save();
+    ctx.filter = 'brightness(1.04) contrast(1.03) saturate(1.06)';
+    ctx.drawImage(ctx.canvas, 0, 0);
+    ctx.filter = 'none';
+    ctx.restore();
+    return true;
+  }
+
+  blurCtx.save();
+  blurCtx.filter = 'blur(6px) brightness(1.08) contrast(1.02) saturate(1.08)';
+  if (mirror) {
+    blurCtx.translate(w, 0);
+    blurCtx.scale(-1, 1);
+  }
+  blurCtx.drawImage(video, 0, 0, w, h);
+  blurCtx.restore();
+  blurCtx.filter = 'none';
+
+  for (const landmarks of faces) {
+    ctx.save();
+    clipFaceMesh(ctx, landmarks, w, h, mirror, 1.14);
+    ctx.clip();
+    ctx.globalAlpha = 0.55;
+    ctx.drawImage(blurCtx.canvas, 0, 0, w, h);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.fillStyle = 'rgba(255, 236, 220, 0.28)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+  }
+
+  return true;
+}
+
+/** Unified face processing: mode = 'beauty' | 'blur' | 'off' */
+export function drawFaceProcessedFrame(ctx, blurCtx, video, landmarker, mirror, timestampMs, mode = 'blur') {
+  if (mode === 'off') {
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    if (!w || !h) return false;
+    ensureCanvasSize(ctx, blurCtx, w, h);
+    drawBaseFrame(ctx, video, w, h, mirror);
+    return true;
+  }
+  if (mode === 'beauty') {
+    return drawBeautyFrame(ctx, blurCtx, video, landmarker, mirror, timestampMs);
+  }
+  return drawFaceBlurFrame(ctx, blurCtx, video, landmarker, mirror, timestampMs);
 }

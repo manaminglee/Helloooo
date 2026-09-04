@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { API_BASE } from '../config/apiBase';
 import { NutsAmount, NutsSymbol } from './NutsSymbol';
 import { formatNuts, nutsToUsd } from '../utils/nutsDisplay';
+import VirtualMarketPanel from './VirtualMarketPanel';
 
 const STORAGE_KEY = 'mm_agency_key';
 
@@ -127,6 +128,7 @@ export default function AgencyDashboard() {
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
+    { id: 'market', label: 'Market' },
     { id: 'creators', label: 'Creators' },
     { id: 'payouts', label: 'Payouts' },
     { id: 'lives', label: 'Lives' },
@@ -191,7 +193,14 @@ export default function AgencyDashboard() {
                 <NutsSymbol size={20} /> {formatNuts(overview.nutsPerUsd)} Nuts = $1
               </p>
             </div>
+            <div className="col-span-2 md:col-span-3">
+              <VirtualMarketPanel mode="agency" username="agency" />
+            </div>
           </div>
+        )}
+
+        {tab === 'market' && (
+          <VirtualMarketPanel mode="agency" username="agency" />
         )}
 
         {tab === 'creators' && (

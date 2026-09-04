@@ -10334,3 +10334,332 @@ textarea {
   box-shadow: 0 0 0 4px rgba(244,63,94,0.2);
   animation: mm-live-pulse 1.4s ease infinite;
 }
+
+/* -- Virtual Market (Platform Virtual Economy Rate) -- */
+.mm-vm {
+  margin-top: 1.25rem;
+  padding: 1.1rem 1.15rem 1.25rem;
+  border-radius: 1.35rem;
+  border: 1px solid rgba(52, 211, 153, 0.18);
+  background:
+    radial-gradient(ellipse at top right, rgba(16, 185, 129, 0.08), transparent 50%),
+    linear-gradient(160deg, rgba(8, 12, 16, 0.95), rgba(3, 6, 10, 0.98));
+}
+.mm-vm--compact { margin-top: 0.5rem; padding: 0.75rem; }
+.mm-creator-hub__market { margin-top: 1.5rem; }
+.mm-vm__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.mm-vm__eyebrow {
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(167, 243, 208, 0.55);
+  margin: 0 0 0.35rem;
+}
+.mm-vm__title {
+  font-size: clamp(1.35rem, 4vw, 1.85rem);
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: -0.02em;
+  color: #f8fafc;
+  margin: 0;
+}
+.mm-vm__rate { color: #6ee7b7; }
+.mm-vm__change {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.mm-vm__change.up { color: #34d399; }
+.mm-vm__change.down { color: #f87171; }
+.mm-vm__ago { color: rgba(255,255,255,0.35); font-weight: 600; }
+.mm-vm__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid;
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: rgba(0,0,0,0.35);
+}
+.mm-vm__disclaimer {
+  margin: 0.65rem 0 0;
+  font-size: 0.65rem;
+  color: rgba(255,255,255,0.38);
+  line-height: 1.4;
+}
+.mm-vm__error { color: #fca5a5; font-size: 0.72rem; margin-top: 0.5rem; }
+.mm-vm__muted { color: rgba(255,255,255,0.3); font-size: 0.75rem; }
+.mm-vm__ranges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.85rem 0 0.5rem;
+}
+.mm-vm__ranges button {
+  padding: 0.28rem 0.55rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.03);
+  color: rgba(255,255,255,0.45);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+.mm-vm__ranges button.on {
+  border-color: rgba(52, 211, 153, 0.45);
+  background: rgba(16, 185, 129, 0.15);
+  color: #a7f3d0;
+}
+.mm-vm-chart {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem;
+  margin: 0.4rem 0 0.75rem;
+  border-radius: 0.9rem;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.35);
+  padding: 0.5rem 0.55rem 0.4rem;
+}
+.mm-vm-chart__ylabels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 0.58rem;
+  color: rgba(255,255,255,0.35);
+  font-weight: 700;
+  padding: 0.15rem 0;
+}
+.mm-vm-chart__svg { width: 100%; height: 100%; display: block; }
+.mm-vm__metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+@media (min-width: 720px) {
+  .mm-vm__metrics { grid-template-columns: repeat(4, 1fr); }
+}
+.mm-vm__metric {
+  padding: 0.65rem 0.7rem;
+  border-radius: 0.85rem;
+  border: 1px solid rgba(255,255,255,0.07);
+  background: rgba(255,255,255,0.02);
+}
+.mm-vm__metric span {
+  display: block;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.35);
+}
+.mm-vm__metric strong {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.92rem;
+  font-weight: 900;
+  color: #f1f5f9;
+}
+.mm-vm__insights {
+  margin: 0.75rem 0 0;
+  padding: 0.65rem 0.85rem;
+  list-style: none;
+  border-radius: 0.85rem;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.15);
+}
+.mm-vm__insights li {
+  font-size: 0.72rem;
+  color: rgba(191, 219, 254, 0.85);
+  padding: 0.2rem 0;
+}
+.mm-vm__split {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 0.9rem;
+}
+@media (min-width: 900px) {
+  .mm-vm__split { grid-template-columns: 1.2fr 0.8fr; }
+}
+.mm-vm__chat, .mm-vm__side {
+  padding: 0.75rem;
+  border-radius: 0.95rem;
+  border: 1px solid rgba(255,255,255,0.07);
+  background: rgba(0,0,0,0.25);
+}
+.mm-vm__chat h4, .mm-vm__side h4 {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.55);
+}
+.mm-vm__side-mt { margin-top: 0.85rem !important; }
+.mm-vm__chat-note {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.62rem;
+  color: rgba(255,255,255,0.32);
+}
+.mm-vm__chat-list {
+  max-height: 9rem;
+  overflow: auto;
+  font-size: 0.75rem;
+  color: rgba(255,255,255,0.7);
+}
+.mm-vm__chat-list p { margin: 0.25rem 0; }
+.mm-vm__chat-list strong { color: #a7f3d0; }
+.mm-vm__chat-form {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+}
+.mm-vm__chat-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.45rem 0.6rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(0,0,0,0.4);
+  color: #fff;
+  font-size: 0.75rem;
+}
+.mm-vm__chat-form button {
+  padding: 0.45rem 0.7rem;
+  border-radius: 0.55rem;
+  border: none;
+  background: #10b981;
+  color: #04140f;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+.mm-vm__top, .mm-vm__gifts {
+  list-style: none;
+  margin: 0.45rem 0 0;
+  padding: 0;
+  font-size: 0.75rem;
+}
+.mm-vm__top li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.28rem 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.7);
+}
+.mm-vm__gifts li {
+  padding: 0.22rem 0;
+  color: rgba(255,255,255,0.65);
+}
+.mm-vm__admin {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.mm-vm__admin h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #fbbf24;
+}
+.mm-vm__admin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+@media (min-width: 720px) {
+  .mm-vm__admin-grid { grid-template-columns: repeat(3, 1fr); }
+}
+.mm-vm__admin-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: rgba(255,255,255,0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.mm-vm__admin-grid input {
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.45);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.mm-vm__admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+.mm-vm__admin-actions button {
+  padding: 0.45rem 0.7rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.12);
+  color: #fde68a;
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.mm-vm__admin-msg { color: #86efac; font-size: 0.72rem; margin-top: 0.5rem; }
+.mm-vm__audit { margin-top: 0.75rem; }
+.mm-vm__audit h5 {
+  margin: 0 0 0.35rem;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(255,255,255,0.4);
+}
+.mm-vm__audit ul { list-style: none; margin: 0; padding: 0; }
+.mm-vm__audit li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.68rem;
+  padding: 0.25rem 0;
+  color: rgba(255,255,255,0.5);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.mm-vm__audit code { color: #fde68a; }
+.mm-vm-chip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.65rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 0.7rem;
+  border: 1px solid rgba(52, 211, 153, 0.22);
+  background: rgba(16, 185, 129, 0.08);
+  font-size: 0.72rem;
+}
+.mm-vm-chip__label {
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(167, 243, 208, 0.55);
+  width: 100%;
+}
+.mm-vm-chip strong { color: #6ee7b7; font-size: 0.9rem; }
+.mm-vm-chip .up { color: #34d399; font-weight: 700; }
+.mm-vm-chip .down { color: #f87171; font-weight: 700; }
+.mm-vm-chip__ago { color: rgba(255,255,255,0.35); font-size: 0.65rem; }
+.mm-audio-coin-shop__rate { margin-top: 0.55rem; }

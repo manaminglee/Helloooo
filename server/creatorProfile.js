@@ -10,6 +10,26 @@
 const crypto = require('crypto');
 const { scoreCreator, scoreTier } = require('./creatorScore');
 
+/** Platform-wide creator share for gifts; env-tunable, transparency baseline. */
+function creatorSharePct() {
+  const raw = Number(process.env.LIVE_GIFT_CREATOR_SHARE);
+  if (Number.isFinite(raw) && raw > 0 && raw <= 1) return raw;
+  return 0.7;
+}
+
+function giftCutBreakdown(grossNuts) {
+  const share = creatorSharePct();
+  const gross = Math.max(0, Math.floor(Number(grossNuts) || 0));
+  const creatorNuts = Math.floor(gross * share);
+  return {
+    creatorSharePct: share,
+    platformCutPct: Math.round((1 - share) * 10000) / 10000,
+    grossNuts: gross,
+    creatorNuts,
+    platformNuts: gross - creatorNuts,
+  };
+}
+
 const CODE_MIN = 100000;
 const CODE_MAX = 999999;
 const SCORE_TTL_MS = 10 * 60 * 1000;   // recompute at most this often
@@ -32,6 +52,7 @@ function registerCreatorProfile(app, io, deps) {
 
   function publicCreator(c, extra = {}) {
     if (!c) return null;
+    const share = creatorSharePct();
     return {
       id: c.id,
       code: c.creator_code || null,
@@ -42,13 +63,22 @@ function registerCreatorProfile(app, io, deps) {
       country: c.country || null,
       languages: c.languages || [],
       interests: c.interests || [],
-      verified: !!c.verified,
+      verified: !!(c.verified || c.status === 'approved'),
+      // Public-facing links, surfaced only when the column exists on the row.
+      profileLink: c.profile_link || c.social_link || null,
+      profile_link: c.profile_link || c.social_link || null,
+      socialLink: c.social_link || c.profile_link || null,
+      platform: c.platform || null,
       followers: c.followers_count || 0,
       totalLives: c.total_lives || 0,
       liveMinutes: c.live_minutes || 0,
       giftsReceived: c.gifts_received || 0,
       featured: !!c.featured,
       joinedAt: c.created_at || null,
+      giftCut: {
+        creatorSharePct: share,
+        platformCutPct: Math.round((1 - share) * 10000) / 10000,
+      },
       ...extra,
     };
   }
@@ -243,6 +273,9 @@ function registerCreatorProfile(app, io, deps) {
         coins: r.coin_cost,
         at: r.created_at,
       })),
+      // Gift-cut transparency: how the gross Nuts split creator vs platform.
+      ...giftCutBreakdown(totalCoins),
+      cut: giftCutBreakdown(totalCoins),
     };
   }
 
