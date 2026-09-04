@@ -25,6 +25,7 @@ const creatorSecurity = require('./creatorSecurity');
 const creatorEmail = require('./creatorEmail');
 const creatorNotifications = require('./creatorNotifications');
 const creatorSessions = require('./creatorSessions');
+const { applyCreatorStatus, applyCreatorStatusBulk } = require('./creatorApproval');
 const adminLiveMonitor = require('./adminLiveMonitor');
 const { registerAudioChannels } = require('./audioChannels');
 const { registerYoutubeLiveHandlers, stopAllForSocket, isFfmpegAvailable } = require('./youtubeLive');
@@ -1833,102 +1834,70 @@ app.get('/api/admin/history', requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'History query failed' }); }
 });
 
+function creatorApprovalDeps() {
+  return {
+    supabase,
+    localDb,
+    saveLocalDb,
+    sanitize,
+    notifyCreatorAction,
+    emitToCreator,
+    emitToAdmins,
+    creatorEmail,
+    audit: moderation.audit,
+    io,
+  };
+}
+
 app.post('/api/admin/creators/approve', requireAdmin, async (req, res) => {
-  const { creatorId, status } = req.body || {};
   try {
-    let creator = null;
-    if (supabase) {
-      const { data } = await supabase.from('creators').select('*').eq('id', creatorId).single();
-      creator = data;
-    } else {
-      creator = localDb.creators.find(x => x.id === creatorId);
-    }
-    if (!creator) return res.status(404).json({ error: 'Node Not Found' });
-
-    let updates = { status };
-    let plainPassword = null;
-    if (status === 'approved') {
-      if (!creator.password_hash && !creator.password) {
-        plainPassword = creatorSecurity.generateSecurePassword(creator.handle_name);
-        updates.password_hash = await creatorSecurity.hashPassword(plainPassword);
-        updates.password = null;
-      } else if (creator.password && !creator.password_hash) {
-        plainPassword = creator.password;
-        updates.password_hash = await creatorSecurity.hashPassword(creator.password);
-        updates.password = null;
-      }
-      // password_hash already set at registration — creator uses their chosen password
-      updates.coins_earned = (creator.coins_earned || 0) + 500;
-      updates.earnings_rs = creatorSecurity.computeEarningsRs(updates.coins_earned);
-      updates.rejection_reason = null;
-    } else if (status === 'rejected') {
-      updates.rejection_reason = sanitize(req.body?.reason || 'Did not meet program requirements', 200);
-    }
-
-    if (supabase) {
-      await supabase.from('creators').update(updates).eq('id', creatorId);
-      await supabase.from('admin_history').insert({
-        action_type: 'CREATOR_APPROVE',
-        target_id: creatorId,
-        target_name: creator.handle_name,
-        details: `Status set to ${status}${status === 'approved' ? ' (+500 bonus coins)' : ''}`
-      });
-      if (status === 'approved') {
-        await creatorSecurity.logCreatorEvent(supabase, localDb, saveLocalDb, {
-          creatorId,
-          eventType: 'approval_bonus',
-          amount: 500,
-          details: 'Creator approval bonus',
-        });
-      }
-    } else {
-      Object.assign(creator, updates);
-      localDb.admin_history.push({
-        id: Date.now().toString(),
-        action_type: 'CREATOR_APPROVE',
-        target_id: creatorId,
-        target_name: creator.handle_name,
-        details: `Status set to ${status}`,
-        created_at: new Date().toISOString()
-      });
-      saveLocalDb();
-    }
-    res.json({ success: true, password: plainPassword || undefined });
-
-    const merged = { ...creator, ...updates };
-    // Never broadcast credentials: a fresh password is delivered only via the
-    // admin REST response above and the approval email. The socket payload is
-    // scoped to the affected creator + admin sockets and carries no secrets.
-    const statusPayload = {
-      referral_code: creator.referral_code,
-      handle_name: creator.handle_name,
+    const { creatorId, status, reason } = req.body || {};
+    const result = await applyCreatorStatus(creatorApprovalDeps(), {
+      creatorId,
       status,
-      rejection_reason: updates.rejection_reason || null,
-    };
-    emitToCreator(merged, 'creator-status-changed', statusPayload);
-    emitToAdmins('creator-status-changed', statusPayload);
-
-    if (status === 'approved') {
-      await notifyCreatorAction(merged, {
-        type: 'approved',
-        title: 'Application approved',
-        message: plainPassword
-          ? `You're in! Admin assigned a temporary password — check your email or the approval screen. +500 bonus coins added.`
-          : `You're approved! Log in with the password you set during registration. +500 bonus coins added.`,
-        important: true,
-        metadata: { bonus_coins: 500 },
-      });
-      creatorEmail.notifyCreatorApproved(merged, plainPassword).catch((e) => console.error('[EMAIL] approve notify', e.message));
-    } else if (status === 'rejected') {
-      await notifyCreatorAction(merged, {
-        type: 'rejected',
-        title: 'Application rejected',
-        message: updates.rejection_reason || 'Your application was not approved at this time.',
-        important: true,
-      });
-      creatorEmail.notifyCreatorRejected(merged, updates.rejection_reason).catch((e) => console.error('[EMAIL] reject notify', e.message));
+      reason,
+    });
+    if (!result.ok) {
+      return res.status(result.error === 'Creator not found' ? 404 : 400).json({ error: result.error });
     }
-  } catch (e) { res.status(500).json({ error: 'Approval failed' }); }
+    res.json({
+      success: true,
+      already: !!result.already,
+      password: result.password,
+      creator: result.creator,
+    });
+  } catch (e) {
+    console.error('[CREATOR_APPROVE]', e);
+    res.status(500).json({ error: 'Approval failed' });
+  }
+});
+
+/** One-click bulk approve/reject pending applications */
+app.post('/api/admin/creators/approve-bulk', requireAdmin, async (req, res) => {
+  try {
+    let { creatorIds, status, reason, pendingOnly } = req.body || {};
+    status = status || 'approved';
+    if (pendingOnly) {
+      let list = [];
+      if (supabase) {
+        const { data } = await supabase.from('creators').select('id').eq('status', 'pending');
+        list = (data || []).map((r) => r.id);
+      } else {
+        list = (localDb.creators || []).filter((c) => c.status === 'pending').map((c) => c.id);
+      }
+      creatorIds = list;
+    }
+    const result = await applyCreatorStatusBulk(creatorApprovalDeps(), {
+      creatorIds,
+      status,
+      reason,
+    });
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json({ success: true, ...result });
+  } catch (e) {
+    console.error('[CREATOR_APPROVE_BULK]', e);
+    res.status(500).json({ error: 'Bulk approval failed' });
+  }
 });
 
 app.post('/api/admin/creators/featured', requireAdmin, async (req, res) => {
@@ -3240,6 +3209,20 @@ registerAgency(app, io, {
   isAdminRequest,
   getAdminKey,
   liveStreams,
+  applyCreatorStatus,
+  applyCreatorStatusBulk,
+  creatorApprovalDeps: () => ({
+    supabase,
+    localDb,
+    saveLocalDb,
+    sanitize,
+    notifyCreatorAction,
+    emitToCreator,
+    emitToAdmins,
+    creatorEmail,
+    audit: moderation.audit,
+    io,
+  }),
   audioChannels: {
     ...audioChannels,
     listForAdmin: () => {

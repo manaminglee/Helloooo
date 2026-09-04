@@ -17,6 +17,8 @@ export function AdminDashboard({ onJoinRoom }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('overview'); // overview, users, creators, room-monitoring, economy, security, ads, logic, admin-ai
   const [creators, setCreators] = useState([]);
+  const [creatorFilter, setCreatorFilter] = useState('pending'); // pending | approved | rejected | all
+  const [approveBusy, setApproveBusy] = useState(null); // creatorId or 'bulk'
   const [withdrawals, setWithdrawals] = useState([]);
   const [history, setHistory] = useState([]);
   const [economyLogs, setEconomyLogs] = useState([]);
@@ -159,23 +161,60 @@ export function AdminDashboard({ onJoinRoom }) {
     }
   };
 
-  const handleCreatorApprove = async (creatorId, status) => {
+  const handleCreatorApprove = async (creatorId, status, reason = '') => {
     const creator = creators.find(c => c.id === creatorId);
+    setApproveBusy(creatorId);
+    // Optimistic UI — feels instant
+    setCreators((prev) => prev.map((c) => (c.id === creatorId ? { ...c, status } : c)));
     try {
       const res = await fetch(`${API_BASE}/api/admin/creators/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
-        body: JSON.stringify({ creatorId, status }),
+        body: JSON.stringify({ creatorId, status, reason }),
       });
       if (res.ok) {
         const data = await res.json();
         fetchCreators();
         fetchHistory();
-        setToast(`${status === 'approved' ? '✅' : '❌'} @${creator?.handle_name} ${status}${ data.password ? ` · Password: ${data.password}` : ''}`);
+        setToast(`${status === 'approved' ? '✅' : '❌'} @${creator?.handle_name} ${status}${data.password ? ` · Temp PW: ${data.password}` : ''}${data.already ? ' (already set)' : ''}`);
       } else {
+        fetchCreators();
         setToast('⚠️ Action failed — check server logs');
       }
-    } catch (e) { setToast('⚠️ Network error'); }
+    } catch (e) {
+      fetchCreators();
+      setToast('⚠️ Network error');
+    } finally {
+      setApproveBusy(null);
+    }
+  };
+
+  const handleBulkApprovePending = async () => {
+    const pending = creators.filter((c) => c.status === 'pending');
+    if (!pending.length) {
+      setToast('No pending applications');
+      return;
+    }
+    if (!window.confirm(`Approve all ${pending.length} pending creator(s)?`)) return;
+    setApproveBusy('bulk');
+    setCreators((prev) => prev.map((c) => (c.status === 'pending' ? { ...c, status: 'approved' } : c)));
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/creators/approve-bulk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
+        body: JSON.stringify({ pendingOnly: true, status: 'approved' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      fetchCreators();
+      fetchHistory();
+      if (res.ok) setToast(`✅ Approved ${data.okCount ?? pending.length} creator(s)`);
+      else setToast(data.error || 'Bulk approve failed');
+    } catch {
+      fetchCreators();
+      setToast('⚠️ Network error');
+    } finally {
+      setApproveBusy(null);
+    }
   };
 
   const handleWithdrawalStatus = async (withdrawalId, status) => {
@@ -1220,25 +1259,58 @@ export function AdminDashboard({ onJoinRoom }) {
           {activeTab === 'creators' && (
             <div className="space-y-10 animate-fade-in">
 
-              {/* Pending count summary */}
+              {/* Pending count summary — click to filter */}
               <div className="flex gap-6">
-                {[{ label: 'Pending Approval', val: creators.filter(c => c.status === 'pending').length, color: 'text-amber-400 border-amber-500/20 bg-amber-500/5' },
-                  { label: 'Approved', val: creators.filter(c => c.status === 'approved').length, color: 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5' },
-                  { label: 'Rejected', val: creators.filter(c => c.status === 'rejected').length, color: 'text-rose-400 border-rose-500/20 bg-rose-500/5' },
-                  { label: 'Total Applied', val: creators.length, color: 'text-cyan-400 border-cyan-500/20 bg-cyan-500/5' },
+                {[{ label: 'Pending Approval', val: creators.filter(c => c.status === 'pending').length, color: 'text-amber-400 border-amber-500/20 bg-amber-500/5', filter: 'pending' },
+                  { label: 'Approved', val: creators.filter(c => c.status === 'approved').length, color: 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5', filter: 'approved' },
+                  { label: 'Rejected', val: creators.filter(c => c.status === 'rejected').length, color: 'text-rose-400 border-rose-500/20 bg-rose-500/5', filter: 'rejected' },
+                  { label: 'Total Applied', val: creators.length, color: 'text-cyan-400 border-cyan-500/20 bg-cyan-500/5', filter: 'all' },
                 ].map(s => (
-                  <div key={s.label} className={`flex-1 p-5 rounded-[28px] border ${s.color} text-center`}>
+                  <button type="button" key={s.label} onClick={() => setCreatorFilter(s.filter)} className={`flex-1 p-5 rounded-[28px] border ${s.color} text-center transition-all ${creatorFilter === s.filter ? 'ring-2 ring-white/25' : 'hover:bg-white/[0.03]'}`}>
                     <div className="text-2xl font-black italic">{s.val}</div>
                     <div className="text-[9px] font-black uppercase tracking-widest opacity-60 mt-1">{s.label}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
+
+              {creators.filter((c) => c.status === 'pending').length > 0 && (
+                <div className="p-8 rounded-[40px] bg-amber-500/5 border border-amber-500/20 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-[10px] font-black uppercase tracking-[0.35em] text-amber-300 italic">⚡ Fast approve queue</h3>
+                      <p className="text-[9px] text-white/35 mt-1">{creators.filter((c) => c.status === 'pending').length} waiting · one tap</p>
+                    </div>
+                    <button type="button" disabled={approveBusy === 'bulk'} onClick={handleBulkApprovePending} className="px-5 py-2.5 rounded-xl bg-emerald-500 text-black text-[10px] font-black uppercase tracking-widest hover:bg-emerald-400 disabled:opacity-50">
+                      {approveBusy === 'bulk' ? 'Approving…' : `Approve all pending`}
+                    </button>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {creators.filter((c) => c.status === 'pending').slice(0, 12).map((c) => (
+                      <div key={c.id} className="p-4 rounded-2xl bg-black/30 border border-white/10 flex flex-col gap-3">
+                        <div>
+                          <p className="font-black text-white italic tracking-wide">@{c.handle_name}</p>
+                          <p className="text-[10px] text-white/40 mt-0.5">{c.platform} · {c.email || 'no email'}</p>
+                          <a href={c.profile_link} target="_blank" rel="noopener noreferrer" className="text-[10px] text-cyan-400/80 underline mt-1 inline-block">Verify profile ↗</a>
+                        </div>
+                        <div className="flex gap-2 mt-auto">
+                          <button type="button" disabled={!!approveBusy} onClick={() => handleCreatorApprove(c.id, 'approved')} className="flex-1 py-2 rounded-xl bg-emerald-500 text-black text-[10px] font-black uppercase tracking-widest disabled:opacity-50">
+                            {approveBusy === c.id ? '…' : 'Approve'}
+                          </button>
+                          <button type="button" disabled={!!approveBusy} onClick={() => handleCreatorApprove(c.id, 'rejected', window.prompt('Reject reason (optional):', 'Did not meet program requirements') || '')} className="px-3 py-2 rounded-xl bg-rose-500/20 text-rose-300 text-[10px] font-black uppercase tracking-widest disabled:opacity-50">
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="p-10 rounded-[50px] bg-gradient-to-br from-cyan-500/5 to-transparent border border-cyan-500/10 shadow-2xl">
                 <div className="flex justify-between items-center mb-8">
                   <div>
                     <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-cyan-400 italic">⭐ Creator Applications</h3>
-                    <p className="text-[9px] text-white/20 font-black uppercase mt-1">{creators.filter(c => c.status === 'pending').length} pending review</p>
+                    <p className="text-[9px] text-white/20 font-black uppercase mt-1">Filter: {creatorFilter}</p>
                   </div>
                   <div className="flex gap-3">
                     <button onClick={fetchCreators} className="px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-white/10 transition-all">Refresh 🔄</button>
@@ -1261,10 +1333,18 @@ export function AdminDashboard({ onJoinRoom }) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/[0.03]">
-                      {creators.length === 0 && (
-                        <tr><td colSpan="9" className="py-20 text-center text-white/10 italic text-sm font-black uppercase tracking-[0.5em]">No creator applications yet</td></tr>
+                      {creators.filter((c) => creatorFilter === 'all' || c.status === creatorFilter).length === 0 && (
+                        <tr><td colSpan="9" className="py-20 text-center text-white/10 italic text-sm font-black uppercase tracking-[0.5em]">No creators in this filter</td></tr>
                       )}
-                      {creators.map(c => (
+                      {[...creators]
+                        .filter((c) => creatorFilter === 'all' || c.status === creatorFilter)
+                        .sort((a, b) => {
+                          const rank = (s) => (s === 'pending' ? 0 : s === 'approved' ? 1 : 2);
+                          const d = rank(a.status) - rank(b.status);
+                          if (d !== 0) return d;
+                          return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+                        })
+                        .map(c => (
                         <tr key={c.id} className={`hover:bg-white/[0.01] transition-all group ${ c.status === 'pending' ? 'border-l-2 border-l-amber-500/40' : ''}`}>
                           <td className="py-5 pr-4">
                             <div className="font-black text-white italic group-hover:text-cyan-400 transition-colors uppercase tracking-widest">{c.handle_name}</div>
@@ -1321,14 +1401,14 @@ export function AdminDashboard({ onJoinRoom }) {
                                 </>
                               )}
                               {c.status !== 'approved' && (
-                                <button onClick={() => handleCreatorApprove(c.id, 'approved')}
-                                  className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500 text-emerald-400 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all">
+                                <button type="button" disabled={!!approveBusy} onClick={() => handleCreatorApprove(c.id, 'approved')}
+                                  className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500 text-emerald-400 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all disabled:opacity-50">
                                   ✅ Approve
                                 </button>
                               )}
                               {c.status !== 'rejected' && (
-                                <button onClick={() => handleCreatorApprove(c.id, 'rejected')}
-                                  className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500 text-rose-500 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all">
+                                <button type="button" disabled={!!approveBusy} onClick={() => handleCreatorApprove(c.id, 'rejected', window.prompt('Reject reason (optional):', 'Did not meet program requirements') || '')}
+                                  className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500 text-rose-500 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all disabled:opacity-50">
                                   ❌ Reject
                                 </button>
                               )}

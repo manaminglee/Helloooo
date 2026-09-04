@@ -33,6 +33,9 @@ function registerAgency(app, io, deps) {
     audioChannels,
     audioIdentity,
     audit,
+    applyCreatorStatus,
+    applyCreatorStatusBulk,
+    creatorApprovalDeps,
   } = deps;
 
   function isAgencyRequest(req) {
@@ -110,32 +113,59 @@ function registerAgency(app, io, deps) {
   });
 
   app.post('/api/agency/creators/approve', requireAgency, async (req, res) => {
-    // Delegate shape matches admin approve — reuse by forwarding logic inline
-    const { creatorId, status, tempPassword } = req.body || {};
-    if (!creatorId || !['approved', 'rejected', 'pending'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid request' });
+    const { creatorId, status, reason } = req.body || {};
+    if (!applyCreatorStatus || !creatorApprovalDeps) {
+      return res.status(501).json({ error: 'Approval module unavailable' });
     }
-    let creator = (localDb.creators || []).find((x) => x.id === creatorId);
-    if (supabase && !creator) {
-      const { data } = await supabase.from('creators').select('*').eq('id', creatorId).maybeSingle();
-      creator = data;
+    try {
+      const result = await applyCreatorStatus(creatorApprovalDeps(), {
+        creatorId,
+        status,
+        reason,
+      });
+      if (!result.ok) {
+        return res.status(result.error === 'Creator not found' ? 404 : 400).json({ error: result.error });
+      }
+      res.json({
+        ok: true,
+        already: !!result.already,
+        password: result.password,
+        creator: result.creator,
+      });
+    } catch (e) {
+      console.error('[AGENCY_APPROVE]', e);
+      res.status(500).json({ error: 'Approval failed' });
     }
-    if (!creator) return res.status(404).json({ error: 'Creator not found' });
+  });
 
-    const updates = { status };
-    if (status === 'approved') {
-      updates.coins_earned = (creator.coins_earned || 0) + 500;
-      updates.earnings_rs = creatorSecurity.computeEarningsRs(updates.coins_earned);
+  app.post('/api/agency/creators/approve-bulk', requireAgency, async (req, res) => {
+    if (!applyCreatorStatusBulk || !creatorApprovalDeps) {
+      return res.status(501).json({ error: 'Approval module unavailable' });
     }
-    Object.assign(creator, updates);
-    if (supabase) {
-      await supabase.from('creators').update(updates).eq('id', creatorId);
-    } else {
-      saveLocalDb?.();
+    try {
+      let { creatorIds, status, reason, pendingOnly } = req.body || {};
+      status = status || 'approved';
+      if (pendingOnly) {
+        let list = [];
+        if (supabase) {
+          const { data } = await supabase.from('creators').select('id').eq('status', 'pending');
+          list = (data || []).map((r) => r.id);
+        } else {
+          list = (localDb.creators || []).filter((c) => c.status === 'pending').map((c) => c.id);
+        }
+        creatorIds = list;
+      }
+      const result = await applyCreatorStatusBulk(creatorApprovalDeps(), {
+        creatorIds,
+        status,
+        reason,
+      });
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      res.json({ ok: true, ...result });
+    } catch (e) {
+      console.error('[AGENCY_APPROVE_BULK]', e);
+      res.status(500).json({ error: 'Bulk approval failed' });
     }
-    audit?.('agency_creator_status', { creatorId, status });
-    io.emit('creator-status-updated', { creatorId, status });
-    res.json({ ok: true, creator: creatorSecurity.stripCreatorSecrets(creator) });
   });
 
   app.post('/api/agency/withdrawals/status', requireAgency, async (req, res) => {

@@ -195,12 +195,37 @@ export default function AgencyDashboard() {
         )}
 
         {tab === 'creators' && (
-          <div className="space-y-2">
-            {creators.map((c) => (
-              <div key={c.id} className="flex flex-wrap items-center gap-2 justify-between border border-white/10 rounded-xl p-3">
+          <div className="space-y-4">
+            {creators.filter((c) => c.status === 'pending').length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl border border-amber-500/25 bg-amber-500/10">
+                <p className="text-sm text-amber-100 font-bold">
+                  {creators.filter((c) => c.status === 'pending').length} pending
+                </p>
+                <button
+                  type="button"
+                  className="mm-btn mm-btn--primary text-[10px] px-3 py-1.5"
+                  onClick={() => {
+                    if (!window.confirm('Approve all pending creators?')) return;
+                    post('/api/agency/creators/approve-bulk', { pendingOnly: true, status: 'approved' });
+                  }}
+                >
+                  Approve all pending
+                </button>
+              </div>
+            )}
+            {[...creators]
+              .sort((a, b) => {
+                const rank = (s) => (s === 'pending' ? 0 : s === 'approved' ? 1 : 2);
+                return rank(a.status) - rank(b.status);
+              })
+              .map((c) => (
+              <div key={c.id} className={`flex flex-wrap items-center gap-2 justify-between border rounded-xl p-3 ${c.status === 'pending' ? 'border-amber-500/35 bg-amber-500/5' : 'border-white/10'}`}>
                 <div>
                   <p className="font-bold">@{c.handle_name}</p>
-                  <p className="text-[10px] text-white/40">{c.status} · earned {formatNuts(c.coins_earned)} Nuts (${nutsToUsd(c.coins_earned)})</p>
+                  <p className="text-[10px] text-white/40">{c.status} · {c.email || 'no email'} · earned {formatNuts(c.coins_earned)} Nuts (${nutsToUsd(c.coins_earned)})</p>
+                  {c.profile_link && (
+                    <a href={c.profile_link} target="_blank" rel="noopener noreferrer" className="text-[10px] text-cyan-400 underline">Profile ↗</a>
+                  )}
                 </div>
                 <div className="flex gap-1">
                   {c.status === 'pending' && (
