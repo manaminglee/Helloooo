@@ -600,6 +600,22 @@ export function GroupAudioRoom({
   useEffect(() => { setLocalIdentity(audioIdentity); }, [audioIdentity]);
 
   useEffect(() => {
+    if (isSignedIn || !audioIdentityHook) return undefined;
+    const hasCreator = !!audioIdentityHook.hasCreatorSession;
+    if (!hasCreator || audioIdentityHook.hydrating) return undefined;
+    let cancelled = false;
+    void (async () => {
+      const ok = await audioIdentityHook.loginFromCreator?.();
+      if (!cancelled && ok) {
+        audioIdentityHook.refresh?.();
+        onIdentityUpdate?.();
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSignedIn, audioIdentityHook?.hasCreatorSession, audioIdentityHook?.hydrating]);
+
+  useEffect(() => {
     if (paInvite) setUserMenu(null);
   }, [paInvite]);
 
@@ -1005,6 +1021,18 @@ export function GroupAudioRoom({
   };
 
   if (!channel) {
+    const creatorSession = !!audioIdentityHook?.hasCreatorSession;
+
+    if (!isSignedIn && audioIdentityHook && (audioIdentityHook.hydrating || creatorSession)) {
+      return (
+        <div className="mm-shell mm-section mm-voice-lobby mm-voice-lobby--locked flex items-center justify-center min-h-[50dvh]">
+          <p className="mm-body text-white/60">
+            {creatorSession ? 'Signing in with your creator account…' : 'Restoring your voice identity…'}
+          </p>
+        </div>
+      );
+    }
+
     if (!isSignedIn && audioIdentityHook) {
       if (identityHydrating) {
         return (

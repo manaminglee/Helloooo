@@ -314,7 +314,13 @@ function AppShell() {
     }
     if (mode === MODES.TEXT || mode === MODES.VIDEO) socket?.emit('cancel-find-partner');
     if (mode === MODES.GROUP_TEXT) {
-      void audioIdentityHook.logout();
+      // Keep voice identity for creators (re-linked from session); clear for guests only.
+      try {
+        const hasCreator = !!window.localStorage?.getItem?.('mm_creator_session');
+        if (!hasCreator) void audioIdentityHook.logout();
+      } catch {
+        void audioIdentityHook.logout();
+      }
     }
     setRoomId(null);
     setAppState(STATES.LANDING);

@@ -3,6 +3,7 @@ import { useLivesList } from '../../hooks/useLiveStream';
 import { AudioIdentityGate } from '../AudioIdentityGate';
 import { NutsSymbol } from '../NutsSymbol';
 import { isMobileLiveDevice } from '../../utils/liveDevice';
+import { getCreatorSessionToken } from '../../utils/creatorAuth';
 
 /**
  * Discovery page for active in-app lives.
@@ -15,15 +16,31 @@ export default function LivesFeed({
   isCreator = false,
   canCreateLive = false,
 }) {
-  const { isSignedIn } = identityHook;
+  const { isSignedIn, hydrating, loginFromCreator } = identityHook;
   const { lives, loading, error, refresh, livekit } = useLivesList(6000);
   const [gate, setGate] = useState(false);
+  const [creatorLinking, setCreatorLinking] = useState(false);
   const showCreate = canCreateLive || isCreator;
+  const creatorSession = !!getCreatorSessionToken();
 
   useEffect(() => {
     document.body.classList.add('mm-lives-mode');
     return () => document.body.classList.remove('mm-lives-mode');
   }, []);
+
+  useEffect(() => {
+    if (isSignedIn || !creatorSession || hydrating) return undefined;
+    let cancelled = false;
+    setCreatorLinking(true);
+    (async () => {
+      const ok = await loginFromCreator?.();
+      if (!cancelled) {
+        setCreatorLinking(false);
+        if (ok) setGate(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isSignedIn, creatorSession, hydrating, loginFromCreator]);
 
   if (!isMobileLiveDevice()) {
     return (
@@ -37,6 +54,16 @@ export default function LivesFeed({
           </button>
         )}
         <button type="button" className="mm-btn mm-btn--ghost mt-4" onClick={onExit}>Back home</button>
+      </div>
+    );
+  }
+
+  if (hydrating || creatorLinking || (creatorSession && !isSignedIn)) {
+    return (
+      <div className="mm-live-shell mm-live-shell--center">
+        <p className="text-white/70 text-sm">
+          {creatorSession ? 'Signing in with your creator account…' : 'Restoring identity…'}
+        </p>
       </div>
     );
   }

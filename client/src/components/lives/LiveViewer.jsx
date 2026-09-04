@@ -5,6 +5,7 @@ import { useLivesList, useLiveSession } from '../../hooks/useLiveStream';
 import { useLiveKitLive } from '../../hooks/useLiveKitLive';
 import { LiveGiftDrawer } from './LiveGiftDrawer';
 import { isMobileLiveDevice } from '../../utils/liveDevice';
+import { getCreatorSessionToken } from '../../utils/creatorAuth';
 
 function LiveSlide({ live, socket, identity, identityHook, active, onBack }) {
   const videoRef = useRef(null);
@@ -162,10 +163,12 @@ export default function LiveViewer({
   initialLiveId = null,
   onExit,
 }) {
-  const { identity, isSignedIn } = identityHook;
+  const { identity, isSignedIn, hydrating, loginFromCreator } = identityHook;
   const { lives, loading, refresh } = useLivesList(10000);
   const [index, setIndex] = useState(0);
+  const [creatorLinking, setCreatorLinking] = useState(false);
   const touchY = useRef(null);
+  const creatorSession = !!getCreatorSessionToken();
 
   const ordered = useMemoLives(lives, initialLiveId);
 
@@ -174,6 +177,18 @@ export default function LiveViewer({
     const i = ordered.findIndex((l) => l.id === initialLiveId);
     if (i >= 0) setIndex(i);
   }, [initialLiveId, ordered]);
+
+  useEffect(() => {
+    if (isSignedIn || !creatorSession || hydrating) return undefined;
+    let cancelled = false;
+    setCreatorLinking(true);
+    (async () => {
+      const ok = await loginFromCreator?.();
+      if (!cancelled) setCreatorLinking(false);
+      if (ok) refresh?.();
+    })();
+    return () => { cancelled = true; };
+  }, [isSignedIn, creatorSession, hydrating, loginFromCreator, refresh]);
 
   const onTouchStart = (e) => {
     touchY.current = e.touches[0].clientY;
@@ -192,6 +207,14 @@ export default function LiveViewer({
       <div className="mm-live-desktop-block">
         <p>Lives are mobile-only. Open this page on your phone.</p>
         <button type="button" className="mm-btn mm-btn--ghost mt-4" onClick={onExit}>Back</button>
+      </div>
+    );
+  }
+
+  if (hydrating || creatorLinking || (creatorSession && !isSignedIn)) {
+    return (
+      <div className="mm-live-shell mm-live-shell--center">
+        <p className="text-white/70 text-sm">Signing in with your creator account…</p>
       </div>
     );
   }

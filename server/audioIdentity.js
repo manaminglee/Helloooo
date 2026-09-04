@@ -20,7 +20,7 @@ const WEAK_PINS = new Set([
 ]);
 
 function registerAudioIdentity(app, io, deps) {
-  const { saveLocalDb, localDb, audit, supabase } = deps;
+  const { saveLocalDb, localDb, audit, supabase, getCreatorForRequest } = deps;
 
   const identities = new Map();
   const sessions = new Map();
@@ -200,6 +200,8 @@ function registerAudioIdentity(app, io, deps) {
       peakXp,
       giftsReceived: Math.max(0, Number(row?.giftsReceived) || 0),
       coinsRecharged: Math.max(0, Number(row?.coinsRecharged) || 0),
+      linkedCreatorId: row.linkedCreatorId || row.linked_creator_id || null,
+      creatorProvisioned: !!(row.creatorProvisioned || row.creator_provisioned),
       createdAt: row.createdAt || Date.now(),
       updatedAt: row.updatedAt || Date.now(),
     };
@@ -236,6 +238,8 @@ function registerAudioIdentity(app, io, deps) {
       peakXp: rec.peakXp,
       giftsReceived: rec.giftsReceived,
       coinsRecharged: rec.coinsRecharged,
+      linkedCreatorId: rec.linkedCreatorId || null,
+      creatorProvisioned: !!rec.creatorProvisioned,
       createdAt: rec.createdAt,
       updatedAt: rec.updatedAt,
     };
@@ -349,6 +353,95 @@ function registerAudioIdentity(app, io, deps) {
       userData.nickname = rec.username;
     }
     return view;
+  }
+
+  function findByLinkedCreatorId(creatorId) {
+    const id = String(creatorId || '');
+    if (!id) return null;
+    for (const rec of identities.values()) {
+      if (rec.linkedCreatorId === id) return rec;
+    }
+    return null;
+  }
+
+  function usernameFromCreatorHandle(handle) {
+    let h = String(handle || '').replace(/^@+/, '').trim();
+    h = h.replace(/[^a-zA-Z0-9_.\-!?@#$%&*]/g, '').slice(0, 20);
+    if (!h || !/^[a-zA-Z0-9]/.test(h)) h = `c${h || 'reator'}`.slice(0, 20);
+    if (h.length < 3) h = `${h}xxx`.slice(0, 20);
+    if (!USERNAME_RE.test(h)) {
+      h = `c${crypto.randomBytes(4).toString('hex')}`.slice(0, 20);
+    }
+    return h;
+  }
+
+  /**
+   * Mint / reuse an audio identity for an approved creator session — no PIN required.
+   * Used when creators open Lives or voice rooms from Creator Hub.
+   */
+  async function ensureFromCreator({ creator, ip }) {
+    await ensureHydrated();
+    if (!creator?.id || !creator?.handle_name) {
+      return { ok: false, error: 'Invalid creator' };
+    }
+
+    let rec = findByLinkedCreatorId(creator.id);
+    if (rec) {
+      const token = createSession(rec.usernameKey, ip);
+      audit?.('audio_identity_from_creator', { username: rec.username, creatorId: creator.id, ip, reused: true });
+      return { ok: true, token, identity: publicView(rec), via: 'creator' };
+    }
+
+    const base = usernameFromCreatorHandle(creator.handle_name);
+    let name = base;
+    let key = base.toLowerCase();
+    let n = 0;
+    while (identities.has(key)) {
+      const existing = identities.get(key);
+      if (existing.linkedCreatorId === creator.id) {
+        const token = createSession(key, ip);
+        return { ok: true, token, identity: publicView(existing), via: 'creator' };
+      }
+      // Claim orphan handle that matches creator exactly (legacy / same person)
+      if (n === 0 && key === String(creator.handle_name || '').toLowerCase() && !existing.linkedCreatorId) {
+        existing.linkedCreatorId = creator.id;
+        existing.creatorProvisioned = true;
+        identities.set(key, existing);
+        await persist(key, { linkCreatorId: creator.id });
+        const token = createSession(key, ip);
+        audit?.('audio_identity_from_creator', { username: existing.username, creatorId: creator.id, ip, linked: true });
+        return { ok: true, token, identity: publicView(existing), via: 'creator' };
+      }
+      n += 1;
+      name = `${base.slice(0, 16)}${n}`;
+      key = name.toLowerCase();
+      if (n > 99) return { ok: false, error: 'Could not allocate voice username for creator' };
+    }
+
+    const pinSalt = crypto.randomBytes(16).toString('hex');
+    const secretPin = String(10000 + crypto.randomInt(90000)).slice(-4);
+    rec = normalizeRecord({
+      username: name,
+      pinSalt,
+      pinHash: hashPin(secretPin, pinSalt),
+      nameColor: NAME_COLORS[Math.abs(crypto.createHash('sha1').update(creator.id).digest()[0]) % NAME_COLORS.length],
+      coins: 50,
+      xp: 0,
+      peakXp: 0,
+      giftsReceived: 0,
+      coinsRecharged: 0,
+      linkedCreatorId: creator.id,
+      creatorProvisioned: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    // Do not register PIN fingerprint — creators never use this PIN; login is via creator session.
+    identities.set(key, rec);
+    await persist(key, { registerIp: ip, creatorId: creator.id });
+    await journalLedger(key, 50, 'creator_provision_bonus', rec.coins, { ip, creatorId: creator.id });
+    const token = createSession(key, ip);
+    audit?.('audio_identity_from_creator', { username: name, creatorId: creator.id, ip, created: true });
+    return { ok: true, token, identity: publicView(rec), via: 'creator' };
   }
 
   async function register({ username, pin, nameColor, ip }) {
@@ -581,6 +674,27 @@ function registerAudioIdentity(app, io, deps) {
     });
   });
 
+  app.post('/api/audio-identity/from-creator', async (req, res) => {
+    try {
+      if (typeof getCreatorForRequest !== 'function') {
+        return res.status(501).json({ ok: false, error: 'Creator auth unavailable' });
+      }
+      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+      const { creator, via } = await getCreatorForRequest(req);
+      if (!creator || via !== 'session') {
+        return res.status(401).json({ ok: false, error: 'Creator secure login required' });
+      }
+      if (creator.status !== 'approved') {
+        return res.status(403).json({ ok: false, error: 'Only approved creators can skip voice login' });
+      }
+      const result = await ensureFromCreator({ creator, ip });
+      if (!result.ok) return res.status(400).json(result);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message || 'Creator voice login failed' });
+    }
+  });
+
   return {
     register,
     login,
@@ -597,6 +711,7 @@ function registerAudioIdentity(app, io, deps) {
     attachSocketHandlers,
     restoreByIp,
     bindIpSession,
+    ensureFromCreator,
   };
 }
 

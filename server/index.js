@@ -3153,6 +3153,7 @@ const audioIdentity = registerAudioIdentity(app, io, {
   localDb,
   supabase,
   audit: moderation.audit,
+  getCreatorForRequest,
 });
 
 registerPayments(app, { persistence, blockedIps, io, users, audioIdentity });

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { API_BASE } from '../config/apiBase';
+import { getCreatorAuthHeaders, getCreatorSessionToken } from '../utils/creatorAuth';
 
 const STORAGE_KEY = 'mm_audio_session';
 const USERNAME_KEY = 'mm_audio_username';
@@ -33,6 +34,32 @@ export function useAudioIdentity(socket) {
     });
   }, [socket]);
 
+  const persistSession = useCallback((sessionToken, id) => {
+    setToken(sessionToken);
+    setIdentity(id);
+    try { sessionStorage.setItem(STORAGE_KEY, sessionToken); } catch { /* ignore */ }
+    if (id?.username) persistUsername(id.username);
+    attachSocket(sessionToken);
+  }, [attachSocket]);
+
+  /** Approved creator session → voice/Lives identity without PIN. */
+  const loginFromCreator = useCallback(async () => {
+    if (!getCreatorSessionToken()) return false;
+    try {
+      const res = await fetch(`${API_BASE}/api/audio-identity/from-creator`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok || !data.token || !data.identity) return false;
+      persistSession(data.token, data.identity);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [persistSession]);
+
   useEffect(() => {
     let cancelled = false;
     async function bootstrap() {
@@ -64,6 +91,11 @@ export function useAudioIdentity(socket) {
             return;
           }
         }
+        // Creator already logged in — skip PIN / access-code gate
+        if (!cancelled && getCreatorSessionToken()) {
+          const ok = await loginFromCreator();
+          if (ok) return;
+        }
         if (token && socket) attachSocket(token);
       } catch {
         if (token && socket) attachSocket(token);
@@ -83,14 +115,6 @@ export function useAudioIdentity(socket) {
     attachSocket(token);
     return () => socket.off('audio-identity:ready', onReady);
   }, [socket, token, attachSocket, identity]);
-
-  const persistSession = (sessionToken, id) => {
-    setToken(sessionToken);
-    setIdentity(id);
-    try { sessionStorage.setItem(STORAGE_KEY, sessionToken); } catch { /* ignore */ }
-    if (id?.username) persistUsername(id.username);
-    attachSocket(sessionToken);
-  };
 
   const register = async ({ username, pin, nameColor }) => {
     setLoading(true);
@@ -191,11 +215,13 @@ export function useAudioIdentity(socket) {
     setError,
     register,
     login,
+    loginFromCreator,
     logout,
     refresh,
     clearLocalIdentity,
     savedUsername: readSavedUsername(),
     hydrating,
     isSignedIn: !!identity?.username,
+    hasCreatorSession: !!getCreatorSessionToken(),
   };
 }
