@@ -16,7 +16,7 @@ function elapsed(startedAt) {
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
-function LiveCard({ live, onOpen, socket }) {
+function LiveCard({ live, onOpen, socket, index = 0 }) {
   const cardRef = useRef(null);
   const videoRef = useRef(null);
   const [inView, setInView] = useState(false);
@@ -41,7 +41,13 @@ function LiveCard({ live, onOpen, socket }) {
   });
 
   return (
-    <button type="button" className="feed-card" onClick={() => onOpen(live.id)} ref={cardRef}>
+    <button
+      type="button"
+      className="feed-card feed-card--enter"
+      style={{ '--feed-i': index }}
+      onClick={() => onOpen(live.id)}
+      ref={cardRef}
+    >
       <div
         className="feed-card__thumb"
         style={live.wallpaperUrl ? { backgroundImage: `url(${live.wallpaperUrl})` } : undefined}
@@ -191,8 +197,8 @@ export default function LivesFeed({
         )}
 
         <div className="feed-grid">
-          {lives.map((live) => (
-            <LiveCard key={live.id} live={live} onOpen={onOpenLive} socket={socket} />
+          {lives.map((live, index) => (
+            <LiveCard key={live.id} live={live} onOpen={onOpenLive} socket={socket} index={index} />
           ))}
         </div>
 

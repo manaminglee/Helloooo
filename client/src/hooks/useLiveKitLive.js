@@ -19,7 +19,6 @@ export function useLiveKitLive({
   asHost = false,
   asGuest = false,
   videoElRef = null,
-  mirrorLocal = false,
   beautyEnabled = true,
   onClarityTimeout = null,
 }) {
@@ -38,11 +37,12 @@ export function useLiveKitLive({
   const hasMediaRef = useRef(false);
   const beautyRafRef = useRef(0);
   const beautyCleanupRef = useRef(null);
+  const beautyTsRef = useRef(0);
+  /** @type {React.MutableRefObject<{ hidden: HTMLVideoElement, landmarker: object, outStream: MediaStream, rawTrack: import('livekit-client').LocalTrack } | null>} */
+  const beautyPipelineRef = useRef(null);
 
   const beautyEnabledRef = useRef(beautyEnabled);
   beautyEnabledRef.current = beautyEnabled;
-  const mirrorLocalRef = useRef(mirrorLocal);
-  mirrorLocalRef.current = mirrorLocal;
   const onClarityTimeoutRef = useRef(onClarityTimeout);
   onClarityTimeoutRef.current = onClarityTimeout;
   const videoElRefStable = useRef(videoElRef);
@@ -62,8 +62,10 @@ export function useLiveKitLive({
   const stopBeautyPipeline = useCallback(() => {
     if (beautyRafRef.current) cancelAnimationFrame(beautyRafRef.current);
     beautyRafRef.current = 0;
+    beautyTsRef.current = 0;
     try { beautyCleanupRef.current?.(); } catch { /* */ }
     beautyCleanupRef.current = null;
+    beautyPipelineRef.current = null;
   }, []);
 
   const disconnect = useCallback(async () => {
@@ -167,7 +169,6 @@ export function useLiveKitLive({
         const mark = () => markMediaRef.current();
         const watch = () => startClarityWatchRef.current();
         const vRef = videoElRefStable.current;
-        const mirror = mirrorLocalRef.current;
 
         const attachRemoteVideo = (track) => {
           const el = vRef?.current;
@@ -291,66 +292,88 @@ export function useLiveKitLive({
           }
 
           let publishVideo = videoTrack;
-          if (videoTrack && beautyEnabledRef.current) {
-            try {
-              const landmarker = await loadFaceLandmarker();
-              const rawMsTrack = videoTrack.mediaStreamTrack;
-              const hidden = document.createElement('video');
-              hidden.playsInline = true;
-              hidden.muted = true;
-              hidden.autoplay = true;
-              hidden.setAttribute('playsinline', '');
-              hidden.setAttribute('webkit-playsinline', 'true');
-              hidden.style.cssText = 'position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;left:-9999px';
-              document.body.appendChild(hidden);
-              hidden.srcObject = new MediaStream([rawMsTrack]);
-              await hidden.play().catch(() => {});
 
-              const canvas = document.createElement('canvas');
-              const blurCanvas = document.createElement('canvas');
-              const ctx = canvas.getContext('2d', { alpha: false });
-              const blurCtx = blurCanvas.getContext('2d', { alpha: false });
-              const outStream = canvas.captureStream(24);
-              const beautyMsTrack = outStream.getVideoTracks()[0];
+          /** Canvas pipeline — beauty toggles at runtime without republishing. */
+          const startCameraPipeline = async (rawVideoTrack) => {
+            const landmarker = await loadFaceLandmarker();
+            const rawMsTrack = rawVideoTrack.mediaStreamTrack;
+            const hidden = document.createElement('video');
+            hidden.playsInline = true;
+            hidden.muted = true;
+            hidden.autoplay = true;
+            hidden.setAttribute('playsinline', '');
+            hidden.setAttribute('webkit-playsinline', 'true');
+            hidden.style.cssText = 'position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;left:-9999px';
+            document.body.appendChild(hidden);
+            hidden.srcObject = new MediaStream([rawMsTrack]);
+            await hidden.play().catch(() => {});
 
-              const loop = () => {
-                if (hidden.readyState >= 2) {
-                  drawFaceProcessedFrame(
-                    ctx,
-                    blurCtx,
-                    hidden,
-                    landmarker,
-                    false,
-                    performance.now(),
-                    'beauty',
-                  );
-                }
-                beautyRafRef.current = requestAnimationFrame(loop);
-              };
-              beautyRafRef.current = requestAnimationFrame(loop);
-              beautyCleanupRef.current = () => {
-                cancelAnimationFrame(beautyRafRef.current);
-                beautyRafRef.current = 0;
-                try { hidden.srcObject = null; hidden.remove(); } catch { /* */ }
-                try { beautyMsTrack.stop(); } catch { /* */ }
-              };
+            const canvas = document.createElement('canvas');
+            const blurCanvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d', { alpha: false });
+            const blurCtx = blurCanvas.getContext('2d', { alpha: false });
+            const outStream = canvas.captureStream(24);
+            const processedMsTrack = outStream.getVideoTracks()[0];
+            beautyTsRef.current = 0;
 
-              await room.localParticipant.publishTrack(beautyMsTrack, {
-                source: Track.Source.Camera,
-                name: 'beauty-cam',
-              });
-              publishVideo = null;
-              if (vRef?.current) {
-                const el = vRef.current;
-                el.srcObject = outStream;
-                el.muted = true;
-                el.playsInline = true;
-                el.setAttribute('playsinline', 'true');
-                el.setAttribute('webkit-playsinline', 'true');
-                if (mirror && facingRef.current === 'user') el.style.transform = 'scaleX(-1)';
-                void el.play?.().catch(() => {});
+            const loop = () => {
+              if (hidden.readyState >= 2) {
+                beautyTsRef.current += 33;
+                const mode = beautyEnabledRef.current ? 'beauty' : 'off';
+                drawFaceProcessedFrame(
+                  ctx,
+                  blurCtx,
+                  hidden,
+                  landmarker,
+                  false,
+                  beautyTsRef.current,
+                  mode,
+                );
               }
-            } catch {
+              beautyRafRef.current = requestAnimationFrame(loop);
+            };
+            beautyRafRef.current = requestAnimationFrame(loop);
+
+            beautyPipelineRef.current = {
+              hidden,
+              landmarker,
+              outStream,
+              rawTrack: rawVideoTrack,
+            };
+            beautyCleanupRef.current = () => {
+              cancelAnimationFrame(beautyRafRef.current);
+              beautyRafRef.current = 0;
+              beautyTsRef.current = 0;
+              try { hidden.srcObject = null; hidden.remove(); } catch { /* */ }
+              try { processedMsTrack.stop(); } catch { /* */ }
+              beautyPipelineRef.current = null;
+            };
+
+            await room.localParticipant.publishTrack(processedMsTrack, {
+              source: Track.Source.Camera,
+              name: 'processed-cam',
+            });
+
+            if (vRef?.current) {
+              const el = vRef.current;
+              el.srcObject = outStream;
+              el.muted = true;
+              el.playsInline = true;
+              el.setAttribute('playsinline', 'true');
+              el.setAttribute('webkit-playsinline', 'true');
+              el.style.transform = '';
+              void el.play?.().catch(() => {});
+            }
+            return true;
+          };
+
+          if (videoTrack) {
+            try {
+              await startCameraPipeline(videoTrack);
+              publishVideo = null;
+            } catch (err) {
+              console.warn('[live] camera pipeline unavailable, using raw camera', err);
+              stopBeautyPipeline();
               publishVideo = videoTrack;
             }
           }
@@ -366,7 +389,7 @@ export function useLiveKitLive({
               el.playsInline = true;
               el.setAttribute('playsinline', 'true');
               el.setAttribute('webkit-playsinline', 'true');
-              if (mirror && facingRef.current === 'user') el.style.transform = 'scaleX(-1)';
+              el.style.transform = '';
               void el.play?.().catch(() => {});
             }
           }
@@ -433,23 +456,45 @@ export function useLiveKitLive({
         video: { facingMode: next, resolution: { width: 720, height: 1280, frameRate: 24 } },
       });
       if (!newTrack) return;
-      if (oldTrack) {
-        try { await room.localParticipant.unpublishTrack(oldTrack); } catch { /* */ }
-        try { oldTrack.stop(); } catch { /* */ }
-        localTracksRef.current = localTracksRef.current.filter((t) => t !== oldTrack);
+
+      const pipeline = beautyPipelineRef.current;
+      if (pipeline?.hidden) {
+        if (oldTrack) {
+          try { oldTrack.stop(); } catch { /* */ }
+          localTracksRef.current = localTracksRef.current.filter((t) => t !== oldTrack);
+        }
+        localTracksRef.current.push(newTrack);
+        pipeline.rawTrack = newTrack;
+        pipeline.hidden.srcObject = new MediaStream([newTrack.mediaStreamTrack]);
+        beautyTsRef.current = 0;
+        await pipeline.hidden.play().catch(() => {});
+      } else {
+        if (oldTrack) {
+          try { await room.localParticipant.unpublishTrack(oldTrack); } catch { /* */ }
+          try { oldTrack.stop(); } catch { /* */ }
+          localTracksRef.current = localTracksRef.current.filter((t) => t !== oldTrack);
+        }
+        await room.localParticipant.publishTrack(newTrack, { source: Track.Source.Camera });
+        localTracksRef.current.push(newTrack);
+        const el = videoElRefStable.current?.current;
+        if (el) {
+          newTrack.attach(el);
+          el.muted = true;
+          el.playsInline = true;
+          el.setAttribute('playsinline', 'true');
+          el.setAttribute('webkit-playsinline', 'true');
+          el.style.transform = '';
+          void el.play?.().catch(() => {});
+        }
       }
-      await room.localParticipant.publishTrack(newTrack, { source: Track.Source.Camera });
-      localTracksRef.current.push(newTrack);
+
       const el = videoElRefStable.current?.current;
-      if (el) {
-        newTrack.attach(el);
-        el.muted = true;
-        el.playsInline = true;
-        el.setAttribute('playsinline', 'true');
-        el.setAttribute('webkit-playsinline', 'true');
-        el.style.transform = next === 'user' && mirrorLocalRef.current ? 'scaleX(-1)' : '';
+      if (el && pipeline?.outStream) {
+        el.srcObject = pipeline.outStream;
+        el.style.transform = '';
         void el.play?.().catch(() => {});
       }
+
       facingRef.current = next;
       setFacingMode(next);
     } catch {

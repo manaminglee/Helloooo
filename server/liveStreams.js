@@ -406,6 +406,8 @@ function registerLiveStreams(app, io, deps) {
         await store.updateRoom(r.id, {
           hostSocketId: socketId,
           hostInstance: INSTANCE,
+          avatarUrl: creator.avatar_url || r.avatarUrl || null,
+          displayName: creator.display_name || creator.handle_name || r.displayName,
           ...(title ? { title: String(title).slice(0, 80) } : {}),
           ...(wallpaperUrl ? { wallpaperUrl } : {}),
         });

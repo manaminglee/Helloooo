@@ -1,5 +1,5 @@
 /* Helloooo - Service Worker (static assets only) */
-const CACHE = 'helloooo-static-v15';
+const CACHE = 'helloooo-static-v16';
 
 const offlineResponse = () => new Response('Offline', {
   status: 503,

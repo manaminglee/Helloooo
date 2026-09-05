@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { MmIcon } from '../icons/MmIcon';
 import { GiftArt } from '../icons/GiftArt';
@@ -28,8 +28,20 @@ export function initials(name) {
 }
 
 export const Avatar = memo(function Avatar({ src, name, className = '' }) {
-  if (src) {
-    return <img className={className} src={src} alt="" loading="lazy" decoding="async" />;
+  const [broken, setBroken] = useState(false);
+  useEffect(() => { setBroken(false); }, [src]);
+  const url = src && !broken ? String(src).trim() : '';
+  if (url) {
+    return (
+      <img
+        className={className}
+        src={url}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        onError={() => setBroken(true)}
+      />
+    );
   }
   return <span className={className} aria-hidden>{initials(name)}</span>;
 });

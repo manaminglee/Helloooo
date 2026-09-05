@@ -1,39 +1,36 @@
 {
-  "name": "Helloooo – Random People, Real Conversations",
+  "name": "Helloooo Live & Audio",
   "short_name": "Helloooo",
-  "description": "Free anonymous video, text, and voice chat. Meet strangers by interest — Omegle-style alternative with group video and creators.",
+  "description": "Watch creators live, join voice rooms, and send gifts — one app for Live and Audio.",
   "lang": "en",
   "dir": "ltr",
   "id": "/",
-  "start_url": "/",
+  "start_url": "/live?src=pwa",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#070811",
-  "theme_color": "#7c3aed",
+  "background_color": "#07060f",
+  "theme_color": "#ff2d6f",
   "orientation": "portrait-primary",
   "categories": ["social", "entertainment", "communication"],
   "icons": [
+    { "src": "/favicon-16.png", "sizes": "16x16", "type": "image/png" },
+    { "src": "/favicon.png", "sizes": "32x32", "type": "image/png" },
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
+    { "src": "/helloooo-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/helloooo-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
     {
-      "src": "/favicon-16.png",
-      "sizes": "16x16",
-      "type": "image/png"
+      "name": "Live now",
+      "short_name": "Live",
+      "url": "/live?src=shortcut",
+      "description": "Creators streaming right now"
     },
     {
-      "src": "/favicon.png",
-      "sizes": "32x32",
-      "type": "image/png"
-    },
-    {
-      "src": "/apple-touch-icon.png",
-      "sizes": "180x180",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/helloooo-logo.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "name": "Voice rooms",
+      "short_name": "Audio",
+      "url": "/audio?src=shortcut",
+      "description": "Join a voice room"
     }
   ]
 }

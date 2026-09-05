@@ -46,21 +46,33 @@ function mapPoint(landmark, w, h, mirror) {
   return { x, y };
 }
 
-function clipFaceMesh(ctx, landmarks, w, h, mirror, expand = 1.1) {
+function faceOvalBounds(landmarks, w, h, mirror, expand = 1.12) {
   const points = FACE_OVAL.map((idx) => mapPoint(landmarks[idx], w, h, mirror));
-  let cx = 0;
-  let cy = 0;
-  points.forEach((p) => { cx += p.x; cy += p.y; });
-  cx /= points.length;
-  cy /= points.length;
-
-  ctx.beginPath();
-  points.forEach((p, i) => {
-    const x = cx + (p.x - cx) * expand;
-    const y = cy + (p.y - cy) * expand;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  points.forEach((p) => {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
   });
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  return {
+    cx,
+    cy,
+    rx: Math.max(12, ((maxX - minX) / 2) * expand),
+    ry: Math.max(16, ((maxY - minY) / 2) * expand),
+  };
+}
+
+/** Elliptical face mask — smooth edge, no polygon “mesh” seam. */
+function clipFeatheredFace(ctx, landmarks, w, h, mirror, expand = 1.12) {
+  const { cx, cy, rx, ry } = faceOvalBounds(landmarks, w, h, mirror, expand);
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
   ctx.closePath();
 }
 
@@ -81,6 +93,16 @@ function drawBaseFrame(ctx, video, w, h, mirror) {
   ctx.restore();
 }
 
+function drawMirroredImage(ctx, source, w, h, mirror) {
+  ctx.save();
+  if (mirror) {
+    ctx.translate(w, 0);
+    ctx.scale(-1, 1);
+  }
+  ctx.drawImage(source, 0, 0, w, h);
+  ctx.restore();
+}
+
 /**
  * Draw one video frame with tracked face-region blur onto `ctx`.
  */
@@ -98,17 +120,13 @@ export function drawFaceBlurFrame(ctx, blurCtx, video, landmarker, mirror, times
 
   blurCtx.save();
   blurCtx.filter = 'blur(20px)';
-  if (mirror) {
-    blurCtx.translate(w, 0);
-    blurCtx.scale(-1, 1);
-  }
-  blurCtx.drawImage(video, 0, 0, w, h);
+  drawMirroredImage(blurCtx, video, w, h, mirror);
   blurCtx.restore();
   blurCtx.filter = 'none';
 
   for (const landmarks of faces) {
     ctx.save();
-    clipFaceMesh(ctx, landmarks, w, h, mirror);
+    clipFeatheredFace(ctx, landmarks, w, h, mirror);
     ctx.clip();
     ctx.drawImage(blurCtx.canvas, 0, 0, w, h);
     ctx.restore();
@@ -118,7 +136,8 @@ export function drawFaceBlurFrame(ctx, blurCtx, video, landmarker, mirror, times
 }
 
 /**
- * Soft beauty pass: gentle skin smooth + slight brighten/warm on the face oval.
+ * Soft beauty pass — full-frame tone + light smooth when a face is present.
+ * No per-face polygon clip, so nothing “mesh-like” appears on stream.
  */
 export function drawBeautyFrame(ctx, blurCtx, video, landmarker, mirror, timestampMs) {
   const w = video.videoWidth;
@@ -126,40 +145,33 @@ export function drawBeautyFrame(ctx, blurCtx, video, landmarker, mirror, timesta
   if (!w || !h) return false;
 
   ensureCanvasSize(ctx, blurCtx, w, h);
-  drawBaseFrame(ctx, video, w, h, mirror);
 
   const results = landmarker.detectForVideo(video, timestampMs);
-  const faces = results?.faceLandmarks;
-  if (!faces?.length) {
-    ctx.save();
-    ctx.filter = 'brightness(1.04) contrast(1.03) saturate(1.06)';
-    ctx.drawImage(ctx.canvas, 0, 0);
-    ctx.filter = 'none';
-    ctx.restore();
-    return true;
-  }
+  const hasFace = (results?.faceLandmarks?.length ?? 0) > 0;
 
-  blurCtx.save();
-  blurCtx.filter = 'blur(6px) brightness(1.08) contrast(1.02) saturate(1.08)';
+  ctx.save();
   if (mirror) {
-    blurCtx.translate(w, 0);
-    blurCtx.scale(-1, 1);
+    ctx.translate(w, 0);
+    ctx.scale(-1, 1);
   }
-  blurCtx.drawImage(video, 0, 0, w, h);
-  blurCtx.restore();
-  blurCtx.filter = 'none';
+  ctx.filter = hasFace
+    ? 'brightness(1.06) contrast(1.04) saturate(1.08)'
+    : 'brightness(1.03) contrast(1.02) saturate(1.04)';
+  ctx.drawImage(video, 0, 0, w, h);
+  ctx.filter = 'none';
+  ctx.restore();
 
-  for (const landmarks of faces) {
+  if (hasFace) {
+    blurCtx.save();
+    blurCtx.filter = 'blur(4px)';
+    drawMirroredImage(blurCtx, video, w, h, mirror);
+    blurCtx.restore();
+    blurCtx.filter = 'none';
+
     ctx.save();
-    clipFaceMesh(ctx, landmarks, w, h, mirror, 1.14);
-    ctx.clip();
-    ctx.globalAlpha = 0.55;
+    ctx.globalAlpha = 0.28;
     ctx.drawImage(blurCtx.canvas, 0, 0, w, h);
     ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'soft-light';
-    ctx.fillStyle = 'rgba(255, 236, 220, 0.28)';
-    ctx.fillRect(0, 0, w, h);
-    ctx.globalCompositeOperation = 'source-over';
     ctx.restore();
   }
 

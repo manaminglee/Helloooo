@@ -73,7 +73,7 @@ export default function LiveRoom({
   } = room;
 
   const [creatorOpen, setCreatorOpen] = useState(false);
-  const [beautyOn, setBeautyOn] = useState(true);
+  const [beautyOn, setBeautyOn] = useState(() => live?.beautyEnabled !== false);
   const [text, setText] = useState('');
   const [giftOpen, setGiftOpen] = useState(false);
   const [viewersOpen, setViewersOpen] = useState(false);
@@ -102,7 +102,6 @@ export default function LiveRoom({
     asHost: isHost,
     asGuest: !isHost && guestPublish,
     videoElRef: videoRef,
-    mirrorLocal: isHost || guestPublish,
     beautyEnabled: (isHost || guestPublish) && (live?.beautyEnabled !== false) && beautyOn,
   });
 
@@ -330,7 +329,7 @@ export default function LiveRoom({
           )}
           <video
             ref={videoRef}
-            className={`live-video${isHost && media.facingMode === 'user' ? ' live-video--mirror' : ''}`}
+            className="live-video"
             playsInline
             webkit-playsinline="true"
             autoPlay
@@ -400,7 +399,7 @@ export default function LiveRoom({
               onClick={() => setCreatorOpen(true)}
               aria-label={`View ${live?.displayName || live?.handle}'s profile`}
             >
-              <Avatar className="live-host__avatar" src={live?.avatarUrl} name={live?.handle} />
+              <Avatar className="live-host__avatar live-host__avatar--pop" src={live?.avatarUrl} name={live?.handle} />
             </button>
             <button
               type="button"

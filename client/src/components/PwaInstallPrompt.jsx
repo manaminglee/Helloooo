@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
+import { isInstalled } from '../utils/pwaManifest';
 
 const DISMISS_KEY = 'mm_pwa_dismissed';
 
-export function PwaInstallPrompt() {
+export function PwaInstallPrompt({ variant = 'default' }) {
   const [deferred, setDeferred] = useState(null);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    if (window.matchMedia('(display-mode: standalone)').matches) return;
+    if (isInstalled()) return;
     try {
       if (localStorage.getItem(DISMISS_KEY) === '1') return;
     } catch { /* ignore */ }
@@ -23,13 +24,23 @@ export function PwaInstallPrompt() {
 
   if (!visible || !deferred) return null;
 
+  const isLive = variant === 'live';
+
   return (
-    <div className="fixed bottom-4 left-4 right-4 z-[3000] max-w-md mx-auto rounded-xl border border-white/10 bg-[#161a22] p-4 shadow-xl mm-mobile-safe">
-      <p className="text-sm text-white mb-3">Install Helloooo 👋 on your home screen for quick access.</p>
-      <div className="flex gap-2">
+    <div className={`mm-pwa-prompt${isLive ? ' mm-pwa-prompt--live' : ''}`}>
+      <div className="mm-pwa-prompt__glow" aria-hidden />
+      <p className="mm-pwa-prompt__title">
+        {isLive ? 'Install Helloooo Live & Audio' : 'Install Helloooo'}
+      </p>
+      <p className="mm-pwa-prompt__body">
+        {isLive
+          ? 'Add Live and voice rooms to your home screen — one app, no browser bar.'
+          : 'Add Helloooo to your home screen for quick access.'}
+      </p>
+      <div className="mm-pwa-prompt__actions">
         <button
           type="button"
-          className="flex-1 min-h-[44px] rounded-lg bg-white text-black text-sm font-medium"
+          className="mm-pwa-prompt__install"
           onClick={async () => {
             await deferred.prompt();
             setVisible(false);
@@ -40,7 +51,7 @@ export function PwaInstallPrompt() {
         </button>
         <button
           type="button"
-          className="px-4 min-h-[44px] rounded-lg border border-white/15 text-sm text-white/70"
+          className="mm-pwa-prompt__dismiss"
           onClick={() => {
             try { localStorage.setItem(DISMISS_KEY, '1'); } catch { /* ignore */ }
             setVisible(false);

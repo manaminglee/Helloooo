@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { LandingPage } from './components/LandingPage';
 import MobileNav from './components/MobileNav';
-import { useLiveManifest, launchTarget } from './utils/pwaManifest';
+import { useLiveManifest, launchTarget, isLiveAudioSurface } from './utils/pwaManifest';
 import { AgeVerificationGate } from './components/AgeVerificationGate';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { UnblockPaymentModal } from './components/UnblockPaymentModal';
@@ -477,17 +477,7 @@ function AppShell() {
               belongs to the video, and a persistent bar would both cover it and
               make it easy to walk out of a session by accident. */}
           <MobileNav
-            active="discover"
-            onSelect={(id) => {
-              if (id === 'discover') { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
-              if (id === 'me') { window.location.assign('/creator'); return; }
-              const target = {
-                live: MODES.LIVES,
-                audio: MODES.GROUP_TEXT,
-                text: MODES.TEXT,
-              }[id];
-              if (target) handleJoin(interest || 'general', joinMeta.displayNickname, target);
-            }}
+            onLive={() => handleJoin(interest || 'general', joinMeta.displayNickname, MODES.LIVES)}
           />
         </div>
       );
@@ -671,7 +661,9 @@ function AppShell() {
         <GiftOverlayLazy socket={socket} />
       </Suspense>
 
-      <PwaInstallPrompt />
+      <PwaInstallPrompt
+        variant={isLiveAudioSurface(mode) ? 'live' : 'default'}
+      />
     </>
   );
 }

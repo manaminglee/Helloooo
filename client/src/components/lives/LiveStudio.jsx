@@ -20,6 +20,11 @@ function validateTitle(raw) {
   return { ok: true, title: t };
 }
 
+/** Profile photo for the header — never the cover/wallpaper thumbnail. */
+function creatorAvatarUrl(creator, liveRow) {
+  return creator?.avatar_url || liveRow?.avatarUrl || null;
+}
+
 /**
  * Creator go-live flow: setup card → the same full-screen room the audience
  * sees, in host mode. There is no separate host layout, so what the creator
@@ -109,6 +114,15 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
     return () => { cancelled = true; };
   }, [needLogin, validateWallpaper]);
 
+  // If the profile photo arrives after go-live, patch it into the live header.
+  useEffect(() => {
+    if (!creator?.avatar_url) return;
+    setLiveObj((prev) => {
+      if (!prev || prev.avatarUrl) return prev;
+      return { ...prev, avatarUrl: creator.avatar_url };
+    });
+  }, [creator?.avatar_url]);
+
   // --- camera + mic preview -------------------------------------------------
   const preview = useMediaPreview({
     enabled: !liveObj && !needLogin,
@@ -181,7 +195,7 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
           await new Promise((r) => setTimeout(r, 160));
           setLiveObj({
             ...data.live,
-            avatarUrl: creator?.avatar_url || data.live.avatarUrl || null,
+            avatarUrl: creatorAvatarUrl(creator, data.live),
             displayName: creator?.display_name || creator?.handle_name || data.live.displayName,
             verified: true,
             beautyEnabled: beautyOn,
@@ -198,7 +212,7 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
       await new Promise((r) => setTimeout(r, 160));
       setLiveObj({
         ...data.live,
-        avatarUrl: creator?.avatar_url || null,
+        avatarUrl: creatorAvatarUrl(creator, data.live),
         displayName: creator?.display_name || creator?.handle_name,
         verified: true,
         beautyEnabled: beautyOn,
@@ -266,10 +280,14 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
   }
 
   if (liveObj) {
+    const hostLive = {
+      ...liveObj,
+      avatarUrl: creatorAvatarUrl(creator, liveObj),
+    };
     return (
       <LiveRoom
         socket={socket}
-        live={liveObj}
+        live={hostLive}
         mode="host"
         identity={identityHook?.identity}
         identityHook={identityHook}
@@ -312,7 +330,7 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
         )}
         <video
           ref={previewRef}
-          className={`live-video${preview.facing === 'user' ? ' live-video--mirror' : ''}`}
+          className="live-video"
           playsInline
           webkit-playsinline="true"
           muted
@@ -344,8 +362,8 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
         <header className="live-top">
           <div className="live-host">
             <Avatar
-              className={`live-host__avatar${wallpaperStatus === 'validating' ? ' live-host__avatar--busy' : ''}${coverRequired ? ' live-host__avatar--required' : ''}`}
-              src={wallpaperUrl || null}
+              className={`live-host__avatar live-host__avatar--pop${wallpaperStatus === 'validating' ? ' live-host__avatar--busy' : ''}${coverRequired ? ' live-host__avatar--required' : ''}`}
+              src={creator?.avatar_url || null}
               name={creator?.handle_name}
             />
             <span className="live-host__text">
