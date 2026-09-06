@@ -4465,7 +4465,9 @@ io.on('connection', (socket) => {
     if (sender?.creatorData?.id && sender.creatorData.id === target.creatorData.id) {
       return socket.emit('gift:error', { message: 'You cannot gift your own creator account.' });
     }
-    const gift = GIFTS.find((g) => g.id === String(giftId || ''));
+    const { getGiftById } = require('./giftCatalogStore');
+    const { visualGiftFields } = require('./giftCatalog');
+    const gift = getGiftById(giftId) || GIFTS.find((g) => g.id === String(giftId || ''));
     if (!gift) return socket.emit('gift:error', { message: 'Unknown gift.' });
 
     const senderCtx = economy?.wallet?.ctxFromSocket?.(socket.id, ip);
@@ -4493,6 +4495,7 @@ io.on('connection', (socket) => {
       giftId: gift.id,
       name: gift.name,
       icon: gift.icon,
+      gift: visualGiftFields(gift),
       tier: gift.tier,
       anim: gift.anim || gift.tier,
       cost: gift.cost,

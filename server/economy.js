@@ -11,7 +11,8 @@
  * earnings accrue in a separate `earned` bucket ready for a future payout flow.
  */
 
-const { GIFTS, CATEGORIES, COIN_PACKAGES, findCoinPackage } = require('./giftCatalog');
+const { GIFTS, CATEGORIES, COIN_PACKAGES, findCoinPackage, visualGiftFields } = require('./giftCatalog');
+const { getGiftById, getMergedGifts, registerGiftAdmin } = require('./giftCatalogStore');
 const { createWalletResolver } = require('./walletResolver');
 
 /** Verification tiers unlock perks; `paid` marks the premium tier. */
@@ -244,7 +245,7 @@ function registerEconomy(app, io, deps) {
    * and books the creator's earnings. Returns the animation payload.
    */
   async function sendGift({ fromIp, fromSocketId, toSocketId, giftId, channelId }) {
-    const gift = GIFTS.find((g) => g.id === giftId);
+    const gift = getGiftById(giftId);
     if (!gift) return { ok: false, error: 'Unknown gift' };
 
     const recipient = users.get(toSocketId);
@@ -336,6 +337,7 @@ function registerEconomy(app, io, deps) {
       giftId: gift.id,
       name: gift.name,
       icon: gift.icon,
+      gift: visualGiftFields(gift),
       tier: gift.tier,
       cost: gift.cost,
       fromSocketId,
@@ -399,7 +401,7 @@ function registerEconomy(app, io, deps) {
   }
 
   async function sendGiftToAll({ fromIp, fromSocketId, giftId, channelId, targetIds }) {
-    const gift = GIFTS.find((g) => g.id === giftId);
+    const gift = getGiftById(giftId);
     if (!gift) return { ok: false, error: 'Unknown gift' };
 
     let ids = [...new Set((targetIds || []).map(String))].filter((id) => id && id !== fromSocketId);
@@ -445,6 +447,7 @@ function registerEconomy(app, io, deps) {
         giftId: gift.id,
         name: gift.name,
         icon: gift.icon,
+        gift: visualGiftFields(gift),
         tier: gift.tier,
         cost: gift.cost,
         fromSocketId,
@@ -483,7 +486,7 @@ function registerEconomy(app, io, deps) {
   function attachSocketHandlers(socket, ip) {
     socket.on('gift:catalog', () => {
       socket.emit('gift:catalog', {
-        gifts: GIFTS,
+        gifts: getMergedGifts(),
         categories: CATEGORIES,
         packages: COIN_PACKAGES,
         tier: tierFor(ip),
@@ -580,8 +583,10 @@ function registerEconomy(app, io, deps) {
   // ---------------- HTTP ----------------
 
   app.get('/api/economy/catalog', (_req, res) => {
-    res.json({ gifts: GIFTS, categories: CATEGORIES, packages: COIN_PACKAGES, tiers: Object.values(TIERS) });
+    res.json({ gifts: getMergedGifts(), categories: CATEGORIES, packages: COIN_PACKAGES, tiers: Object.values(TIERS) });
   });
+
+  registerGiftAdmin(app, { isAdminRequest });
 
   app.get('/api/admin/economy', (req, res) => {
     if (!isAdminRequest(req)) return res.status(403).json({ error: 'Forbidden' });
@@ -589,7 +594,7 @@ function registerEconomy(app, io, deps) {
       .map(([ip, s]) => ({ ip, ...s }))
       .sort((a, b) => b.earned - a.earned)
       .slice(0, 100);
-    res.json({ stats, journal: journal.slice(0, 200), creators, gifts: GIFTS });
+    res.json({ stats, journal: journal.slice(0, 200), creators, gifts: getMergedGifts({ includeDisabled: true }) });
   });
 
   /** Admin: grant, revoke, or set coins (support tooling, refunds). */

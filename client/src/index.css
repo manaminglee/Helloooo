@@ -8138,15 +8138,7 @@ textarea {
 .mm-side-menu__online {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
   margin: 0.65rem 1rem 0;
-  padding: 0.55rem 0.75rem;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-  font-size: 0.7rem;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.55);
   width: fit-content;
 }
 .mm-side-menu__nav {

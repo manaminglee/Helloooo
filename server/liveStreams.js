@@ -15,7 +15,8 @@
  */
 const crypto = require('crypto');
 const livekitRooms = require('./livekitRooms');
-const { GIFTS } = require('./giftCatalog');
+const { GIFTS, visualGiftFields } = require('./giftCatalog');
+const { getGiftById } = require('./giftCatalogStore');
 const { createLiveStore } = require('./liveStore');
 const { buildWordList, filterText, createRateLimiter } = require('./liveModeration');
 const { socketClientIp } = require('./clientIp');
@@ -50,7 +51,7 @@ const LIMITS = {
 };
 
 const GIFT_BY_ID = new Map(GIFTS.map((g) => [g.id, g]));
-const FULLSCREEN_TIERS = new Set(['legendary', 'mega']);
+const FULLSCREEN_TIERS = new Set(['legendary', 'mega', 'epic', 'ultra']);
 
 // Platform-wide creator share for live gifts. A per-gift creatorShare still
 // wins when present; this is the transparency baseline surfaced in stats.
@@ -667,7 +668,7 @@ function registerLiveStreams(app, io, deps) {
   async function sendGift(room, socket, { giftId, targetSide = 'A', nonce }) {
     if (!room || room.status !== 'live') return { ok: false, error: 'Live is offline' };
 
-    const gift = GIFT_BY_ID.get(String(giftId || ''));
+    const gift = getGiftById(giftId) || GIFT_BY_ID.get(String(giftId || ''));
     if (!gift) return { ok: false, error: 'Unknown gift' };
 
     const walletKey = walletKeyOf(socket);
@@ -793,18 +794,7 @@ function registerLiveStreams(app, io, deps) {
       txId: tx.id,
       comboId: combo.id,
       comboCount: combo.count,
-      gift: {
-        id: gift.id,
-        name: gift.name,
-        // `art` and `motion` are what the client draws with; there is no icon
-        // field any more because there are no emoji any more.
-        art: gift.art || gift.id,
-        motion: gift.motion || null,
-        cost: gift.cost,
-        tier: gift.tier,
-        category: gift.category,
-        lucky: !!gift.lucky,
-      },
+      gift: visualGiftFields(gift),
       from: profile.username,
       fromKey: walletKey,
       avatarUrl: profile.avatarUrl,
@@ -814,7 +804,7 @@ function registerLiveStreams(app, io, deps) {
       badges: await badgesFor(room, profile, top[0]?.key),
       targetSide,
       anim: gift.anim || gift.tier,
-      fullscreen: FULLSCREEN_TIERS.has(gift.anim || gift.tier),
+      fullscreen: FULLSCREEN_TIERS.has(gift.anim || gift.tier) || ['legendary', 'ultra', 'epic'].includes(gift.rarity),
       at: tx.at,
     };
     io.to(`live:${room.id}`).emit('live:gift', payload);

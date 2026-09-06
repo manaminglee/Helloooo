@@ -261,6 +261,31 @@ function registerCreatorProfile(app, io, deps) {
       byGift.set(r.gift_id, g);
     }
 
+    const now = Date.now();
+    const dayMs = 86_400_000;
+    const daily = Array.from({ length: 7 }, (_, i) => ({ offset: 6 - i, coins: 0, count: 0 }));
+    const weekly = Array.from({ length: 8 }, (_, i) => ({ offset: 7 - i, coins: 0, count: 0 }));
+    const monthly = Array.from({ length: 6 }, (_, i) => ({ offset: 5 - i, coins: 0, count: 0 }));
+    for (const r of rows) {
+      const at = new Date(r.created_at).getTime();
+      if (!Number.isFinite(at)) continue;
+      const dayAgo = Math.floor((now - at) / dayMs);
+      if (dayAgo >= 0 && dayAgo < 7) {
+        daily[6 - dayAgo].coins += r.coin_cost || 0;
+        daily[6 - dayAgo].count += 1;
+      }
+      const weekAgo = Math.floor((now - at) / (dayMs * 7));
+      if (weekAgo >= 0 && weekAgo < 8) {
+        weekly[7 - weekAgo].coins += r.coin_cost || 0;
+        weekly[7 - weekAgo].count += 1;
+      }
+      const monthAgo = Math.floor((now - at) / (dayMs * 30));
+      if (monthAgo >= 0 && monthAgo < 6) {
+        monthly[5 - monthAgo].coins += r.coin_cost || 0;
+        monthly[5 - monthAgo].count += 1;
+      }
+    }
+
     return {
       totalCoins,
       totalGifts: rows.length,
@@ -273,6 +298,9 @@ function registerCreatorProfile(app, io, deps) {
         coins: r.coin_cost,
         at: r.created_at,
       })),
+      daily,
+      weekly,
+      monthly,
       // Gift-cut transparency: how the gross Nuts split creator vs platform.
       ...giftCutBreakdown(totalCoins),
       cut: giftCutBreakdown(totalCoins),

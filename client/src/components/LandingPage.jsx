@@ -5,8 +5,6 @@ import { CoinBadge } from './CoinBadge';
 import { useCreators } from '../hooks/useCreators';
 import { useCreatorNotifications } from '../hooks/useCreatorNotifications';
 import { API_BASE } from '../config/apiBase';
-
-import { countryToFlag } from '../utils/countryFlag';
 import { AdSlot } from './AdSlot';
 import { useLowPower } from '../context/LowPowerContext';
 import { CREATOR_MIN_WITHDRAWAL_COINS } from '../utils/creatorAuth';
@@ -31,6 +29,7 @@ import CreatorHub from './CreatorHub';
 import { clearCreatorSession, getCreatorSessionToken } from '../utils/creatorAuth';
 import { VirtualMarketRateChip } from './VirtualMarketPanel';
 import { LandingSideMenu } from './LandingSideMenu';
+import { OnlineViewersBadge } from './OnlineViewersBadge';
 
 // Below-the-fold / secondary UI — keep landing first paint light.
 const MiniTrendChart = lazyRetry(() =>
@@ -777,6 +776,13 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 </div>
               </button>
             </div>
+            <OnlineViewersBadge
+              count={onlineCount ?? 0}
+              country={country}
+              compact
+              showLabel={false}
+              className="mm-landing-header__viewers mm-hide-desktop"
+            />
             <div className="mm-landing-header__actions mm-hide-mobile">
               <button
                 type="button"
@@ -792,11 +798,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
               {connected && balance !== undefined && (
                 <CoinBadge balance={balance} streak={streak} canClaim={canClaim} nextClaim={nextClaim ?? 0} claimCoins={claimCoins} registered={registered} currentActiveSeconds={currentActiveSeconds} isCreator={!!creatorStatus || socketIsCreator} />
               )}
-              <div className="mm-landing-stat-pill shrink-0" title={`${(onlineCount ?? 0).toLocaleString()} people online`}>
-                {country && <span title={`Your region: ${country}`}>{countryToFlag(country)}</span>}
-                <span className="tabular-nums">{(onlineCount ?? 0).toLocaleString()}</span>
-                <span className="hidden sm:inline">online</span>
-              </div>
+              <OnlineViewersBadge count={onlineCount ?? 0} country={country} />
               {creatorReferralCode && (
                 <CreatorNotificationBell
                   notifications={creatorNotifications}

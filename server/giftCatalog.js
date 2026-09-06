@@ -22,6 +22,34 @@
  *   hot        eligible for the Hot shelf
  */
 
+const RARITY_FOR = {
+  basic: 'common',
+  rare: 'uncommon',
+  epic: 'epic',
+  legendary: 'legendary',
+  mega: 'ultra',
+};
+
+const DURATION_FOR = {
+  common: 1800,
+  uncommon: 2000,
+  rare: 2800,
+  epic: 3500,
+  legendary: 5500,
+  ultra: 8000,
+};
+
+const HERO_DIRECTION = {
+  gold_watch: { scene: 'watch_orbit', renderType: 'webgl', description: 'Luxury watch in slow orbit with moving gold reflections.' },
+  rose_bear: { scene: 'rose_ascent', renderType: 'webgl', description: 'Rose-covered bear rises as petals drift and a heart pulses.' },
+  legend_crown: { scene: 'crown_rise', renderType: 'webgl', description: 'Royal crown rises with gem sparkle and golden rays.' },
+  aeon_diamond: { scene: 'diamond_refract', renderType: 'webgl', description: 'Prism diamond rotates as light passes through the gem.' },
+  neon_rider: { scene: 'rider_impact', renderType: 'webgl', description: 'Futuristic motorcycle enters with neon trails and impact.' },
+  gold_rain: { scene: 'gold_cascade', renderType: 'webgl', description: 'Gold coins and bars fall, bounce, then explode.' },
+  hyper_car: { scene: 'car_track', renderType: 'webgl', description: 'Hypercar tracks the camera with speed lines.' },
+  dream_castle: { scene: 'castle_rise', renderType: 'webgl', description: 'Castle rises through clouds with a royal glow.' },
+};
+
 function g(id, name, cost, opts = {}) {
   const {
     category = 'funny',
@@ -33,7 +61,24 @@ function g(id, name, cost, opts = {}) {
     lucky = false,
     minLevel = 0,
     hot = false,
+    renderType: renderTypeOpt,
+    scene: sceneOpt,
+    thumbnailUrl = '',
+    previewUrl = '',
+    celebrationUrl = '',
+    soundUrl = '',
+    duration,
+    enabled = true,
+    sortOrder,
+    description = '',
   } = opts;
+  const rarity = opts.rarity || RARITY_FOR[tier] || 'common';
+  const hero = HERO_DIRECTION[id] || null;
+  const renderType = celebrationUrl
+    ? '3d_video'
+    : (renderTypeOpt || hero?.renderType || (stage === 'scene' && (rarity === 'legendary' || rarity === 'ultra') ? 'webgl' : 'css'));
+  const scene = sceneOpt || hero?.scene || id;
+  const durationMs = duration || DURATION_FOR[rarity] || 1800;
   return {
     id,
     name,
@@ -49,6 +94,18 @@ function g(id, name, cost, opts = {}) {
     creatorShare: creatorShare ?? DEFAULT_SHARE_FOR[tier] ?? 0.7,
     // Kept so older clients that still read `anim` keep working.
     anim: stage === 'scene' ? 'mega' : stage === 'burst' ? 'legendary' : tier,
+    rarity,
+    renderType,
+    scene,
+    thumbnailUrl,
+    previewUrl,
+    celebrationUrl,
+    soundUrl,
+    durationMs,
+    previewDurationMs: Math.min(2400, durationMs),
+    enabled,
+    sortOrder: sortOrder ?? cost,
+    description: description || hero?.description || '',
   };
 }
 
@@ -230,6 +287,30 @@ function packForShortfall(needed) {
 const NUTS_PER_USD = 10000;
 const DEFAULT_CREATOR_SHARE = Number(process.env.LIVE_GIFT_CREATOR_SHARE || 0.7);
 
+function visualGiftFields(gift) {
+  if (!gift) return null;
+  return {
+    id: gift.id,
+    name: gift.name,
+    art: gift.art || gift.id,
+    motion: gift.motion || null,
+    cost: gift.cost,
+    tier: gift.tier,
+    category: gift.category,
+    lucky: !!gift.lucky,
+    rarity: gift.rarity || RARITY_FOR[gift.tier] || 'common',
+    renderType: gift.renderType || 'css',
+    scene: gift.scene || gift.id,
+    thumbnailUrl: gift.thumbnailUrl || '',
+    previewUrl: gift.previewUrl || '',
+    celebrationUrl: gift.celebrationUrl || '',
+    soundUrl: gift.soundUrl || '',
+    durationMs: gift.durationMs || DURATION_FOR[gift.rarity] || 1800,
+    description: gift.description || '',
+    minLevel: gift.minLevel || 0,
+  };
+}
+
 module.exports = {
   GIFTS,
   CATEGORIES,
@@ -246,4 +327,8 @@ module.exports = {
   DEFAULT_CREATOR_SHARE,
   hotGifts,
   giftsFor,
+  visualGiftFields,
+  RARITY_FOR,
+  DURATION_FOR,
+  HERO_DIRECTION,
 };

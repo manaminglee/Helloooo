@@ -70,7 +70,7 @@ export default function LiveRoom({
     comments, pinnedComment, viewerCount, likes, banners, fullscreenGift,
     battle, topGifter, stats, settings, isModerator, muted,
     roomState, endSummary, notice, vipEntries, clearVipEntries, following, followKnown,
-    sendComment, sendGift, react, follow, moderation, toast,
+    sendComment, sendGift, react, follow, moderation, toast, dismissFullscreen,
   } = room;
 
   const [creatorOpen, setCreatorOpen] = useState(false);
@@ -346,7 +346,7 @@ export default function LiveRoom({
       <HeartLayer hearts={hearts} onDone={remove} />
       <GiftBanners banners={banners} />
       <VipEntry entries={vipEntries} onConsumed={clearVipEntries} />
-      <FullscreenGift gift={fullscreenGift} />
+      <FullscreenGift gift={fullscreenGift} onDone={dismissFullscreen} />
 
       {/* 2 · UI GRID */}
       <div className="live-ui">

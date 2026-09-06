@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { API_BASE } from '../config/apiBase';
 import VirtualMarketPanel from './VirtualMarketPanel';
 import AdminAgenciesPanel from './AdminAgenciesPanel';
+import { AdminGiftManager } from './AdminGiftManager';
 
 /**
  * Helloooo Admin Dashboard v2.5
@@ -1526,6 +1527,7 @@ export function AdminDashboard({ onJoinRoom }) {
 
           {activeTab === 'economy' && (
             <div className="space-y-10 animate-fade-in">
+              <AdminGiftManager adminKey={key} />
               <div className="p-12 rounded-[50px] bg-[#050505] border border-amber-500/10 flex flex-col lg:flex-row gap-12 items-stretch shadow-2xl relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/5 rounded-full blur-[100px] -mr-32 -mt-32" />
                 <div className="flex-1 relative z-10">

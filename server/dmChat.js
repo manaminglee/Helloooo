@@ -18,6 +18,7 @@
  */
 const crypto = require('crypto');
 const { GIFTS } = require('./giftCatalog');
+const { getGiftById } = require('./giftCatalogStore');
 
 const GIFT_BY_ID = new Map(GIFTS.map((g) => [g.id, g]));
 
@@ -227,7 +228,7 @@ function registerDmChat(app, io, deps = {}) {
     };
 
     if (kind === 'gift') {
-      const gift = GIFT_BY_ID.get(String(giftId || ''));
+      const gift = getGiftById(giftId) || GIFT_BY_ID.get(String(giftId || ''));
       if (!gift) return { ok: false, error: 'Unknown gift' };
       const senderAudio = audioUsernameOf(senderKey);
       if (!senderAudio) return { ok: false, error: 'Only audio identities can send gifts', needAuth: true };

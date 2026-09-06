@@ -2,7 +2,8 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { MmIcon } from '../icons/MmIcon';
 import { GiftArt } from '../icons/GiftArt';
-import GiftAnimation3D from './GiftAnimation3D';
+import { GiftCelebrationOverlay } from '../../gifts/GiftCelebrationOverlay';
+import '../../gifts/gifts.css';
 import { HellooooLoader } from '../HellooooBrand';
 
 /* Small shared pieces of the live overlay. Everything here is memoised —
@@ -211,26 +212,9 @@ export const GiftBanners = memo(function GiftBanners({ banners }) {
   );
 });
 
-export const FullscreenGift = memo(function FullscreenGift({ gift }) {
+export const FullscreenGift = memo(function FullscreenGift({ gift, onDone }) {
   if (!gift) return null;
-  // legendary and mega get the 3D stage; everything else keeps the flat card.
-  if (gift.anim === 'legendary' || gift.anim === 'mega') {
-    return <GiftAnimation3D gift={gift} />;
-  }
-  return (
-    <div className="live-gift-fullscreen" aria-hidden>
-      <div className="live-gift-fullscreen__rays" />
-      <div className="live-gift-fullscreen__inner">
-        <div className="live-gift-fullscreen__icon">
-          <GiftArt id={gift.gift?.id} tier={gift.gift?.tier} size={140} />
-        </div>
-        <div className="live-gift-fullscreen__name">{gift.gift?.name}</div>
-        <div className="live-gift-fullscreen__from">
-          from {gift.from}{gift.comboCount > 1 ? ` · x${gift.comboCount}` : ''}
-        </div>
-      </div>
-    </div>
-  );
+  return <GiftCelebrationOverlay gift={gift} onDone={onDone} />;
 });
 
 /* ------------------------------------------------------------------------ */

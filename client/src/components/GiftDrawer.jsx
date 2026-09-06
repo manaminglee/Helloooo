@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { purchaseCoinPack } from '../utils/paymentCheckout';
+import { GiftCatalogPanel } from '../gifts/GiftCatalogPanel';
+import { GiftCelebrationOverlay } from '../gifts/GiftCelebrationOverlay';
+import { useGiftQueue } from '../gifts/useGiftQueue';
+import '../gifts/gifts.css';
 
 const TIER_STYLES = {
   basic: 'border-white/15',
@@ -288,44 +292,15 @@ export function GiftDrawer({
               )
             )}
 
-            <div className="mm-gift-cats" role="tablist" aria-label="Gift categories">
-              {categories.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={category === c.id}
-                  onClick={() => setCategory(c.id)}
-                  className={`mm-gift-cat ${category === c.id ? 'mm-gift-cat--active' : ''}`}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-4 gap-2 overflow-y-auto min-h-0 flex-1 pr-0.5">
-              {filtered.map((g) => {
-                const cost = toAll ? g.cost * Math.max(1, (stagePeople.length || others.length || 1)) : g.cost;
-                const affordable = displayCoins >= cost;
-                const canSend = !!channelId && (toAll ? others.length > 0 : !!target);
-                return (
-                  <button
-                    key={g.id}
-                    type="button"
-                    disabled={sending || !affordable || !canSend}
-                    onClick={() => send(g.id)}
-                    className={`p-2 rounded-xl border bg-white/[0.03] hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
-                      TIER_STYLES[g.tier] || TIER_STYLES.basic
-                    }`}
-                    title={!affordable ? `Need ${cost} coins` : `${g.name} · ${cost} coins`}
-                  >
-                    <span className="block text-xl leading-none">{g.icon}</span>
-                    <span className="block text-[8px] text-white/50 truncate mt-0.5">{g.name}</span>
-                    <span className="block text-[9px] text-amber-300 font-semibold">{cost}</span>
-                  </button>
-                );
-              })}
-            </div>
+            <GiftCatalogPanel
+              open={open && tab === 'gifts'}
+              balance={displayCoins}
+              compact
+              onSend={async (gift) => {
+                send(gift.id);
+                return { ok: true };
+              }}
+            />
           </>
         )}
 
@@ -342,51 +317,40 @@ export function GiftDrawer({
   return createPortal(drawer, document.body);
 }
 
-/** Full-screen animation that flies gifts toward the recipient&apos;s stage avatar. */
+/** Cinematic celebration for audio / group rooms. */
 export function GiftOverlay({ socket }) {
-  const [flying, setFlying] = useState([]);
+  const { current, enqueue, done } = useGiftQueue();
 
   useEffect(() => {
     if (!socket) return undefined;
     const onGift = (payload) => {
-      const id = `${payload.at}_${Math.random().toString(36).slice(2, 7)}`;
-      let targetX = window.innerWidth / 2;
-      let targetY = window.innerHeight * 0.35;
-      const el =
-        (payload.toSocketId && document.querySelector(`[data-audio-member="${payload.toSocketId}"]`)) ||
-        (payload.toSocketId && document.querySelector(`[data-gift-avatar="${payload.toSocketId}"]`));
-      if (el) {
-        const r = el.getBoundingClientRect();
-        targetX = r.left + r.width / 2;
-        targetY = r.top + r.height / 2;
-      }
-      setFlying((prev) => [...prev.slice(-5), { ...payload, id, targetX, targetY }]);
-      setTimeout(() => setFlying((prev) => prev.filter((g) => g.id !== id)), 2800);
+      enqueue({
+        ...payload,
+        key: `${payload.at || Date.now()}`,
+        from: payload.fromNickname,
+        gift: payload.gift || {
+          id: payload.giftId,
+          name: payload.name,
+          cost: payload.cost,
+          tier: payload.tier,
+          rarity: payload.tier,
+          renderType: 'css',
+          scene: payload.giftId,
+        },
+      });
     };
     socket.on('gift:received', onGift);
-    return () => socket.off('gift:received', onGift);
-  }, [socket]);
+    socket.on('group:gift', onGift);
+    return () => {
+      socket.off('gift:received', onGift);
+      socket.off('group:gift', onGift);
+    };
+  }, [socket, enqueue]);
 
-  if (!flying.length) return null;
-
+  if (!current) return null;
   return (
-    <div className="pointer-events-none fixed inset-0 z-[650] overflow-hidden">
-      {flying.map((g, i) => (
-        <div
-          key={g.id}
-          className="mm-gift-fly"
-          style={{
-            '--gift-tx': `${g.targetX}px`,
-            '--gift-ty': `${g.targetY}px`,
-            animationDelay: `${i * 60}ms`,
-          }}
-        >
-          <div className="mm-gift-fly__icon">{g.icon}</div>
-          <div className="mm-gift-fly__label">
-            {g.fromNickname} → {g.blast ? 'Everyone' : g.toNickname}
-          </div>
-        </div>
-      ))}
+    <div className="pointer-events-none fixed inset-0 z-[650]">
+      <GiftCelebrationOverlay gift={current} onDone={done} />
     </div>
   );
 }

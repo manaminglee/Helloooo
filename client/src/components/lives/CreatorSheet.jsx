@@ -6,6 +6,7 @@ import { GiftArt } from '../icons/GiftArt';
 import { VerifiedBadge } from '../icons/VerifiedBadge';
 import { HellooooLoader } from '../HellooooBrand';
 import { Avatar, Sheet, compact } from './LiveBits';
+import { MiniTrendChart } from '../MiniTrendChart';
 
 function since(iso) {
   if (!iso) return null;
@@ -179,6 +180,32 @@ export function CreatorSheet({ open, creatorKey, onClose, onWatchLive, onFollow,
             <Stat label="Gifts" value={compact(gifts?.totalGifts || 0)} accent />
             <Stat label="Joined" value={since(p.joinedAt) || '—'} />
           </div>
+
+          {gifts?.daily?.length > 0 && (
+            <>
+              <p className="creator-sheet__section">Gift activity</p>
+              <MiniTrendChart data={gifts.daily.map((d) => d.coins || 0)} color="#fbbf24" />
+              <div className="live-stats-grid" style={{ marginTop: 8 }}>
+                <Stat label="Weekly gifts" value={compact(gifts.weekly?.reduce((n, w) => n + (w.count || 0), 0))} />
+                <Stat label="Monthly Nuts" value={compact(gifts.monthly?.reduce((n, m) => n + (m.coins || 0), 0))} />
+              </div>
+            </>
+          )}
+
+          {gifts?.topGifts?.length > 0 && (
+            <>
+              <p className="creator-sheet__section">Popular gifts</p>
+              {gifts.topGifts.map((g) => (
+                <div key={g.id} className="live-row">
+                  <GiftArt id={g.id} size={22} />
+                  <span className="live-row__main">
+                    <span className="live-row__name">{g.name}</span>
+                    <span className="live-row__sub">{g.count} sent</span>
+                  </span>
+                </div>
+              ))}
+            </>
+          )}
 
           {gifts?.topSenders?.length > 0 && (
             <>

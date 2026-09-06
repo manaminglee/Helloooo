@@ -1,0 +1,248 @@
+/* Premium gift system */
+
+.pg-panel { display: flex; flex-direction: column; gap: 0.7rem; min-height: 0; }
+.pg-toolbar { display: flex; gap: 0.45rem; }
+.pg-search {
+  flex: 1;
+  min-height: 2.2rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.04);
+  color: #fff;
+  padding: 0 0.9rem;
+  font-size: 0.78rem;
+}
+.pg-mute {
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.65);
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0 0.75rem;
+}
+.pg-mute.is-on { color: #fbbf24; border-color: rgba(251,191,36,0.3); }
+.pg-tabs { overflow-x: auto; flex-wrap: nowrap; }
+
+.pg-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.7rem 0.4rem 0.55rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: radial-gradient(circle at 50% 20%, rgba(255,255,255,0.05), rgba(8,8,14,0.9));
+  color: #fff;
+  min-height: 7.4rem;
+  transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+.pg-card:hover { transform: translateY(-2px) scale(1.03); background: rgba(255,255,255,0.06); }
+.pg-card--on { border-color: rgba(255,255,255,0.28); box-shadow: 0 0 0 1px rgba(255,255,255,0.08); }
+.pg-card--poor { opacity: 0.5; }
+.pg-card--locked { opacity: 0.42; }
+.pg-card__art {
+  width: 4.2rem; height: 4.2rem;
+  display: grid; place-items: center;
+  position: relative;
+}
+.pg-card__name { font-size: 0.68rem; font-weight: 700; text-align: center; line-height: 1.2; }
+.pg-card__cost { display: inline-flex; align-items: center; gap: 0.2rem; font-size: 0.7rem; font-weight: 800; color: #fde68a; }
+.pg-card__lucky, .pg-card__lv {
+  position: absolute; top: 0.35rem; left: 0.35rem;
+  font-size: 0.52rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+  color: #fbbf24;
+}
+.pg-card__fav {
+  position: absolute; top: 0.3rem; right: 0.35rem;
+  font-size: 0.85rem; color: rgba(255,255,255,0.35);
+}
+.pg-card__fav.is-on { color: #fb7185; }
+
+.pg-card--common { border-color: rgba(255,255,255,0.08); }
+.pg-card--uncommon { border-color: rgba(74,222,128,0.25); }
+.pg-card--rare, .pg-card--epic {
+  border-color: rgba(167,139,250,0.35);
+  box-shadow: 0 0 18px rgba(167,139,250,0.12);
+}
+.pg-card--premium, .pg-card--legendary {
+  border-color: rgba(251,191,36,0.4);
+  box-shadow: 0 0 22px rgba(251,191,36,0.16);
+  animation: pg-sweep 5.5s linear infinite;
+}
+.pg-card--ultra {
+  border-color: rgba(251,113,133,0.5);
+  box-shadow: 0 0 28px rgba(251,113,133,0.2);
+  animation: pg-sweep 4.2s linear infinite;
+}
+
+@keyframes pg-sweep {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.12); }
+}
+
+.pg-showcase {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.04);
+}
+.pg-showcase__art { width: 4.5rem; height: 4.5rem; }
+.pg-showcase__meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.pg-showcase__meta strong { font-size: 0.85rem; }
+.pg-showcase__rarity { font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.45); }
+.pg-showcase__cost { font-size: 0.78rem; font-weight: 800; color: #fde68a; display: inline-flex; gap: 0.25rem; align-items: center; }
+.pg-showcase__more {
+  font-size: 0.65rem; font-weight: 800; text-transform: uppercase;
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 999px;
+  padding: 0.4rem 0.7rem; color: rgba(255,255,255,0.7);
+}
+
+.pg-sendbar { display: flex; align-items: center; gap: 0.6rem; }
+.pg-sendbar__bal { font-size: 0.78rem; font-weight: 800; color: #fde68a; display: inline-flex; gap: 0.3rem; align-items: center; }
+.pg-send { flex: 1; }
+
+.pg-css, .pg-webgl, .pg-video {
+  width: 100%; height: 100%;
+  display: grid; place-items: center;
+  position: relative;
+}
+.pg-css__mark { position: relative; z-index: 1; }
+.pg-particles { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.pg-webgl canvas, .pg-video { width: 100%; height: 100%; object-fit: contain; background: transparent; }
+.pg-css--still .pg-particles { display: none; }
+
+.pg-modal { position: fixed; inset: 0; z-index: 80; display: grid; place-items: end center; }
+.pg-modal__back { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+.pg-modal__sheet {
+  position: relative;
+  width: min(100%, 26rem);
+  padding: 1.2rem 1.2rem 1.4rem;
+  border-radius: 1.4rem 1.4rem 0 0;
+  background: #0c0e14;
+  border: 1px solid rgba(255,255,255,0.1);
+  text-align: center;
+}
+.pg-modal__stage { width: 9rem; height: 9rem; margin: 0 auto 0.7rem; }
+.pg-modal__name { font-size: 1.15rem; font-weight: 800; }
+.pg-modal__rarity { font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase; color: #fbbf24; margin: 0.2rem 0 0.4rem; }
+.pg-modal__desc { font-size: 0.78rem; color: rgba(255,255,255,0.5); margin-bottom: 0.6rem; }
+.pg-modal__cost { display: inline-flex; align-items: center; gap: 0.3rem; font-weight: 800; color: #fde68a; margin-bottom: 0.8rem; }
+.pg-modal__send {
+  width: 100%; min-height: 2.8rem; border-radius: 999px;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #111; font-weight: 800; letter-spacing: 0.04em;
+}
+.pg-modal__send:disabled { opacity: 0.45; }
+.pg-modal__close { margin-top: 0.55rem; font-size: 0.72rem; color: rgba(255,255,255,0.45); }
+
+.pg-celeb {
+  position: absolute; inset: 0; z-index: 30;
+  pointer-events: none;
+  display: grid; place-items: center;
+}
+.pg-celeb__dim {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.28);
+  animation: pg-dim 0.4s ease both;
+}
+.pg-celeb__stage {
+  position: relative; z-index: 2;
+  width: min(72vw, 280px); height: min(72vw, 280px);
+  animation: pg-enter 0.7s cubic-bezier(.2,.8,.2,1) both;
+}
+.pg-celeb__caption {
+  position: absolute; bottom: 18%; left: 0; right: 0;
+  text-align: center; z-index: 3;
+  animation: pg-fade 0.35s ease both;
+}
+.pg-celeb__from { font-size: 0.78rem; color: rgba(255,255,255,0.7); }
+.pg-celeb__name { font-size: 1.35rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.pg-celeb__cost { display: inline-flex; align-items: center; gap: 0.3rem; color: #fde68a; font-weight: 800; margin-top: 0.2rem; }
+.pg-celeb--p10 { animation: pg-out 0.32s ease both; }
+
+@keyframes pg-dim { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pg-enter { from { transform: scale(0.35) translateY(30px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes pg-fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes pg-out { to { opacity: 0; } }
+
+/* Per-gift CSS identity — used when no WebM exists (the default). */
+.pg-css--hug_heart .pg-css__mark,
+.pg-css--heart_wings .pg-css__mark { animation: pg-heart 1.35s ease-in-out infinite; }
+.pg-css--rose_bear .pg-css__mark,
+.pg-css--rose_ascent .pg-css__mark { animation: pg-rise 2.4s ease-in-out infinite; }
+.pg-css--gold_watch .pg-css__mark,
+.pg-css--watch_orbit .pg-css__mark { animation: pg-orbit 4.2s linear infinite; }
+.pg-css--legend_crown .pg-css__mark,
+.pg-css--crown_rise .pg-css__mark { animation: pg-rise 2.8s ease-in-out infinite; }
+.pg-css--aeon_diamond .pg-css__mark,
+.pg-css--diamond_refract .pg-css__mark { animation: pg-spin-slow 5s linear infinite; filter: drop-shadow(0 0 10px rgba(165,243,252,0.45)); }
+.pg-css--neon_rider .pg-css__mark,
+.pg-css--rider_impact .pg-css__mark { animation: pg-dash 1.6s ease-in-out infinite; }
+.pg-css--gold_rain .pg-css__mark,
+.pg-css--gold_cascade .pg-css__mark { animation: pg-shake 1.8s ease-in-out infinite; }
+.pg-css--hyper_car .pg-css__mark,
+.pg-css--car_track .pg-css__mark { animation: pg-dash 1.2s ease-in-out infinite; }
+.pg-css--dream_castle .pg-css__mark,
+.pg-css--castle_rise .pg-css__mark { animation: pg-rise 3.2s ease-in-out infinite; }
+.pg-css--cupid_bolt .pg-css__mark { animation: pg-dash 1.1s ease-in-out infinite; }
+.pg-css--charm_crystal .pg-css__mark,
+.pg-css--charm_donut .pg-css__mark { animation: pg-spin-slow 3.6s linear infinite; }
+.pg-css--boom_star .pg-css__mark { animation: pg-heart 0.9s ease-in-out infinite; }
+
+.pg-css--still .pg-css__mark { animation: none !important; }
+
+.pg-celeb--watch_orbit .pg-celeb__stage,
+.pg-celeb--gold_watch .pg-celeb__stage { animation-name: pg-enter-spin; }
+.pg-celeb--rose_ascent .pg-celeb__stage,
+.pg-celeb--rose_bear .pg-celeb__stage,
+.pg-celeb--crown_rise .pg-celeb__stage,
+.pg-celeb--legend_crown .pg-celeb__stage,
+.pg-celeb--castle_rise .pg-celeb__stage { animation-name: pg-enter-up; }
+.pg-celeb--rider_impact .pg-celeb__stage,
+.pg-celeb--neon_rider .pg-celeb__stage,
+.pg-celeb--car_track .pg-celeb__stage,
+.pg-celeb--hyper_car .pg-celeb__stage { animation-name: pg-enter-side; }
+.pg-celeb--diamond_refract .pg-celeb__stage,
+.pg-celeb--aeon_diamond .pg-celeb__stage { animation-name: pg-enter-spin; }
+
+@keyframes pg-heart {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+@keyframes pg-rise {
+  0%, 100% { transform: translateY(6px); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes pg-orbit { to { transform: rotateY(360deg); } }
+@keyframes pg-spin-slow { to { transform: rotate(360deg); } }
+@keyframes pg-dash {
+  0%, 100% { transform: translateX(-8px); }
+  50% { transform: translateX(8px); }
+}
+@keyframes pg-shake {
+  0%, 100% { transform: translateY(0); }
+  30% { transform: translateY(5px) rotate(-4deg); }
+  60% { transform: translateY(-4px) rotate(4deg); }
+}
+@keyframes pg-enter-spin {
+  from { transform: scale(0.2) rotate(-40deg); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes pg-enter-up {
+  from { transform: scale(0.45) translateY(70px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes pg-enter-side {
+  from { transform: translateX(-40%) scale(0.6); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pg-card, .pg-celeb__stage, .pg-card--legendary, .pg-card--ultra, .pg-css__mark { animation: none !important; transform: none !important; }
+  .pg-particles { display: none; }
+}

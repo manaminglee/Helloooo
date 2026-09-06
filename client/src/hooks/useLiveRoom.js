@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE } from '../config/apiBase';
+import { useGiftQueue } from '../gifts/useGiftQueue';
 
 const MAX_COMMENTS = 40;        // DOM ceiling for the overlay stream
 const FLUSH_MS = 140;           // incoming comments are batched into one render
 const BANNER_TTL = 4200;
 const BANNER_MAX = 3;
-const FULLSCREEN_TTL = 4600;
 const COMBO_WINDOW = 4000;
 const JOIN_NOTICE_MS = 5000;    // at most one 'joined' line per this window
 
@@ -33,7 +33,7 @@ export function useLiveRoom(socket, liveId, { asHost = false, onReaction, handle
   const [viewerCount, setViewerCount] = useState(0);
   const [likes, setLikes] = useState(0);
   const [banners, setBanners] = useState([]);
-  const [fullscreenGift, setFullscreenGift] = useState(null);
+  const { current: fullscreenGift, enqueue: enqueueCelebration, done: dismissFullscreen, reset: resetCelebrations } = useGiftQueue();
   const [battle, setBattle] = useState(null);
   const [topGifter, setTopGifter] = useState(null);
   const [stats, setStats] = useState(null);
@@ -115,13 +115,8 @@ export function useLiveRoom(socket, liveId, { asHost = false, onReaction, handle
       return next;
     });
 
-    if (payload.fullscreen) {
-      setFullscreenGift({ ...payload, key: `${payload.txId}` });
-      setTimeout(() => {
-        setFullscreenGift((cur) => (cur?.key === `${payload.txId}` ? null : cur));
-      }, FULLSCREEN_TTL);
-    }
-  }, []);
+    enqueueCelebration({ ...payload, key: `${payload.txId || payload.at || Date.now()}` });
+  }, [enqueueCelebration]);
 
   // --- socket wiring --------------------------------------------------------
   useEffect(() => {
@@ -129,7 +124,7 @@ export function useLiveRoom(socket, liveId, { asHost = false, onReaction, handle
 
     setComments([]);
     setBanners([]);
-    setFullscreenGift(null);
+    resetCelebrations();
     setEndSummary(null);
     setRoomState('connecting');
     pendingRef.current = [];
@@ -392,7 +387,7 @@ export function useLiveRoom(socket, liveId, { asHost = false, onReaction, handle
     follow,
     moderation,
     toast,
-    dismissFullscreen: () => setFullscreenGift(null),
+    dismissFullscreen,
     COMBO_WINDOW,
   };
 }

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { CoinBadge } from './CoinBadge';
 import { HellooooBrand, HellooooLogo } from './HellooooBrand';
-import { countryToFlag } from '../utils/countryFlag';
+import { OnlineViewersBadge } from './OnlineViewersBadge';
 
 function MenuRow({ icon, label, hint, onClick, danger, badge }) {
   return (
@@ -132,8 +132,7 @@ export function LandingSideMenu({
         )}
 
         <div className="mm-side-menu__online">
-          {country && <span title={`Your region: ${country}`}>{countryToFlag(country)}</span>}
-          <span className="tabular-nums">{(onlineCount ?? 0).toLocaleString()} online</span>
+          <OnlineViewersBadge count={onlineCount} country={country} showLabel />
         </div>
 
         <nav className="mm-side-menu__nav">
