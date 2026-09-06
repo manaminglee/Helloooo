@@ -57,7 +57,9 @@ export function LandingHero({
           </motion.div>
 
           <motion.h1 variants={fadeUp} className="lv2-hero__title">
-            {HELLOOOO_EMOJI} Where strangers become{' '}
+            <span className="lv2-hero__title-line">
+              {HELLOOOO_EMOJI} Where strangers become
+            </span>{' '}
             <span className="lv2-hero__gradient">your people</span>
           </motion.h1>
 

@@ -770,7 +770,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
           <div className="mm-landing-header__bar">
             <div className="mm-landing-header__brand">
               <button type="button" onClick={scrollToStart} className="flex items-center gap-3 min-w-0 text-left rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/40 mm-compact-btn">
-                <HellooooLogo size={28} className="shrink-0 rounded-lg" />
+                <HellooooLogo size={28} className="shrink-0" />
                 <div className="flex flex-col min-w-0">
                   <HellooooBrand size="sm" />
                   <span className="hidden sm:block text-[10px] text-white/45 tracking-widest uppercase">{HELLOOOO_EMOJI} {HELLOOOO_TAGLINE}</span>

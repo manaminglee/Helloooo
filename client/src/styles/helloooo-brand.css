@@ -4,10 +4,10 @@
   display: block;
   object-fit: contain;
   object-position: center;
-  border-radius: 0.65rem;
   flex-shrink: 0;
   overflow: visible;
-  background: #000;
+  background: transparent;
+  filter: drop-shadow(0 4px 16px rgba(0, 0, 0, 0.35));
 }
 
 .helloooo-brand {

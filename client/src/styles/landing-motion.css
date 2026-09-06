@@ -93,8 +93,18 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  max-width: 42rem;
+  max-width: min(56rem, 100%);
   margin: 0 auto;
+  padding-inline: 0.5rem;
+}
+
+.lv2-hero__brand .helloooo-brand--xl {
+  letter-spacing: 0.04em;
+  font-stretch: expanded;
+}
+
+.lv2-hero__brand .helloooo-lockup__tagline {
+  letter-spacing: 0.28em;
 }
 
 .lv2-hero__brand {
@@ -130,12 +140,30 @@
 }
 
 .lv2-hero__title {
-  font-size: clamp(2rem, 6.5vw, 3.35rem);
-  font-weight: 900;
-  line-height: 1.08;
-  letter-spacing: -0.03em;
+  font-family: var(--font-display, 'Syne', system-ui, sans-serif);
+  font-size: clamp(2.35rem, 8vw, 4.25rem);
+  font-weight: 800;
+  font-stretch: expanded;
+  line-height: 1.05;
+  letter-spacing: 0.06em;
   color: #fff;
   margin: 0 0 1rem;
+  width: min(100%, 52rem);
+}
+
+.lv2-hero__title-line {
+  display: inline;
+  white-space: normal;
+}
+
+@media (min-width: 640px) {
+  .lv2-hero__title {
+    letter-spacing: 0.1em;
+  }
+
+  .lv2-hero__title-line {
+    white-space: nowrap;
+  }
 }
 
 .lv2-hero__gradient {

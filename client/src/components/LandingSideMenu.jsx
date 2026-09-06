@@ -84,7 +84,7 @@ export function LandingSideMenu({
       <aside className="mm-side-menu__panel animate-drawer-in">
         <header className="mm-side-menu__head">
           <div className="mm-side-menu__brand">
-            <HellooooLogo size={24} className="rounded-lg shrink-0" />
+              <HellooooLogo size={24} className="shrink-0" />
             <HellooooBrand size="sm" />
           </div>
           <button
