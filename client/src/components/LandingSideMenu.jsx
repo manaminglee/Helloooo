@@ -150,7 +150,8 @@ export function LandingSideMenu({
                 hint={`View @${handle}`}
                 onClick={() => {
                   onClose?.();
-                  window.open(`/creator/${encodeURIComponent(handle)}`, '_blank', 'noopener,noreferrer');
+                  const path = creatorStatus?.profilePath || (creatorStatus?.navId ? `/u/${creatorStatus.navId}` : '/');
+                  window.open(path, '_blank', 'noopener,noreferrer');
                 }}
               />
             </>

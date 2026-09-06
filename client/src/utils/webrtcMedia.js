@@ -40,6 +40,11 @@ export function hasLiveRemoteVideo(stream) {
   return !!stream?.getVideoTracks?.().some((t) => t.readyState === 'live');
 }
 
+/** True when a video track exists and is not ended — muted / disabled still counts. */
+export function hasPlayableVideo(stream) {
+  return !!stream?.getVideoTracks?.().some((t) => t.readyState !== 'ended');
+}
+
 /** Stop camera/mic immediately — call when leaving any room. */
 export function releaseMediaStream(stream, videoEl) {
   if (!stream) return;

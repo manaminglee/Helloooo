@@ -4,7 +4,6 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { countryToFlag } from '../utils/countryFlag';
-import { CountryFlag } from './CountryFlag';
 import { VideoLogoPlaceholder, VideoWatermark } from './VideoPanelChrome';
 import { CreatorProfilePopup } from './CreatorProfilePopup';
 import { HellooooBrand } from './HellooooBrand';
@@ -12,13 +11,6 @@ import { AdSlot } from './AdSlot';
 import { API_BASE } from '../config/apiBase';
 import { nextMsgId } from '../utils/uniqueId';
 
-const BlueTick = () => (
-  <span className="inline-flex items-center justify-center w-3 h-3 bg-violet-500 rounded-full ml-1.5 shadow-[0_0_10px_#a78bfa]">
-    <svg className="w-2 h-2 text-black" fill="currentColor" viewBox="0 0 20 20">
-      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-    </svg>
-  </span>
-);
 import { useLatency } from '../hooks/useLatency';
 import { useIceServers } from '../hooks/useIceServers';
 import { CoinBadge } from './CoinBadge';
@@ -28,7 +20,7 @@ import { playConnectSound, playMessageSound, playDisconnectSound, playWaveSound,
 import { getPrefs } from '../utils/userPrefs';
 import { SettingsPanel, SettingsGearButton } from './SettingsPanel';
 import { mmDebug } from '../utils/mmDebug';
-import { attachStreamToVideo, hasLiveRemoteVideo, mergeTrackIntoStream } from '../utils/webrtcMedia';
+import { attachStreamToVideo, hasLiveRemoteVideo, hasPlayableVideo, mergeTrackIntoStream } from '../utils/webrtcMedia';
 import { useYoutubeLive } from '../hooks/useYoutubeLive';
 import { buildVideoChatLiveStream, releaseLiveStream } from '../utils/dualVideoCapture';
 import { CreatorLiveModal } from './CreatorLiveModal';
@@ -130,7 +122,9 @@ const AI_ICEBREAKERS = {
 function VideoEl({ stream, muted = false, mirror = false, className = '' }) {
   const ref = useRef(null);
   useEffect(() => {
-    if (ref.current && stream) ref.current.srcObject = stream;
+    const el = ref.current;
+    if (!el || !stream) return undefined;
+    return attachStreamToVideo(el, stream);
   }, [stream]);
   return (
     <video
@@ -165,9 +159,8 @@ const VIDEO_FILTERS = [
   { id: 'contrast(150%) brightness(120%)', label: 'Intense' },
 ];
 
-function chatMessageCountry(m, isMe, myCountry, peerCountry) {
-  if (m?.country) return m.country;
-  return isMe ? myCountry : peerCountry;
+function chatMessageCountry() {
+  return null;
 }
 
 function useMessageTtl(m) {
@@ -188,26 +181,8 @@ function useMessageTtl(m) {
   return timeLeft;
 }
 
-function CreatorIntroChatCard({ m, onViewCreator }) {
-  if (!m?.isIntro || !m?.creatorHandle) return null;
-  return (
-    <div className="flex justify-center my-3 px-1">
-      <div className="w-full max-w-md rounded-2xl border border-violet-500/35 bg-gradient-to-br from-violet-500/15 to-indigo-500/5 p-4 text-center shadow-lg shadow-violet-950/30">
-        <div className="flex items-center justify-center gap-2 mb-2">
-          <BlueTick />
-          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-300">Creator connected</span>
-        </div>
-        <p className="text-sm text-white/85 leading-relaxed mb-3">{m.text}</p>
-        <button
-          type="button"
-          onClick={() => onViewCreator?.(m.creatorHandle)}
-          className="w-full py-2.5 rounded-xl bg-violet-500 text-black text-[10px] font-black uppercase tracking-widest hover:bg-white transition-all"
-        >
-          View @{m.creatorHandle} profile
-        </button>
-      </div>
-    </div>
-  );
+function CreatorIntroChatCard() {
+  return null;
 }
 
 function MobChatBubble({ m, isMe, myCountry, peerCountry, onViewCreator }) {
@@ -286,13 +261,7 @@ function DeskChatBubble({ m, isMe, myCountry, peerCountry, onViewCreator }) {
   return (
     <div className={`mm-desk-bubble-row ${isMe ? 'mm-desk-bubble-row--me' : ''}`}>
       {!isMe && flag && <span className="mm-chat-flag" title="Stranger's region">{flag}</span>}
-      <div className={`mm-desk-bubble ${isMe ? 'mm-desk-bubble--me' : 'mm-desk-bubble--them'} ${m.isCreator ? 'ring-1 ring-violet-500/30' : ''}`}>
-        {m.isCreator && !isMe && (
-          <div className="flex items-center gap-1 mb-1">
-            <span className="text-[9px] font-black uppercase tracking-widest text-violet-300">@{m.nickname}</span>
-            <BlueTick />
-          </div>
-        )}
+      <div className={`mm-desk-bubble ${isMe ? 'mm-desk-bubble--me' : 'mm-desk-bubble--them'}`}>
         <p className="mm-desk-bubble__text">{m.text}</p>
         <span className="mm-desk-bubble__meta">
           {isMe && flag && <span className="mm-chat-flag mm-chat-flag--inline" title="Your region">{flag}</span>}
@@ -332,9 +301,8 @@ function VanishingMessage({ m, isMe, country: countryCode }) {
               <span className="mm-chat-flag mm-chat-flag--inline text-sm leading-none" title="Region">{countryToFlag(countryCode)}</span>
             )}
             <span className={`text-[8px] font-black uppercase tracking-widest ${isMe ? 'text-violet-400' : 'text-white/40'}`}>
-              {m.isCreator ? `@${m.nickname}` : (isMe ? 'You' : m.nickname || 'Stranger')}
+              {isMe ? 'You' : 'Stranger'}
             </span>
-            {m.isCreator && <BlueTick />}
           </div>
         </div>
         {m.replyTo && (
@@ -1184,10 +1152,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   useEffect(() => {
     const el = remoteVideoRef.current;
-    if (!el || !peer?.stream) return;
-    el.srcObject = peer.stream;
+    if (!el || !peer?.stream) return undefined;
     el.volume = remoteVolume;
-    el.play?.().catch(() => { });
+    return attachStreamToVideo(el, peer.stream);
   }, [peer?.stream, remoteVolume]);
 
   const hardClosePeer = useCallback((remoteId) => {
@@ -1704,7 +1671,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   useEffect(() => {
     if (status === 'connected') {
       setTimeout(() => inputRef.current?.focus(), 500);
-      setMessages(prev => [...prev, { id: nextMsgId('sys'), system: true, text: `Connected to a stranger from ${peer?.country || 'the network'}` }]);
+      setMessages(prev => [...prev, { id: nextMsgId('sys'), system: true, text: 'Connected to a stranger' }]);
       playConnectSound();
       setIsModerating(true);
       const timer = setTimeout(() => setIsModerating(false), 3000);
@@ -1767,7 +1734,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           isCreator: typeof info.isCreator === 'boolean' ? info.isCreator : prev?.isCreator,
         };
       });
-      if (track.kind === 'video' && track.readyState === 'live') {
+      if (track.kind === 'video') {
         setConnectPhase('video');
       }
     };
@@ -2761,7 +2728,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         onDismissSafety={dismissSafetyNudge}
         peerRecording={peerRecording}
         showStayConnected={showStayConnected && goodVibesMatch && peer?.isCreator}
-        onStayConnected={() => { if (peer?.nickname) window.open(`/creator/${peer.nickname}`, '_blank'); setShowStayConnected(false); }}
+        onStayConnected={() => { setShowStayConnected(false); }}
         onDismissStayConnected={() => setShowStayConnected(false)}
         matchedInterests={status === 'connected' ? sharedInterests : []}
       />
@@ -2775,10 +2742,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               <div className="mm-desk-pane">
                 <div className="mm-desk-pane__tag mm-desk-pane__tag--you">
                   <span className="mm-desk-dot mm-desk-dot--green" aria-hidden /> You
-                  {(myCountry || country) && (
-                    <CountryFlag country={myCountry || country} className="mm-country-flag" size={14} />
-                  )}
-                  {isCreator && <BlueTick />}
                 </div>
                 <VideoWatermark />
                 {cameraError && !localStream && <AudioOnlyFallback nickname={nickname} micBlocked={micBlocked} onRetryCamera={retryMediaLocal} onAudioOnly={continueAudioOnly} />}
@@ -2798,19 +2761,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 )}
               </div>
               <div
-                className={`mm-desk-pane ${peer?.isCreator ? 'cursor-pointer' : ''}`}
+                className="mm-desk-pane"
                 ref={remoteStageRef}
-                onClick={() => peer?.isCreator && peer?.nickname && setShowProfileHandle(peer.nickname)}
-                role={peer?.isCreator ? 'button' : undefined}
-                title={peer?.isCreator ? 'View creator profile' : undefined}
               >
                 <div className="mm-desk-pane__tag mm-desk-pane__tag--stranger">
                   <span className="mm-desk-dot mm-desk-dot--blue" aria-hidden />
-                  {peer?.isCreator ? `@${peer?.nickname || 'Creator'}` : (peer?.nickname && peer.nickname !== 'Anonymous' ? peer.nickname : 'Stranger')}
-                  {peer?.country && (
-                    <CountryFlag country={peer.country} className="mm-country-flag" size={14} />
-                  )}
-                  {peer?.isCreator && <BlueTick />}
+                  Stranger
                 </div>
                 <VideoWatermark />
                 {status === 'searching' && (
@@ -2834,11 +2790,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                       </div>
                     )}
                     <RemoteVideoComponent stream={peer?.stream} muted={mutedStranger} strangerFilter={strangerFilter} strangerBlur={strangerBlur || (!unique.consentComplete && autoStrangerBlur)} />
-                    {peer?.isCreator && (
-                      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 px-3 py-1.5 rounded-full bg-black/55 border border-violet-500/30 text-[9px] font-black uppercase tracking-widest text-violet-200 pointer-events-none">
-                        Tap video to open creator profile
-                      </div>
-                    )}
                     <StrangerRevealOverlay show={showStrangerReveal && (strangerBlur || !unique.consentComplete) && !unique.consentComplete} onReveal={() => { revealStranger(); unique.markReady(); }} />
                     <FloatingVideoReactions reactions={localReactions} />
                     {strangerCameraOff && (
@@ -2948,20 +2899,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   </div>
                 )}
                 <div className="mm-mobile-remote-pane">
-                  <div
-                    className={`h-full relative overflow-hidden ${peer?.isCreator ? 'cursor-pointer group' : 'cursor-default'}`}
-                    onClick={() => peer?.isCreator && setShowProfileHandle(peer.nickname)}
-                  >
+                  <div className="h-full relative overflow-hidden">
                     <RemoteVideoComponent stream={peer?.stream} muted={mutedStranger} strangerFilter={strangerFilter} strangerBlur={strangerBlur || (!unique.consentComplete && autoStrangerBlur)} />
                     <FloatingVideoReactions reactions={localReactions} />
                     <StrangerRevealOverlay show={showStrangerReveal && (strangerBlur || !unique.consentComplete) && !unique.consentComplete} onReveal={() => { revealStranger(); unique.markReady(); }} />
                     {PHASE_4_UNIQUE.liveCaptions && (
                       <LiveCaptionsBar caption={unique.caption} enabled={unique.captionsOn} onToggle={() => unique.setCaptionsOn((v) => !v)} />
-                    )}
-                    {peer?.isCreator && (
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center pointer-events-none">
-                        <span className="opacity-0 group-hover:opacity-100 bg-white text-black px-4 py-1.5 rounded-full text-[10px] font-bold shadow-lg transition-all">View creator</span>
-                      </div>
                     )}
                   </div>
                   {strangerCameraOff && (
@@ -3334,25 +3277,34 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 function RemoteVideoComponent({ stream, muted, strangerFilter, strangerBlur }) {
   const ref = useRef(null);
   const [streamTick, setStreamTick] = useState(0);
-  const videoTracks = stream?.getVideoTracks?.() || [];
-  const streamLive = !!(stream?.active && videoTracks.some((t) => t.readyState === 'live' && t.enabled));
+  const streamLive = hasPlayableVideo(stream);
 
   useEffect(() => {
     if (!stream) return undefined;
     const bump = () => setStreamTick((t) => t + 1);
-    stream.getTracks().forEach((t) => t.addEventListener('ended', bump));
-    return () => stream.getTracks().forEach((t) => t.removeEventListener('ended', bump));
+    const tracks = stream.getTracks();
+    tracks.forEach((t) => {
+      t.addEventListener('ended', bump);
+      t.addEventListener('mute', bump);
+      t.addEventListener('unmute', bump);
+    });
+    stream.addEventListener('addtrack', bump);
+    stream.addEventListener('removetrack', bump);
+    return () => {
+      tracks.forEach((t) => {
+        t.removeEventListener('ended', bump);
+        t.removeEventListener('mute', bump);
+        t.removeEventListener('unmute', bump);
+      });
+      stream.removeEventListener('addtrack', bump);
+      stream.removeEventListener('removetrack', bump);
+    };
   }, [stream]);
 
   useEffect(() => {
     const el = ref.current;
-    if (!el || !stream || !streamLive) {
-      if (el) el.srcObject = null;
-      return undefined;
-    }
+    if (!el || !stream) return undefined;
     const detach = attachStreamToVideo(el, stream);
-    // Autoplay resilience (iOS/Safari): if the unmuted play() was blocked,
-    // retry on the next user gesture so the stranger never stays frozen/black.
     const resume = () => {
       if (el.paused) el.play?.().catch(() => { });
     };
@@ -3361,12 +3313,12 @@ function RemoteVideoComponent({ stream, muted, strangerFilter, strangerBlur }) {
       window.removeEventListener('pointerdown', resume);
       detach?.();
     };
-  }, [stream, streamLive, streamTick]);
+  }, [stream, streamTick]);
 
-  if (!streamLive) {
+  if (!stream) {
     return (
       <>
-        <VideoLogoPlaceholder label="Partner disconnected" compact />
+        <VideoLogoPlaceholder label="Connecting…" compact />
         <VideoWatermark />
       </>
     );
@@ -3385,6 +3337,11 @@ function RemoteVideoComponent({ stream, muted, strangerFilter, strangerBlur }) {
           filter: strangerBlur && strangerFilter === 'none' ? 'blur(20px)' : (strangerFilter !== 'none' ? strangerFilter : 'none'),
         }}
       />
+      {!streamLive && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 pointer-events-none">
+          <span className="text-[10px] font-black uppercase tracking-widest text-white/70">Connecting…</span>
+        </div>
+      )}
       <VideoWatermark />
     </>
   );

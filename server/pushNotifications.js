@@ -152,6 +152,44 @@ function registerPushNotifications(app, deps) {
     res.json(await removeSubscription(endpoint));
   });
 
+  /** Device token from the Capacitor iOS app (APNs). */
+  app.post('/api/push/apns', async (req, res) => {
+    try {
+      const token = String(req.body?.token || '').trim();
+      if (!token || token.length < 16) return res.status(400).json({ ok: false, error: 'token required' });
+      let ownerKey = sanitize(String(req.body?.ownerKey || ''), 80);
+      if (!ownerKey) {
+        const tok = String(req.headers['x-audio-token'] || req.body?.audioToken || '').trim();
+        const sess = tok && audioIdentity?.getSession?.(tok);
+        if (sess?.username) ownerKey = `audio:${String(sess.username).toLowerCase()}`;
+      }
+      if (!ownerKey) return res.status(401).json({ ok: false, error: 'Sign in first' });
+      if (!localDb.apns_tokens) localDb.apns_tokens = [];
+      localDb.apns_tokens = localDb.apns_tokens.filter((t) => t.token !== token);
+      localDb.apns_tokens.push({
+        owner_key: ownerKey,
+        token,
+        platform: 'ios',
+        updated_at: new Date().toISOString(),
+      });
+      if (localDb.apns_tokens.length > 5000) localDb.apns_tokens = localDb.apns_tokens.slice(-4000);
+      saveLocalDb?.();
+      if (supabase) {
+        try {
+          await supabase.from('mm_apns_tokens').upsert({
+            owner_key: ownerKey,
+            token,
+            platform: 'ios',
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'token' });
+        } catch { /* table optional until migration */ }
+      }
+      res.json({ ok: true, ready: !!(process.env.APNS_KEY_ID && process.env.APNS_TEAM_ID && process.env.APNS_BUNDLE_ID) });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message || 'APNs save failed' });
+    }
+  });
+
   return {
     enabled,
     publicKey: vapidPublic,

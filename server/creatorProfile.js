@@ -9,6 +9,7 @@
  */
 const crypto = require('crypto');
 const { scoreCreator, scoreTier } = require('./creatorScore');
+const opaqueNav = require('./opaqueNav');
 
 /** Platform-wide creator share for gifts; env-tunable, transparency baseline. */
 function creatorSharePct() {
@@ -56,6 +57,8 @@ function registerCreatorProfile(app, io, deps) {
     return {
       id: c.id,
       code: c.creator_code || null,
+      navId: c.creator_code ? opaqueNav.profileNavId(c.creator_code) : null,
+      profilePath: c.creator_code ? opaqueNav.profilePath(c.creator_code) : '/',
       handle: c.handle_name,
       displayName: c.display_name || c.handle_name,
       avatarUrl: c.avatar_url || null,
@@ -313,24 +316,26 @@ function registerCreatorProfile(app, io, deps) {
   async function findCreator(key) {
     const raw = String(key || '').trim().replace(/^@/, '');
     if (!raw) return null;
-    const isCode = /^\d{6}$/.test(raw);
+    const fromNav = opaqueNav.parseProfileNavId(raw);
+    const lookup = fromNav || raw;
+    const isCode = /^\d{6}$/.test(lookup);
 
     if (supabase) {
       const query = supabase.from('creators').select('*');
       const { data } = isCode
-        ? await query.eq('creator_code', raw).maybeSingle()
-        : await query.ilike('handle_name', raw).maybeSingle();
+        ? await query.eq('creator_code', lookup).maybeSingle()
+        : await query.ilike('handle_name', lookup).maybeSingle();
       if (data) return data;
       if (!isCode) {
-        const { data: byId } = await supabase.from('creators').select('*').eq('id', raw).maybeSingle();
+        const { data: byId } = await supabase.from('creators').select('*').eq('id', lookup).maybeSingle();
         if (byId) return byId;
       }
       return null;
     }
     return creatorsLocal().find((c) => (
-      (isCode && c.creator_code === raw)
-      || c.handle_name?.toLowerCase() === raw.toLowerCase()
-      || c.id === raw
+      (isCode && c.creator_code === lookup)
+      || c.handle_name?.toLowerCase() === lookup.toLowerCase()
+      || c.id === lookup
     )) || null;
   }
 

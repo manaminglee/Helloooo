@@ -48,6 +48,7 @@ const { createAudioStore } = require('./audioStore');
 const { GIFTS } = require('./giftCatalog');
 const { registerModeration } = require('./moderation');
 const { createMatchQueue } = require('./matchQueue');
+const opaqueNav = require('./opaqueNav');
 const { createInfra } = require('./infra');
 const { promises: dnsPromises } = require('dns');
 
@@ -293,14 +294,13 @@ function emitToAdmins(event, payload) {
   io.to(ADMIN_ROOM).emit(event, payload);
 }
 
-/** Socket ids belonging to a creator account (by creator id, referral code, or authorized IP). */
+/** Socket ids that actually authenticated as this creator — never match by IP. */
 function creatorSocketIds(creator) {
   const ids = [];
   if (!creator) return ids;
   for (const [sid, u] of users.entries()) {
     if (creator.id && u.creatorData?.id === creator.id) { ids.push(sid); continue; }
-    if (creator.referral_code && u.creatorData?.referral_code === creator.referral_code) { ids.push(sid); continue; }
-    if (Array.isArray(creator.authorized_ips) && u.ip && creator.authorized_ips.includes(u.ip)) ids.push(sid);
+    if (creator.referral_code && u.creatorData?.referral_code === creator.referral_code) ids.push(sid);
   }
   return ids;
 }
@@ -325,8 +325,7 @@ async function emitToCreatorByReferralCode(referralCode, event, payload) {
   } catch { /* fall through to in-memory matching only */ }
   for (const [sid, u] of users.entries()) {
     if (u.creatorData?.referral_code === code) { io.to(sid).emit(event, payload); continue; }
-    if (creator?.id && u.creatorData?.id === creator.id) { io.to(sid).emit(event, payload); continue; }
-    if (Array.isArray(creator?.authorized_ips) && u.ip && creator.authorized_ips.includes(u.ip)) io.to(sid).emit(event, payload);
+    if (creator?.id && u.creatorData?.id === creator.id) io.to(sid).emit(event, payload);
   }
 }
 
@@ -524,6 +523,35 @@ function sanitize(str, max = 50) {
   return str.trim().slice(0, max).replace(/[<>]/g, '');
 }
 
+function isAnonVideoMode(mode) {
+  return mode === 'video' || mode === 'group_video';
+}
+
+function publicAnonPeer(socketId) {
+  return {
+    socketId,
+    nickname: 'Anonymous',
+    country: '',
+    isCreator: false,
+  };
+}
+
+function mapRoomPeersPublic(room, selfSocketId) {
+  return room.participants
+    .filter((p) => p.socketId !== selfSocketId)
+    .map((p) => {
+      if (isAnonVideoMode(room.mode)) return publicAnonPeer(p.socketId);
+      const u = users.get(p.socketId);
+      return {
+        socketId: p.socketId,
+        userId: u?.id,
+        nickname: p.nickname,
+        country: u?.country,
+        isCreator: !!u?.isCreator,
+      };
+    });
+}
+
 function getClientIp(req) {
   return clientIp.httpClientIp(req);
 }
@@ -688,7 +716,7 @@ function buildCreatorIntroMessage(roomId, creatorSocketId, creatorUser) {
     isCreator: true,
     isIntro: true,
     creatorHandle: handle,
-    profilePath: `/creator/${encodeURIComponent(handle)}`,
+    profilePath: opaqueNav.profilePath(creatorUser.creatorData?.creator_code || ''),
   };
 }
 
@@ -830,7 +858,7 @@ function removeUserFromRoom(socketId, roomId, io) {
     io.to(roomId).emit('user-left', {
       socketId,
       userId: socketId,
-      nickname: userData?.nickname || 'Anonymous',
+      nickname: isAnonVideoMode(room.mode) ? 'Anonymous' : (userData?.nickname || 'Anonymous'),
       roomId,
       participantCount: room.users.size,
     });
@@ -850,27 +878,26 @@ function removeUserFromRoom(socketId, roomId, io) {
               nextUser.userData.rooms.add(room.id);
               nextSocket.join(room.id);
               // Send them joined events
-              const peers = room.participants
-                .filter((p) => p.socketId !== nextUser.socketId)
-                .map((p) => {
-                  const u = users.get(p.socketId);
-                  return { socketId: p.socketId, userId: u?.id, nickname: p.nickname, country: u?.country };
-                });
+              const peers = mapRoomPeersPublic(room, nextUser.socketId);
               nextSocket.emit('group-joined', {
                 roomId: room.id,
                 mode: room.mode,
                 interest: room.interest,
                 participantCount: room.users.size,
-                country: nextUser.userData.country,
+                country: isAnonVideoMode(room.mode) ? '' : nextUser.userData.country,
+                sfu: livekitRooms.isConfigured() && room.mode === 'group_video' && !room.sfuFallback
+                  ? { enabled: true, provider: 'livekit', url: livekitRooms.publicUrl() }
+                  : { enabled: false },
               });
               nextSocket.emit('existing-peers', { roomId: room.id, peers, total: peers.length });
               nextSocket.emit('chat-history', { roomId: room.id, messages: (room.messages || []).slice(-MESSAGE_HISTORY) });
               nextSocket.to(room.id).emit('user-joined', {
                 roomId: room.id,
                 socketId: nextUser.socketId,
-                userId: nextUser.userData.id,
-                nickname: nextUser.userData.nickname,
-                country: nextUser.userData.country,
+                userId: isAnonVideoMode(room.mode) ? undefined : nextUser.userData.id,
+                nickname: isAnonVideoMode(room.mode) ? 'Anonymous' : nextUser.userData.nickname,
+                country: isAnonVideoMode(room.mode) ? '' : nextUser.userData.country,
+                isCreator: isAnonVideoMode(room.mode) ? false : !!nextUser.userData.isCreator,
                 participantCount: room.users.size,
               });
               break;
@@ -2927,6 +2954,8 @@ app.get('/api/livekit/status', (req, res) => {
   res.json(livekitRooms.statusPayload());
 });
 
+opaqueNav.registerOpaqueNav(app, { getClientIp });
+
 // API TURN/ICE — regional UDP-first, then TCP, then TLS
 const { buildIceServers } = require('./iceServers');
 app.get('/api/turn', (req, res) => {
@@ -3686,40 +3715,17 @@ io.on('connection', (socket) => {
   });
 
   (async () => {
-    let finalNick = 'Anonymous';
-    let finalIsCreator = false;
-    if (supabase) {
-      const { data } = await supabase.from('creators').select('*').contains('authorized_ips', [ip]).eq('status', 'approved').single();
-      if (data) {
-        const u = users.get(socket.id);
-        if (u) {
-          u.isCreator = true;
-          u.nickname = data.handle_name;
-          u.creatorData = data;
-          finalNick = u.nickname;
-          finalIsCreator = true;
-        }
-      }
-    } else {
-      const data = localDb.creators.find(c => c.authorized_ips.includes(ip) && c.status === 'approved');
-      if (data) {
-        const u = users.get(socket.id);
-        if (u) {
-          u.isCreator = true;
-          u.nickname = data.handle_name;
-          u.creatorData = data;
-          finalNick = u.nickname;
-          finalIsCreator = true;
-        }
-      }
-    }
-    // Ensure user has a coin profile and send persistent states
+    // Never promote a socket to creator from IP / same Wi‑Fi. Only creator:auth
+    // (session token on THIS device) can set isCreator. That is what lets a
+    // second phone on the same network watch a live instead of becoming host.
+    const u = users.get(socket.id);
+    const finalNick = u?.nickname || 'Anonymous';
     const coinData = await getCoinUser(ip);
     const proStatus = await persistence.getProStatus(ip);
     socket.emit('connected', {
       userId,
       nickname: finalNick,
-      isCreator: finalIsCreator,
+      isCreator: false,
       country,
       coins: coinData.coins || 0,
       registered: !!coinData.registered,
@@ -3956,8 +3962,12 @@ io.on('connection', (socket) => {
       socket.join(room.id);
       otherSocket.join(room.id);
 
-      const myPeer = { socketId: socket.id, userId: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator };
-      const otherPeer = { socketId: match.socketId, userId: otherData.id, nickname: otherData.nickname, country: otherData.country, isCreator: otherData.isCreator };
+      const myPeer = isAnonVideoMode(mode)
+        ? publicAnonPeer(socket.id)
+        : { socketId: socket.id, userId: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator };
+      const otherPeer = isAnonVideoMode(mode)
+        ? publicAnonPeer(match.socketId)
+        : { socketId: match.socketId, userId: otherData.id, nickname: otherData.nickname, country: otherData.country, isCreator: otherData.isCreator };
 
       userData.lastPartnerUserId = otherData.id;
       otherData.lastPartnerUserId = userData.id;
@@ -3973,18 +3983,18 @@ io.on('connection', (socket) => {
         && Date.now() < (userData.skipWindow?.until || 0)
         && Date.now() < (otherData.skipWindow?.until || 0)
       );
-      socket.emit('partner-found', { roomId: room.id, peer: otherPeer, country: userData.country, sessionConfig, sharedInterests, mutualSkipReconnect });
-      otherSocket.emit('partner-found', { roomId: room.id, peer: myPeer, country: otherData.country, sessionConfig, sharedInterests, mutualSkipReconnect });
+      socket.emit('partner-found', { roomId: room.id, peer: otherPeer, country: isAnonVideoMode(mode) ? '' : userData.country, sessionConfig, sharedInterests, mutualSkipReconnect });
+      otherSocket.emit('partner-found', { roomId: room.id, peer: myPeer, country: isAnonVideoMode(mode) ? '' : otherData.country, sessionConfig, sharedInterests, mutualSkipReconnect });
 
       const reconnectToken = enhancements.issueReconnectToken(socket.id, { roomId: room.id, nickname: userData.nickname, mode });
       socket.emit('reconnect-token', { token: reconnectToken });
       const otherToken = enhancements.issueReconnectToken(match.socketId, { roomId: room.id, nickname: otherData.nickname, mode });
       otherSocket.emit('reconnect-token', { token: otherToken });
 
-      if (userData.isCreator) {
+      if (!isAnonVideoMode(mode) && userData.isCreator) {
         pushRoomChatMessage(room, buildCreatorIntroMessage(room.id, socket.id, userData));
       }
-      if (otherData.isCreator) {
+      if (!isAnonVideoMode(mode) && otherData.isCreator) {
         pushRoomChatMessage(room, buildCreatorIntroMessage(room.id, match.socketId, otherData));
       }
 
@@ -4051,26 +4061,15 @@ io.on('connection', (socket) => {
     userData.rooms.add(room.id);
     socket.join(room.id);
 
-    const peers = room.participants
-      .filter((p) => p.socketId !== socket.id)
-      .map((p) => {
-        const u = users.get(p.socketId);
-        return {
-          socketId: p.socketId,
-          userId: u?.id,
-          nickname: p.nickname,
-          country: u?.country,
-          isCreator: !!u?.isCreator
-        };
-      });
+    const peers = mapRoomPeersPublic(room, socket.id);
 
     socket.emit('group-joined', {
       roomId: room.id,
       mode,
       interest: room.interest,
       participantCount: room.users.size,
-      country: userData.country,
-      sfu: livekitRooms.isConfigured() && mode === 'group_video'
+      country: isAnonVideoMode(mode) ? '' : userData.country,
+      sfu: livekitRooms.isConfigured() && mode === 'group_video' && !room.sfuFallback
         ? { enabled: true, provider: 'livekit', url: livekitRooms.publicUrl() }
         : { enabled: false },
     });
@@ -4082,10 +4081,10 @@ io.on('connection', (socket) => {
     socket.to(room.id).emit('user-joined', {
       roomId: room.id,
       socketId: socket.id,
-      userId: userData.id,
-      nickname: userData.nickname,
-      country: userData.country,
-      isCreator: !!userData.isCreator,
+      userId: isAnonVideoMode(mode) ? undefined : userData.id,
+      nickname: isAnonVideoMode(mode) ? 'Anonymous' : userData.nickname,
+      country: isAnonVideoMode(mode) ? '' : userData.country,
+      isCreator: isAnonVideoMode(mode) ? false : !!userData.isCreator,
       participantCount: room.users.size,
     });
   });
@@ -4125,20 +4124,15 @@ io.on('connection', (socket) => {
     userData.rooms.add(room.id);
     socket.join(room.id);
 
-    const peers = room.participants
-      .filter((p) => p.socketId !== socket.id)
-      .map((p) => {
-        const u = users.get(p.socketId);
-        return { socketId: p.socketId, userId: u?.id, nickname: p.nickname, country: u?.country, isCreator: !!u?.isCreator };
-      });
+    const peers = mapRoomPeersPublic(room, socket.id);
 
     socket.emit('group-joined', {
       roomId: room.id,
       mode: room.mode,
       interest: room.interest,
       participantCount: room.users.size,
-      country: userData.country,
-      sfu: livekitRooms.isConfigured() && room.mode === 'group_video'
+      country: isAnonVideoMode(room.mode) ? '' : userData.country,
+      sfu: livekitRooms.isConfigured() && room.mode === 'group_video' && !room.sfuFallback
         ? { enabled: true, provider: 'livekit', url: livekitRooms.publicUrl() }
         : { enabled: false },
     });
@@ -4150,10 +4144,10 @@ io.on('connection', (socket) => {
     socket.to(room.id).emit('user-joined', {
       roomId: room.id,
       socketId: socket.id,
-      userId: userData.id,
-      nickname: userData.nickname,
-      country: userData.country,
-      isCreator: !!userData.isCreator,
+      userId: isAnonVideoMode(room.mode) ? undefined : userData.id,
+      nickname: isAnonVideoMode(room.mode) ? 'Anonymous' : userData.nickname,
+      country: isAnonVideoMode(room.mode) ? '' : userData.country,
+      isCreator: isAnonVideoMode(room.mode) ? false : !!userData.isCreator,
       participantCount: room.users.size,
     });
   });
@@ -4287,13 +4281,14 @@ io.on('connection', (socket) => {
     }
 
     stats.totalMessages++;
+    const anonChat = isAnonVideoMode(room.mode);
     const entry = {
       id: generateId('msg'),
-      nickname: u.nickname,
+      nickname: anonChat ? 'Anonymous' : u.nickname,
       ts: Date.now(),
       socketId: socket.id,
-      isCreator: !!u.isCreator,
-      country: u.country || null,
+      isCreator: anonChat ? false : !!u.isCreator,
+      country: anonChat ? null : (u.country || null),
       type: msgType,
     };
     if (msgType === 'voice') {
@@ -4705,21 +4700,33 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     if (!userData || !room || !room.users.has(socket.id) || !room.users.has(targetSocketId)) return;
     // When LiveKit SFU is active for group video, ignore mesh media signaling
-    if (room.mode === 'group_video' && livekitRooms.isConfigured()) return;
+    if (room.mode === 'group_video' && livekitRooms.isConfigured() && !room.sfuFallback) return;
     const valid = ['offer', 'answer', 'ice-candidate'].includes(type);
     if (!valid) return;
     const target = io.sockets.sockets.get(targetSocketId);
     if (!target) return;
+    const anon = isAnonVideoMode(room.mode);
     target.emit('webrtc-signal', {
       fromSocketId: socket.id,
-      fromUserId: userData.id,
-      fromNickname: userData.nickname,
-      fromCountry: userData.country,
-      fromIsCreator: !!userData.isCreator,
+      fromUserId: anon ? undefined : userData.id,
+      fromNickname: anon ? 'Anonymous' : userData.nickname,
+      fromCountry: anon ? '' : userData.country,
+      fromIsCreator: anon ? false : !!userData.isCreator,
       signal,
       type,
       roomId,
     });
+  });
+
+  on('sfu-fallback', (data) => {
+    const roomId = String(data?.roomId || '');
+    const u = users.get(socket.id);
+    const room = rooms.get(roomId);
+    if (!u || !room || !room.users.has(socket.id)) return;
+    if (room.mode !== 'group_video') return;
+    if (room.sfuFallback) return;
+    room.sfuFallback = true;
+    io.to(room.id).emit('sfu-fallback', { roomId: room.id });
   });
 
   // LiveKit access token — group video or audio SFU rooms
@@ -4766,12 +4773,13 @@ io.on('connection', (socket) => {
       const tokenPayload = await livekitRooms.mintParticipantToken({
         socketId: socket.id,
         roomId,
-        nickname,
-        country: u.country || '',
-        isCreator: !!u.isCreator,
+        nickname: 'Anonymous',
+        country: '',
+        isCreator: false,
         canPublish: true,
         canSubscribe: true,
-        roomAdmin: !!u.isCreator,
+        roomAdmin: false,
+        anonymous: true,
       });
       socket.emit('livekit-token', tokenPayload);
     } catch (err) {

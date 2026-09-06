@@ -22,9 +22,47 @@ export async function fetchPushPublicKey() {
   }
 }
 
+async function registerNativeApns({ ownerKey, audioToken } = {}) {
+  try {
+    const { PushNotifications } = await import('@capacitor/push-notifications');
+    const perm = await PushNotifications.requestPermissions();
+    if (perm.receive !== 'granted') return { ok: false, error: 'Permission denied' };
+    await PushNotifications.register();
+    return new Promise((resolve) => {
+      const done = PushNotifications.addListener('registration', async (token) => {
+        try { await done.remove(); } catch { /* */ }
+        const headers = { 'Content-Type': 'application/json' };
+        if (audioToken) headers['X-Audio-Token'] = audioToken;
+        const res = await fetch(`${API_BASE}/api/push/apns`, {
+          method: 'POST',
+          headers,
+          credentials: 'include',
+          body: JSON.stringify({ token: token.value, ownerKey }),
+        });
+        const data = await res.json().catch(() => ({}));
+        resolve(res.ok ? { ok: true, native: true } : { ok: false, error: data.error || 'APNs failed' });
+      });
+      PushNotifications.addListener('registrationError', async () => {
+        resolve({ ok: false, error: 'APNs registration failed' });
+      });
+    });
+  } catch {
+    return { ok: false, error: 'Native push unavailable' };
+  }
+}
+
+/** Web Push (installed PWA) or APNs (Capacitor .ipa). */
+export async function registerBestPush(opts = {}) {
+  try {
+    const cap = window.Capacitor;
+    if (cap?.isNativePlatform?.()) return registerNativeApns(opts);
+  } catch { /* web */ }
+  return subscribeToPush(opts);
+}
+
 export async function subscribeToPush({ ownerKey, audioToken } = {}) {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    return { ok: false, error: 'Push not supported' };
+    return { ok: false, error: 'Push not supported — install to Home Screen on iPhone' };
   }
   const cfg = await fetchPushPublicKey();
   if (!cfg?.enabled || !cfg.publicKey) return { ok: false, error: 'Push not configured' };

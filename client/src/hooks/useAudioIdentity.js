@@ -213,16 +213,7 @@ export function useAudioIdentity(socket) {
           setDeviceTrusted(false);
         }
 
-        const restore = await fetch(`${API_BASE}/api/audio-identity/restore-ip`, { credentials: 'include' });
-        const restored = await restore.json().catch(() => ({}));
-        if (cancelled) return;
-        if (restored?.ok && restored.token && restored.identity) {
-          setToken(restored.token);
-          setIdentity(restored.identity);
-          try { sessionStorage.setItem(STORAGE_KEY, restored.token); } catch { /* ignore */ }
-          if (restored.identity?.username) persistUsername(restored.identity.username);
-          attachSocket(restored.token);
-        }
+        // Do not restore-by-IP — another phone on the same network must stay signed out.
       } catch {
         /* offline / network — leave signed-out */
       } finally {

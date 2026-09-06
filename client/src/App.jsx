@@ -1,11 +1,22 @@
 import { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { LandingPage } from './components/LandingPage';
 import MobileNav from './components/MobileNav';
-import { useLiveManifest, launchTarget, isLiveAudioSurface } from './utils/pwaManifest';
+import { useLiveManifest, isLiveAudioSurface } from './utils/pwaManifest';
+import {
+  parseOpaqueLocation,
+  requestNavGrant,
+  verifyNavGrant,
+  pageForMode,
+  modeForPage,
+  replaceOpaqueUrl,
+  pushOpaqueUrl,
+} from './utils/opaqueRoutes';
 import { AgeVerificationGate } from './components/AgeVerificationGate';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt';
 import { PwaUpdatePrompt } from './components/PwaUpdatePrompt';
-import { subscribeToPush, watchServiceWorkerUpdates } from './utils/pushNotifications';
+import { registerBestPush, watchServiceWorkerUpdates } from './utils/pushNotifications';
+import { IosSwipeBack } from './components/IosSwipeBack';
+import { unlockIosMedia } from './utils/iosMediaUnlock';
 import { UnblockPaymentModal } from './components/UnblockPaymentModal';
 import { ToastProvider, useToast } from './components/Toast';
 import { ConnectionBanner } from './components/ConnectionBanner';
@@ -112,7 +123,7 @@ function AppShell() {
   useEffect(() => {
     if (!audioIdentityHook.identity?.username) return undefined;
     const key = `audio:${String(audioIdentityHook.identity.username).toLowerCase()}`;
-    void subscribeToPush({ ownerKey: key });
+    void registerBestPush({ ownerKey: key });
     return undefined;
   }, [audioIdentityHook.identity?.username]);
 
@@ -148,22 +159,59 @@ function AppShell() {
   }, [appState, mode]);
 
   useEffect(() => {
-    const path = window.location.pathname || '/';
-    const creatorMatch = path.match(/^\/creator\/([^/]+)/i);
-    if (creatorMatch) {
-      setCreatorHandle(decodeURIComponent(creatorMatch[1]));
-      setAppState(STATES.CREATOR_PROFILE);
-    }
-    const joinMatch = path.match(/^\/join\/([^/]+)/i);
-    if (joinMatch) {
-      setPendingJoinRoomId(decodeURIComponent(joinMatch[1]));
-      const params = new URLSearchParams(window.location.search);
-      setJoinLinkOpts({
-        paToken: params.get('pa') || null,
-        asCohost: params.get('cohost') === '1',
-      });
-    }
-  }, []);
+    let cancelled = false;
+    (async () => {
+      const parsed = parseOpaqueLocation();
+      if (parsed.kind === 'blocked') {
+        replaceOpaqueUrl('/');
+        toast('Open Live and Audio from the app. That link is not valid.', { type: 'warn' });
+        return;
+      }
+      if (parsed.kind === 'profile') {
+        setCreatorHandle(parsed.navId);
+        setAppState(STATES.CREATOR_PROFILE);
+        return;
+      }
+      if (parsed.kind === 'legacy-join') {
+        try {
+          const grant = await requestNavGrant('join', parsed.roomId);
+          const url = new URL(grant.path, window.location.origin);
+          if (parsed.pa) url.searchParams.set('pa', parsed.pa);
+          if (parsed.asCohost) url.searchParams.set('cohost', '1');
+          if (!cancelled) {
+            replaceOpaqueUrl(`${url.pathname}${url.search}`);
+            setPendingJoinRoomId(parsed.roomId);
+            setJoinLinkOpts({ paToken: parsed.pa || null, asCohost: parsed.asCohost });
+          }
+        } catch {
+          if (!cancelled) {
+            replaceOpaqueUrl('/');
+            toast('That invite is no longer valid.', { type: 'warn' });
+          }
+        }
+        return;
+      }
+      if (parsed.kind !== 'page') return;
+      const verified = await verifyNavGrant({ n: parsed.n, auth: parsed.auth, extra: parsed.extra });
+      if (cancelled) return;
+      if (!verified.ok) {
+        replaceOpaqueUrl('/');
+        toast('This page needs a valid session. Open it from Helloooo.', { type: 'warn' });
+        return;
+      }
+      if (verified.page === 'join' && parsed.extra) {
+        setPendingJoinRoomId(parsed.extra);
+        setJoinLinkOpts({ paToken: parsed.pa || null, asCohost: parsed.asCohost });
+        return;
+      }
+      const nextMode = modeForPage(verified.page);
+      if (nextMode) {
+        setMode(nextMode);
+        setAppState(STATES.CHAT);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [toast]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -363,20 +411,8 @@ function AppShell() {
     setMode(null);
     setInterest('general');
     setJoinMeta((prev) => ({ ...prev, createLive: false }));
+    replaceOpaqueUrl('/');
   };
-
-  /* PWA deep links. An installed Live app opens at /live; without this it
-     would land on the generic landing page every time. Fires once, and only
-     once the socket is up, because joining needs it. */
-  const deepLinked = useRef(false);
-  useEffect(() => {
-    if (deepLinked.current || !socket || !connected || mode) return;
-    const target = launchTarget();
-    if (!target) return;
-    deepLinked.current = true;
-    handleJoin('general', joinMeta.displayNickname, target === 'live' ? MODES.LIVES : MODES.GROUP_TEXT);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [socket, connected, mode]);
 
   // Called when user selects a mode from the landing page
   const handleJoin = (interestVal, nick, m, rid = null, meta = {}) => {
@@ -384,28 +420,50 @@ function AppShell() {
     setIsJoining(true);
     const intst = (interestVal || 'general').trim().toLowerCase() || 'general';
     const displayNick = (nick || joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
-    setJoinMeta((prev) => ({
-      ...prev,
-      ...meta,
-      displayNickname: displayNick,
-      createLive: !!meta.createLive,
-    }));
-    setInterest(intst);
-    setMode(m);
-    setRoomId(rid);
-    setAppState(STATES.CHAT);
-    window.history.pushState({ mode: m, roomId: rid }, '');
-    setTimeout(() => setIsJoining(false), 500);
+    const page = pageForMode(m);
+    void (async () => {
+      try {
+        if (page) {
+          const grant = await requestNavGrant(page, rid || '');
+          pushOpaqueUrl(grant.path);
+        }
+        setJoinMeta((prev) => ({
+          ...prev,
+          ...meta,
+          displayNickname: displayNick,
+          createLive: !!meta.createLive,
+        }));
+        setInterest(intst);
+        setMode(m);
+        setRoomId(rid);
+        setAppState(STATES.CHAT);
+      } catch (err) {
+        replaceOpaqueUrl('/');
+        toast(err?.message || 'Could not open that page.', { type: 'warn' });
+      } finally {
+        setTimeout(() => setIsJoining(false), 500);
+      }
+    })();
   };
 
   const handleJoined = (rid) => setRoomId(rid);
 
   const handleAdminJoin = (rid, m, intst) => {
-    setRoomId(rid);
-    setMode(m);
-    setInterest(intst || 'general');
-    setAppState(STATES.CHAT);
-    window.history.pushState({ roomId: rid, mode: m }, '');
+    const page = pageForMode(m);
+    void (async () => {
+      try {
+        if (page) {
+          const grant = await requestNavGrant(page, rid || '');
+          pushOpaqueUrl(grant.path);
+        }
+        setRoomId(rid);
+        setMode(m);
+        setInterest(intst || 'general');
+        setAppState(STATES.CHAT);
+      } catch (err) {
+        toast(err?.message || 'Could not open that page.', { type: 'warn' });
+      }
+    })();
   };
 
   const handleLeaveRoom = () => {
@@ -502,28 +560,42 @@ function AppShell() {
               belongs to the video, and a persistent bar would both cover it and
               make it easy to walk out of a session by accident. */}
           <MobileNav
-            onLive={() => handleJoin(interest || 'general', joinMeta.displayNickname, MODES.LIVES)}
+            active="home"
+            onTab={(tab) => {
+              void unlockIosMedia();
+              if (tab === 'home') return;
+              const next = {
+                video: MODES.VIDEO,
+                live: MODES.LIVES,
+                audio: MODES.GROUP_TEXT,
+                chat: MODES.TEXT,
+              }[tab];
+              if (next) handleJoin(interest || 'general', joinMeta.displayNickname, next);
+            }}
           />
         </div>
       );
     }
     if (mode === MODES.LIVES) {
       return (
-        <div className="mm-page-enter">
-          <Suspense fallback={<LoadingFallback />}>
-            <LivesApp
-              socket={socket}
-              identityHook={audioIdentityHook}
-              isCreator={isCreator}
-              initialCreateLive={!!joinMeta.createLive}
-              onExit={handleBack}
-            />
-          </Suspense>
-        </div>
+        <IosSwipeBack onBack={handleBack}>
+          <div className="mm-page-enter">
+            <Suspense fallback={<LoadingFallback />}>
+              <LivesApp
+                socket={socket}
+                identityHook={audioIdentityHook}
+                isCreator={isCreator}
+                initialCreateLive={!!joinMeta.createLive}
+                onExit={handleBack}
+              />
+            </Suspense>
+          </div>
+        </IosSwipeBack>
       );
     }
     if (mode === MODES.TEXT) {
       return (
+        <IosSwipeBack onBack={handleBack}>
         <div className="mm-page-enter">
           <TextChat
             socket={socket}
@@ -550,10 +622,12 @@ function AppShell() {
             subscription={subscription}
           />
         </div>
+        </IosSwipeBack>
       );
     }
     if (mode === MODES.VIDEO) {
       return (
+        <IosSwipeBack onBack={handleBack}>
         <div className="mm-page-enter">
           <VideoChat
             socket={socket}
@@ -578,11 +652,13 @@ function AppShell() {
             subscription={subscription}
           />
         </div>
+        </IosSwipeBack>
       );
     }
     if (mode === MODES.GROUP_TEXT) {
       if (!import.meta.env?.VITE_LEGACY_GROUP_TEXT) {
         return (
+          <IosSwipeBack onBack={roomId ? handleLeaveRoom : handleCancelQueue}>
           <div className="mm-page-enter">
             <GroupAudioRoom
               socket={socket}
@@ -598,9 +674,11 @@ function AppShell() {
               onExit={roomId ? handleLeaveRoom : handleCancelQueue}
             />
           </div>
+          </IosSwipeBack>
         );
       }
       return (
+        <IosSwipeBack onBack={roomId ? handleLeaveRoom : handleCancelQueue}>
         <div className="mm-page-enter">
           <GroupTextRoom
             roomId={roomId}
@@ -620,10 +698,12 @@ function AppShell() {
             currentActiveSeconds={activeSeconds}
           />
         </div>
+        </IosSwipeBack>
       );
     }
     if (mode === MODES.GROUP_VIDEO) {
       return (
+        <IosSwipeBack onBack={roomId ? handleLeaveRoom : handleCancelQueue}>
         <div className="mm-page-enter">
           <GroupVideoRoom
             roomId={roomId}
@@ -647,6 +727,7 @@ function AppShell() {
             isPro={isPro}
           />
         </div>
+        </IosSwipeBack>
       );
     }
     return (

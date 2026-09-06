@@ -30,6 +30,7 @@ import { clearCreatorSession, getCreatorSessionToken } from '../utils/creatorAut
 import { VirtualMarketRateChip } from './VirtualMarketPanel';
 import { LandingSideMenu } from './LandingSideMenu';
 import { OnlineViewersBadge } from './OnlineViewersBadge';
+import { CreatorAvatar } from './CreatorAvatar';
 
 // Below-the-fold / secondary UI — keep landing first paint light.
 const MiniTrendChart = lazyRetry(() =>
@@ -233,6 +234,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
     return picks[Math.floor(Math.random() * picks.length)];
   });
   const [profileForm, setProfileForm] = useState({ bio: '', avatar: '' });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const avatarInputRef = useRef(null);
   const [dashboardUpi, setDashboardUpi] = useState('');
   const [upiSaveMsg, setUpiSaveMsg] = useState('');
   const [loginForm, setLoginForm] = useState({ handle: '', password: '' });
@@ -594,13 +597,35 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
     }
   };
 
+  const openProfileEditor = (e) => {
+    e?.stopPropagation?.();
+    setProfileForm({
+      bio: creatorStatus?.bio || '',
+      avatar: creatorStatus?.avatar_url || '',
+    });
+    setShowProfileModal(true);
+  };
+
   const saveProfile = async () => {
-    const res = await updateProfile(profileForm.bio, profileForm.avatar);
-    if (res.success) {
+    if (profileSaving) return;
+    if (!getCreatorSessionToken()) {
+      showAlert('Login required', 'Secure creator session missing. Please log in again.');
       setShowProfileModal(false);
-      showAlert('Profile Linked', 'Your identity has been updated on the network.');
-    } else {
-      showAlert('Transmission Error', res.error || 'Profile uplink failed. Try a smaller photo.');
+      setShowDashboardModal(false);
+      setShowCreatorModal(true);
+      return;
+    }
+    setProfileSaving(true);
+    try {
+      const res = await updateProfile(profileForm.bio, profileForm.avatar);
+      if (res.success) {
+        setShowProfileModal(false);
+        showAlert('Profile updated', 'Your photo and bio are now live on Helloooo.');
+      } else {
+        showAlert('Could not save', res.error || 'Profile update failed. Try a smaller photo.');
+      }
+    } finally {
+      setProfileSaving(false);
     }
   };
 
@@ -658,8 +683,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
         jumpFromDashboard(actionId);
         break;
       case 'profile':
-        setProfileForm({ bio: creatorStatus.bio || '', avatar: creatorStatus.avatar_url || '' });
-        setShowProfileModal(true);
+        openProfileEditor();
         break;
       case 'payout':
         // Scroll focus via UPI section — keep dashboard open
@@ -1428,107 +1452,87 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             </button>
           </div>
           <div className="flex-1 overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="max-w-6xl mx-auto px-4 sm:px-8 py-6 sm:py-20">
+            <div className="mm-creator-dash px-4 sm:px-6">
 
-              {/* TOP HEADER */}
-              <div className="mm-hide-mobile flex justify-between items-center mb-16 px-4">
-                <div className="flex items-center gap-4">
-                  <div className="w-1.5 h-10 bg-violet-400 rounded-full animate-pulse" />
-                  <div>
-                    <h2 className="text-2xl font-black italic uppercase tracking-tighter text-white">Creator Dashboard</h2>
-                    <p className="text-[10px] font-black text-violet-400/40 uppercase tracking-[0.4em]">Auth Level: Verified Creator</p>
-                  </div>
+              <div className="mm-hide-mobile mm-creator-dash__head">
+                <div>
+                  <h2 className="text-xl font-black tracking-tight text-white">Creator dashboard</h2>
+                  <p className="text-[10px] font-black text-violet-300/50 uppercase tracking-[0.28em] mt-1">Verified · @{creatorStatus.handle_name}</p>
                 </div>
-                <div className="flex gap-4">
-                  <button onClick={() => setShowDashboardModal(false)} className="px-6 py-3 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black text-white hover:bg-white hover:text-black transition-all uppercase tracking-widest">Exit HUD</button>
-                  <button onClick={async () => { await logout(); window.location.reload(); }} className="px-6 py-3 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-[10px] font-black text-rose-500 hover:bg-rose-500 hover:text-white transition-all uppercase tracking-widest">Deactivate</button>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setShowDashboardModal(false)} className="px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-[10px] font-black text-white hover:bg-white hover:text-black transition-all uppercase tracking-widest">Exit</button>
+                  <button type="button" onClick={async () => { await logout(); window.location.reload(); }} className="px-4 py-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[10px] font-black text-rose-400 hover:bg-rose-500 hover:text-white transition-all uppercase tracking-widest">Sign out</button>
                 </div>
               </div>
 
-              {/* CREATOR HUB — Create Live + modes */}
-              <div className="mb-10 px-4">
-                <CreatorHub
-                  creator={creatorStatus}
-                  sessionOk={!!getCreatorSessionToken()}
-                  onAction={onCreatorHubAction}
-                />
+              <CreatorHub
+                creator={creatorStatus}
+                sessionOk={!!getCreatorSessionToken()}
+                onAction={onCreatorHubAction}
+              />
+
+              <div className="mm-creator-dash__quick">
+                <button type="button" onClick={() => jumpFromDashboard('lives', { createLive: true })}>Create Live</button>
+                <button type="button" onClick={() => jumpFromDashboard('lives')}>Browse Lives</button>
+                <button type="button" onClick={() => jumpFromDashboard('group_text')}>Voice Room</button>
+                <button type="button" onClick={openProfileEditor}>Edit Profile</button>
               </div>
 
-              {/* QUICK ACTIONS (legacy shortcuts) */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-10 px-4">
-                <button type="button" onClick={() => jumpFromDashboard('lives', { createLive: true })} className="py-3 px-3 rounded-2xl bg-rose-500/15 border border-rose-500/35 text-[9px] font-black uppercase tracking-widest text-rose-100 hover:bg-rose-500/25 transition-all">Create Live</button>
-                <button type="button" onClick={() => jumpFromDashboard('lives')} className="py-3 px-3 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-[9px] font-black uppercase tracking-widest text-amber-100 hover:border-amber-400/40 transition-all">Browse Lives</button>
-                <button type="button" onClick={() => jumpFromDashboard('group_text')} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-violet-500/30 hover:text-violet-300 transition-all">Voice Room</button>
-                <button type="button" onClick={() => { setProfileForm({ bio: creatorStatus.bio || '', avatar: creatorStatus.avatar_url || '' }); setShowProfileModal(true); }} className="py-3 px-3 rounded-2xl bg-white/[0.03] border border-white/10 text-[9px] font-black uppercase tracking-widest text-white/70 hover:border-emerald-500/30 hover:text-emerald-300 transition-all">Edit Profile</button>
-              </div>
-
-              {/* YOUTUBE LIVE STUDIO (optional external) */}
-              <div className="mb-12 px-4">
-                <p className="text-[10px] font-black uppercase tracking-widest text-white/30 mb-3 px-1">Optional · YouTube RTMP</p>
+              <div className="mm-creator-dash__card">
+                <p className="text-[10px] font-black uppercase tracking-widest text-white/30 mb-3">Optional · YouTube RTMP</p>
                 <CreatorLiveStudio socket={socket} enabled={creatorStatus.status === 'approved'} compact />
               </div>
 
-              {/* MAIN HUD GRID */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
-
-                {/* LEFT: IDENTITY MATRIX */}
-                <div className="lg:col-span-1 space-y-8">
-                  <div className="p-10 rounded-[50px] bg-white/[0.02] border border-white/5 relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-6 opacity-5 font-black text-6xl italic group-hover:opacity-10 transition-all">ID</div>
-                    <div className="flex flex-col items-center text-center">
-                      <div className="w-40 h-40 rounded-full border-2 border-violet-400/40 p-2 mb-6 group-hover:scale-105 transition-transform relative">
-                        <div className="absolute inset-0 rounded-full bg-violet-400/10 animate-pulse" />
-                        <img src={creatorStatus.avatar_url || '/apple-touch-icon.png'} className="w-full h-full object-cover rounded-full relative z-10" />
-                      </div>
-                      <h3 className="text-2xl font-black text-white italic uppercase tracking-tighter">@{creatorStatus.handle_name} <BlueTick /></h3>
-                      <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mt-2">{creatorStatus.platform} Influencer</p>
-
-                      <div className="mt-8 text-[11px] font-bold text-white/60 leading-relaxed max-w-[200px] italic">
-                        {creatorStatus.bio || "No biography synced. Update your identity via the Profile Matrix."}
-                      </div>
-
-                      <button
-                        onClick={() => {
-                          setProfileForm({ bio: creatorStatus.bio || '', avatar: creatorStatus.avatar_url || '' });
-                          setShowProfileModal(true);
-                        }}
-                        className="mt-8 px-8 py-3 bg-violet-500/10 border border-violet-500/20 text-violet-400 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-violet-500 hover:text-black transition-all"
-                      >Update Metadata →</button>
-                    </div>
+              <div className="mm-creator-dash__grid">
+                <div className="mm-creator-dash__col">
+                  <div className="mm-creator-dash__card mm-creator-dash__id">
+                    <CreatorAvatar
+                      src={creatorStatus.avatar_url}
+                      name={creatorStatus.handle_name}
+                      size={96}
+                    />
+                    <h3>@{creatorStatus.handle_name} <BlueTick /></h3>
+                    <p>{creatorStatus.platform ? `${creatorStatus.platform} creator` : 'Helloooo creator'}</p>
+                    <p>{creatorStatus.bio || 'Add a short bio so fans know who you are.'}</p>
+                    <button
+                      type="button"
+                      onClick={openProfileEditor}
+                      className="mt-1 px-5 py-2.5 bg-violet-500/15 border border-violet-400/30 text-violet-200 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-violet-500 hover:text-black transition-all"
+                    >Edit profile</button>
                   </div>
 
-                  <div className="p-8 rounded-[40px] bg-indigo-500/5 border border-indigo-500/10 space-y-4">
-                    <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Share Hub</h4>
-                    <div className="p-5 bg-black/40 rounded-2xl border border-white/5 flex flex-col sm:flex-row gap-4 items-center">
+                  <div className="mm-creator-dash__card space-y-3">
+                    <h4 className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Share & payouts</h4>
+                    <div className="flex flex-col sm:flex-row gap-3 items-center">
                       {referralQrSrc && (
-                        <img src={referralQrSrc} alt="Referral QR" className="w-24 h-24 rounded-xl border border-white/10 bg-white p-1 shrink-0" />
+                        <img src={referralQrSrc} alt="Referral QR" className="w-20 h-20 rounded-xl border border-white/10 bg-white p-1 shrink-0" />
                       )}
                       <div className="flex-1 min-w-0 w-full">
-                        <div className="text-[8px] font-black text-white/20 uppercase mb-2">Referral URL</div>
-                        <div className="text-[11px] font-bold text-white italic break-all mb-4">{referralUrl}</div>
+                        <div className="text-[8px] font-black text-white/25 uppercase mb-1">Referral URL</div>
+                        <div className="text-[11px] font-bold text-white break-all mb-3">{referralUrl}</div>
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
                             onClick={() => { navigator.clipboard.writeText(referralUrl); showAlert('Copied', 'Referral link copied to clipboard.'); }}
-                            className="flex-1 min-w-[120px] py-3 bg-white/5 border border-white/10 text-white text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-white hover:text-black transition-all"
+                            className="flex-1 min-w-[110px] py-2.5 bg-white/5 border border-white/10 text-white text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-white hover:text-black transition-all"
                           >Copy Link</button>
                           <a
-                            href={`/creator/${encodeURIComponent(creatorStatus.handle_name || '')}`}
+                            href={creatorStatus.profilePath || (creatorStatus.navId ? `/u/${creatorStatus.navId}` : '/')}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="flex-1 min-w-[120px] py-3 text-center bg-violet-500/10 border border-violet-500/20 text-violet-300 text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-violet-500/20 transition-all"
+                            className="flex-1 min-w-[110px] py-2.5 text-center bg-violet-500/10 border border-violet-500/20 text-violet-200 text-[9px] font-black uppercase tracking-widest rounded-xl hover:bg-violet-500/20 transition-all"
                           >Public Profile</a>
                         </div>
                       </div>
                     </div>
-                    <div id="mm-creator-payout" className="p-5 bg-black/40 rounded-2xl border border-white/5 space-y-3">
-                      <div className="text-[8px] font-black text-white/20 uppercase">Saved UPI (payouts)</div>
+                    <div id="mm-creator-payout" className="space-y-2 pt-1">
+                      <div className="text-[8px] font-black text-white/25 uppercase">Saved UPI (payouts)</div>
                       <input
                         type="text"
                         value={dashboardUpi}
                         onChange={(e) => { setDashboardUpi(e.target.value); setUpiSaveMsg(''); }}
                         placeholder="yourname@upi"
-                        className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm text-white placeholder:text-white/30 outline-none focus:border-emerald-500/40"
+                        className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm text-white placeholder:text-white/30 outline-none focus:border-emerald-500/40"
                       />
                       {upiSaveMsg && <p className="text-[10px] text-emerald-300/90">{upiSaveMsg}</p>}
                       <button type="button" onClick={saveDashboardUpi} className="w-full py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[9px] font-black uppercase tracking-widest text-emerald-300 hover:bg-emerald-500/20">Save UPI</button>
@@ -1536,25 +1540,22 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   </div>
                 </div>
 
-                {/* MIDDLE/RIGHT: FINANCIAL HUD & ANALYTICS */}
-                <div className="lg:col-span-2 space-y-8">
-
-                  {/* WALLET BAR */}
-                  <div className="p-12 rounded-[60px] bg-gradient-to-br from-emerald-500/10 to-transparent border border-emerald-500/20 flex flex-col md:flex-row items-center justify-between gap-8 relative overflow-hidden group">
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-emerald-500/5 via-transparent to-transparent opacity-40 group-hover:scale-150 transition-all duration-1000" />
-                    <div className="w-full md:flex-1 min-w-0">
-                      <h3 className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.4em] mb-4">Total Liquid Assets</h3>
-                      <div className="text-7xl font-black italic text-white flex items-baseline gap-4 tabular-nums">
-                        ₹{creatorStatus.earnings_rs || 0}<span className="text-xl text-white/20">INR</span>
+                <div className="mm-creator-dash__col">
+                  <div className="mm-creator-dash__wallet">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.28em] mb-2">Earnings</h3>
+                      <div className="mm-creator-dash__wallet-value tabular-nums">
+                        ₹{creatorStatus.earnings_rs || 0}
+                        <span className="ml-2 text-base text-white/30 font-bold">INR</span>
                       </div>
                       <VirtualMarketRateChip className="mt-3" />
-                      <p className="text-[11px] font-bold text-white/30 uppercase tracking-widest mt-4">Calculated from {creatorStatus.coins_earned || 0} lifetime creator coins</p>
-                      <p className="text-[9px] font-bold text-white/25 mt-2 max-w-md">INR unlocks in blocks of 10,000 coins (₹150 per block). Withdrawals require at least {CREATOR_MIN_WITHDRAWAL_COINS.toLocaleString()} coins. Live estimate uses Platform Virtual Economy Rate — historical payouts keep the rate frozen at event time.</p>
+                      <p className="text-[11px] font-bold text-white/40 mt-3">From {creatorStatus.coins_earned || 0} lifetime creator coins</p>
+                      <p className="text-[9px] font-bold text-white/30 mt-1 max-w-md">INR unlocks in blocks of 10,000 coins (₹150 per block). Withdrawals need at least {CREATOR_MIN_WITHDRAWAL_COINS.toLocaleString()} coins.</p>
                       {(() => {
                         const coins = creatorStatus.coins_earned || 0;
                         const pct = Math.min(100, (coins / CREATOR_MIN_WITHDRAWAL_COINS) * 100);
                         return (
-                          <div className="mt-6 max-w-md">
+                          <div className="mt-4 max-w-md">
                             <div className="flex justify-between text-[9px] font-black uppercase tracking-widest text-white/35 mb-1">
                               <span>Payout threshold</span>
                               <span className="tabular-nums">{coins.toLocaleString()} / {CREATOR_MIN_WITHDRAWAL_COINS.toLocaleString()} coins</span>
@@ -1571,46 +1572,33 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       disabled={(creatorStatus.coins_earned || 0) < CREATOR_MIN_WITHDRAWAL_COINS}
                       title={(creatorStatus.coins_earned || 0) < CREATOR_MIN_WITHDRAWAL_COINS ? `Need ${CREATOR_MIN_WITHDRAWAL_COINS.toLocaleString()} creator coins to request payout` : 'Request payout'}
                       onClick={requestPayoutFromDashboard}
-                      className="px-12 py-6 bg-emerald-500 text-black font-black uppercase tracking-widest text-xs rounded-[30px] hover:bg-white hover:scale-105 transition-all shadow-[0_20px_50px_rgba(16,185,129,0.3)] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                      className="px-6 py-3.5 bg-emerald-500 text-black font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                     >Request Payout</button>
                   </div>
 
-                  {/* STATS GRID */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="md:col-span-2 p-8 rounded-[40px] bg-white/[0.02] border border-white/5">
-                      <Suspense fallback={null}>
-                        <MiniTrendChart data={dashboardAnalytics.length ? dashboardAnalytics : [0, 0, 0, 0, 0, 0, 0]} color="#34d399" />
-                      </Suspense>
-                      <p className="text-[9px] font-bold text-white/25 uppercase tracking-widest mt-3">7-day activity (referrals, tips, follows)</p>
+                  <div className="mm-creator-dash__card">
+                    <Suspense fallback={null}>
+                      <MiniTrendChart data={dashboardAnalytics.length ? dashboardAnalytics : [0, 0, 0, 0, 0, 0, 0]} color="#34d399" />
+                    </Suspense>
+                    <p className="text-[9px] font-bold text-white/30 uppercase tracking-widest mt-3">7-day activity (referrals, tips, follows)</p>
+                  </div>
+
+                  <div className="mm-creator-dash__stats">
+                    <div className="mm-creator-dash__stat">
+                      <strong className="tabular-nums">{creatorStatus.followers_count || 0}</strong>
+                      <span>Followers</span>
                     </div>
-                    <div className="p-10 rounded-[50px] bg-white/[0.02] border border-white/5 group hover:border-violet-500/30 transition-all">
-                      <div className="flex justify-between items-start mb-4">
-                        <span className="text-[10px] font-black text-violet-400 uppercase tracking-widest">Total Audience</span>
-                        <span className="text-2xl group-hover:scale-110 transition-transform">👥</span>
-                      </div>
-                      <div className="text-5xl font-black italic text-white tabular-nums group-hover:text-violet-400 transition-colors">{creatorStatus.followers_count || 0}</div>
-                      <p className="text-[9px] font-bold text-white/20 uppercase tracking-[0.2em] mt-2 italic">Followers reached through profile</p>
+                    <div className="mm-creator-dash__stat">
+                      <strong className="tabular-nums">{creatorStatus.tips_received_total || 0}</strong>
+                      <span>Tips received</span>
                     </div>
-                    <div className="p-10 rounded-[50px] bg-white/[0.02] border border-white/5 group hover:border-rose-500/30 transition-all">
-                      <div className="flex justify-between items-start mb-4">
-                        <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Tips Received</span>
-                        <span className="text-2xl group-hover:scale-110 transition-transform">🎁</span>
-                      </div>
-                      <div className="text-5xl font-black italic text-white tabular-nums group-hover:text-rose-400 transition-colors">{creatorStatus.tips_received_total || 0}</div>
-                      <p className="text-[9px] font-bold text-white/20 uppercase tracking-[0.2em] mt-2 italic">Lifetime coins tipped to you</p>
-                    </div>
-                    <div className="p-10 rounded-[50px] bg-white/[0.02] border border-white/5 group hover:border-indigo-500/30 transition-all md:col-span-2">
-                      <div className="flex justify-between items-start mb-4">
-                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Influence Conversions</span>
-                        <span className="text-2xl group-hover:scale-110 transition-transform">🔥</span>
-                      </div>
-                      <div className="text-5xl font-black italic text-white tabular-nums group-hover:text-indigo-400 transition-colors uppercase">{creatorStatus.referral_count || 0}</div>
-                      <p className="text-[9px] font-bold text-white/20 uppercase tracking-[0.2em] mt-2 italic">Users joined via your unique uplink</p>
+                    <div className="mm-creator-dash__stat" style={{ gridColumn: '1 / -1' }}>
+                      <strong className="tabular-nums">{creatorStatus.referral_count || 0}</strong>
+                      <span>Referral joins</span>
                     </div>
                   </div>
 
-                  {/* NOTIFICATIONS */}
-                  <div className="p-8 rounded-[40px] bg-white/[0.02] border border-white/5 max-h-72 overflow-y-auto">
+                  <div className="mm-creator-dash__card mm-creator-dash__ledger">
                     <div className="flex items-center justify-between mb-4">
                       <div className="text-[10px] font-black text-white/35 uppercase tracking-widest">Notifications</div>
                       {creatorUnreadCount > 0 && (
@@ -1633,10 +1621,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                     )}
                   </div>
 
-                  {/* ACTIVITY & WITHDRAWAL LEDGER */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="p-8 rounded-[40px] bg-white/[0.02] border border-white/5 max-h-64 overflow-y-auto">
-                      <div className="text-[10px] font-black text-white/35 uppercase tracking-widest mb-4">Recent activity</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="mm-creator-dash__card mm-creator-dash__ledger">
+                      <div className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-3">Recent activity</div>
                       {dashboardActivity.length === 0 ? (
                         <p className="text-[10px] text-white/25">No entries yet. Share your referral link or use the app from linked devices to populate activity.</p>
                       ) : (
@@ -1652,8 +1639,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                         </ul>
                       )}
                     </div>
-                    <div className="p-8 rounded-[40px] bg-white/[0.02] border border-white/5 max-h-64 overflow-y-auto">
-                      <div className="text-[10px] font-black text-white/35 uppercase tracking-widest mb-4">Withdrawal history</div>
+                    <div className="mm-creator-dash__card mm-creator-dash__ledger">
+                      <div className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-3">Withdrawal history</div>
                       {dashboardWithdrawals.length === 0 ? (
                         <p className="text-[10px] text-white/25">No payout requests yet.</p>
                       ) : (
@@ -1674,10 +1661,9 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                     </div>
                   </div>
 
-                  {/* SECURITY PROTOCOL BAR */}
-                  <div className="p-8 rounded-[40px] bg-black/40 border border-white/5 grid grid-cols-1 md:grid-cols-3 gap-8">
+                  <div className="mm-creator-dash__card grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
-                      <div className="text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">Access PIN</div>
+                      <div className="text-[8px] font-black text-white/25 uppercase tracking-widest mb-1">Access PIN</div>
                       {(() => {
                         const once = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('mm_creator_password_once') : null;
                         if (once) {
@@ -1687,12 +1673,12 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                       })()}
                     </div>
                     <div>
-                      <div className="text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">Matrix Code</div>
-                      <div className="text-lg font-black text-white select-all hover:scale-105 transition-all w-fit cursor-help" title="Referral ID">{creatorStatus.referral_code}</div>
+                      <div className="text-[8px] font-black text-white/25 uppercase tracking-widest mb-1">Referral code</div>
+                      <div className="text-lg font-black text-white select-all w-fit" title="Referral ID">{creatorStatus.referral_code}</div>
                     </div>
                     <div>
-                      <div className="text-[8px] font-black text-white/20 uppercase tracking-widest mb-1">Verification Status</div>
-                      <div className="text-lg font-black text-emerald-500 italic uppercase">System Approved</div>
+                      <div className="text-[8px] font-black text-white/25 uppercase tracking-widest mb-1">Status</div>
+                      <div className="text-lg font-black text-emerald-400 uppercase">Approved</div>
                     </div>
                   </div>
                 </div>
@@ -1703,52 +1689,57 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
         </div>
       )}
 
-      {/* PROFILE EDITOR MODAL */}
       {showProfileModal && (
-        <div className="mm-modal-overlay z-[2500] animate-in-zoom" onClick={() => setShowProfileModal(false)}>
-          <div className="relative w-full max-w-sm bg-[#0a0a0a] border border-white/10 rounded-[50px] p-10 shadow-[0_0_100px_rgba(6,182,212,0.15)]" onClick={e => e.stopPropagation()}>
-            <button onClick={() => setShowProfileModal(false)} className="absolute top-8 right-8 text-white/20 hover:text-white transition-colors">✕</button>
+        <div className="mm-modal-overlay z-[6100] animate-in-zoom" onClick={() => !profileSaving && setShowProfileModal(false)}>
+          <div className="mm-cprofile-edit" onClick={e => e.stopPropagation()}>
+            <button type="button" onClick={() => !profileSaving && setShowProfileModal(false)} className="absolute top-4 right-4 text-white/30 hover:text-white transition-colors" aria-label="Close">✕</button>
 
-            <div className="text-center mb-8">
-              <h3 className="text-2xl font-black italic uppercase tracking-tighter text-white">Edit Profile</h3>
-              <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mt-2">Personalize your Identity</p>
+            <div className="text-center mb-6">
+              <h3 className="text-xl font-black tracking-tight text-white">Edit profile</h3>
+              <p className="text-[10px] font-bold text-white/35 uppercase tracking-widest mt-1">Photo and bio</p>
             </div>
 
-            <div className="space-y-8">
+            <div className="space-y-6">
               <div className="flex flex-col items-center">
-                <div className="relative group cursor-pointer" onClick={() => document.getElementById('avatar-input').click()}>
-                  <div className="w-32 h-32 rounded-full border-2 border-dashed border-white/10 flex items-center justify-center overflow-hidden group-hover:border-violet-500/50 transition-all">
-                    {profileForm.avatar ? (
-                      <img src={profileForm.avatar} alt="Preview" className="w-full h-full object-cover" />
-                    ) : (
-                      <span className="text-3xl grayscale opacity-20 group-hover:opacity-100 group-hover:grayscale-0 transition-all">📸</span>
-                    )}
-                  </div>
-                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center rounded-full transition-all">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-white">Upload</span>
-                  </div>
-                  <input id="avatar-input" type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
-                </div>
-                <p className="text-[8px] font-black text-white/20 uppercase tracking-widest mt-4">Tap to upload photo (Max 2MB)</p>
+                <button
+                  type="button"
+                  className="mm-cprofile-edit__avatar"
+                  onClick={() => avatarInputRef.current?.click()}
+                >
+                  {profileForm.avatar ? (
+                    <img src={profileForm.avatar} alt="Preview" />
+                  ) : (
+                    <CreatorAvatar name={creatorStatus?.handle_name} size={112} />
+                  )}
+                  <span className="mm-cprofile-edit__hint">Change photo</span>
+                </button>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={handleAvatarUpload}
+                />
+                <p className="text-[8px] font-black text-white/25 uppercase tracking-widest mt-3">JPG or PNG · under 8MB</p>
               </div>
 
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-violet-400/60 uppercase tracking-widest ml-4">About You</label>
-                  <textarea
-                    placeholder="Tell your fans something special..."
-                    className="w-full h-32 bg-white/5 border border-white/5 focus:border-violet-500/30 rounded-3xl p-6 text-sm outline-none text-white font-bold resize-none transition-all"
-                    value={profileForm.bio}
-                    onChange={e => setProfileForm(prev => ({ ...prev, bio: e.target.value.slice(0, 150) }))}
-                  />
-                  <div className="text-right text-[8px] font-black text-white/10 uppercase tracking-widest px-4">{profileForm.bio.length}/150</div>
-                </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-violet-300/70 uppercase tracking-widest ml-1">About you</label>
+                <textarea
+                  placeholder="Tell your fans something special..."
+                  className="w-full h-28 bg-white/5 border border-white/10 focus:border-violet-500/40 rounded-2xl p-4 text-sm outline-none text-white font-medium resize-none"
+                  value={profileForm.bio}
+                  onChange={e => setProfileForm(prev => ({ ...prev, bio: e.target.value.slice(0, 150) }))}
+                />
+                <div className="text-right text-[8px] font-black text-white/20 uppercase tracking-widest">{profileForm.bio.length}/150</div>
               </div>
 
               <button
+                type="button"
+                disabled={profileSaving}
                 onClick={saveProfile}
-                className="w-full h-16 bg-violet-500 text-black font-black uppercase tracking-widest text-[11px] rounded-2xl hover:bg-white hover:scale-[1.02] active:scale-95 transition-all shadow-xl shadow-violet-500/25"
-              >Save Identity →</button>
+                className="w-full h-12 bg-violet-500 text-black font-black uppercase tracking-widest text-[11px] rounded-2xl hover:bg-white transition-all disabled:opacity-50"
+              >{profileSaving ? 'Saving…' : 'Save profile'}</button>
             </div>
           </div>
         </div>
@@ -1768,7 +1759,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* CUSTOM APP DIALOG — replaces system alert/confirm */}
       {dialog && (
-        <div className="mm-modal-overlay z-[3000]">
+        <div className="mm-modal-overlay z-[7000]">
           <div className="w-full max-w-xs bg-[#0a0a0a] border border-white/10 rounded-[40px] p-8 shadow-2xl animate-in-zoom">
             <div className="text-center mb-6">
               <div className="text-3xl mb-4">{dialog.confirm ? '⚠️' : 'ℹ️'}</div>

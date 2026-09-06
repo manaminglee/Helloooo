@@ -3,6 +3,26 @@ import { Room, RoomEvent, Track, createLocalTracks, LocalVideoTrack } from 'live
 import { API_BASE } from '../config/apiBase';
 import { mmDebug } from '../utils/mmDebug';
 
+function subscribePublication(pub) {
+  if (!pub || pub.isSubscribed) return;
+  if (pub.kind === Track.Kind.Unknown) return;
+  try {
+    const done = pub.setSubscribed?.(true);
+    if (done?.catch) done.catch(() => {});
+  } catch { /* ignore */ }
+}
+
+function collectParticipantStream(participant) {
+  const stream = new MediaStream();
+  participant.trackPublications.forEach((pub) => {
+    const media = pub.track?.mediaStreamTrack;
+    if (media && media.readyState !== 'ended') {
+      try { stream.addTrack(media); } catch { /* already added */ }
+    }
+  });
+  return stream;
+}
+
 /**
  * LiveKit SFU media for group video.
  * Socket.IO still owns matchmaking, chat, gifts, and permissions.
@@ -43,22 +63,14 @@ export function useLiveKitGroup({
     }
     const next = [];
     room.remoteParticipants.forEach((p) => {
-      const stream = new MediaStream();
-      p.trackPublications.forEach((pub) => {
-        if (pub.track && pub.track.kind !== 'unknown') {
-          stream.addTrack(pub.track.mediaStreamTrack);
-        }
-      });
-      let meta = {};
-      try {
-        meta = p.metadata ? JSON.parse(p.metadata) : {};
-      } catch { /* ignore */ }
+      p.trackPublications.forEach(subscribePublication);
+      const stream = collectParticipantStream(p);
       next.push({
         socketId: p.identity,
-        stream: stream.getTracks().length ? stream : null,
-        nickname: meta.nickname || p.name || 'Anonymous',
-        country: meta.country || '',
-        isCreator: !!meta.isCreator,
+        stream,
+        nickname: 'Anonymous',
+        country: '',
+        isCreator: false,
       });
     });
     setRemotes(next);
@@ -91,7 +103,7 @@ export function useLiveKitGroup({
           };
           socket.once('livekit-token', onToken);
           socket.once('livekit-token-error', onErr);
-          socket.emit('livekit-token', { roomId, nickname });
+          socket.emit('livekit-token', { roomId, nickname: 'Anonymous' });
         });
 
         if (cancelled) return;
@@ -100,6 +112,7 @@ export function useLiveKitGroup({
         const room = new Room({
           adaptiveStream: true,
           dynacast: true,
+          autoSubscribe: true,
           videoCaptureDefaults: {
             resolution: { width: 640, height: 360, frameRate: 24 },
           },
@@ -107,20 +120,36 @@ export function useLiveKitGroup({
         roomRef.current = room;
 
         const onRefresh = () => rebuildRemotes(room);
+        const onPublished = (pub) => {
+          subscribePublication(pub);
+          onRefresh();
+        };
         room.on(RoomEvent.TrackSubscribed, onRefresh);
         room.on(RoomEvent.TrackUnsubscribed, onRefresh);
-        room.on(RoomEvent.ParticipantConnected, onRefresh);
+        room.on(RoomEvent.TrackPublished, onPublished);
+        room.on(RoomEvent.TrackUnpublished, onRefresh);
+        room.on(RoomEvent.TrackMuted, onRefresh);
+        room.on(RoomEvent.TrackUnmuted, onRefresh);
+        room.on(RoomEvent.TrackStreamStateChanged, onRefresh);
+        room.on(RoomEvent.ParticipantConnected, (participant) => {
+          participant.trackPublications.forEach(subscribePublication);
+          onRefresh();
+        });
         room.on(RoomEvent.ParticipantDisconnected, onRefresh);
         room.on(RoomEvent.Disconnected, () => {
           setConnected(false);
           setRemotes([]);
         });
 
-        await room.connect(tokenRes.url, tokenRes.token);
+        await room.connect(tokenRes.url, tokenRes.token, { autoSubscribe: true });
         if (cancelled) {
           await room.disconnect();
           return;
         }
+
+        room.remoteParticipants.forEach((p) => {
+          p.trackPublications.forEach(subscribePublication);
+        });
 
         const tracks = await createLocalTracks({
           audio: true,

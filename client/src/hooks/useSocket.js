@@ -89,10 +89,15 @@ async function ensureSocket() {
     });
 
     s.on('connected', (data) => {
+      let hasCreatorSession = false;
+      try {
+        const tok = window.localStorage?.getItem?.('mm_creator_session');
+        hasCreatorSession = !!(tok && String(tok).startsWith('cs_'));
+      } catch { /* */ }
       patchState({
         country: data?.country || null,
-        nickname: data?.nickname || 'Anonymous',
-        isCreator: !!data?.isCreator,
+        nickname: hasCreatorSession && data?.isCreator ? (data?.nickname || state.nickname) : (state.isCreator ? state.nickname : (data?.isCreator ? 'Anonymous' : (data?.nickname || 'Anonymous'))),
+        isCreator: state.isCreator || (!!data?.isCreator && hasCreatorSession),
         registered: !!data?.registered,
         activeSeconds: data?.activeSeconds || 0,
         isPro: !!data?.isPro,

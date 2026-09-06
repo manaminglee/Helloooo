@@ -1,0 +1,102 @@
+/* iOS-native chrome: UITabBar, swipe-back, home-indicator, standalone PWA / Capacitor */
+
+.is-ios,
+.is-ios-standalone,
+.is-ios-native {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+.is-ios-standalone body,
+.is-ios-native body {
+  overscroll-behavior: none;
+}
+
+.ios-swipe {
+  min-height: 100dvh;
+  will-change: transform;
+}
+.ios-swipe.is-dragging { transition: none; }
+.ios-swipe:not(.is-dragging) { transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1); }
+.ios-swipe__edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 18px;
+  z-index: 80;
+  pointer-events: none;
+}
+
+.mmnav--ios {
+  pointer-events: none;
+  padding: 0;
+  justify-content: stretch;
+}
+.mmnav__plate {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-around;
+  width: 100%;
+  min-height: 49px;
+  padding: 4px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+  background: rgba(14, 14, 18, 0.82);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-top: 0.5px solid rgba(255, 255, 255, 0.12);
+}
+.mmnav__tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: rgba(235, 235, 245, 0.55);
+  padding: 2px 0 0;
+}
+.mmnav__tab.is-on { color: #ff2d6f; }
+.mmnav__icon { width: 24px; height: 24px; }
+.mmnav__label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+.mmnav__live {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, #ff4d88, #ff2d6f);
+  box-shadow: 0 4px 12px rgba(255, 45, 111, 0.35);
+}
+.mmnav__tab--live.is-on .mmnav__live { transform: scale(1.06); }
+.mmnav__live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+
+.is-ios .mm-pwa-prompt__ios-steps {
+  text-align: left;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.62);
+  margin: 0 0 0.8rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ios-swipe { transition: none !important; }
+}
+
+@media (min-width: 901px) and (pointer: fine) {
+  .mmnav--ios { display: none; }
+}

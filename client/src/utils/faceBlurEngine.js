@@ -162,17 +162,21 @@ export function drawBeautyFrame(ctx, blurCtx, video, landmarker, mirror, timesta
   ctx.restore();
 
   if (hasFace) {
+    const faces = results?.faceLandmarks || [];
     blurCtx.save();
-    blurCtx.filter = 'blur(4px)';
+    blurCtx.filter = 'blur(3px)';
     drawMirroredImage(blurCtx, video, w, h, mirror);
     blurCtx.restore();
     blurCtx.filter = 'none';
 
-    ctx.save();
-    ctx.globalAlpha = 0.28;
-    ctx.drawImage(blurCtx.canvas, 0, 0, w, h);
-    ctx.globalAlpha = 1;
-    ctx.restore();
+    for (const landmarks of faces) {
+      ctx.save();
+      clipFeatheredFace(ctx, landmarks, w, h, mirror, 0.92);
+      ctx.clip();
+      ctx.globalAlpha = 0.22;
+      ctx.drawImage(blurCtx.canvas, 0, 0, w, h);
+      ctx.restore();
+    }
   }
 
   return true;
@@ -224,14 +228,13 @@ export function drawStyledFrame(ctx, blurCtx, video, landmarker, mirror, timesta
   const glow = preset?.glow || 0;
   const vignette = preset?.vignette || 0;
 
-  // Face detection is only worth its cost when something uses it.
-  let hasFace = false;
+  let faces = [];
   if (smooth > 0 && landmarker) {
     try {
       const results = landmarker.detectForVideo(video, timestampMs);
-      hasFace = (results?.faceLandmarks?.length ?? 0) > 0;
+      faces = results?.faceLandmarks || [];
     } catch {
-      hasFace = false;
+      faces = [];
     }
   }
 
@@ -246,19 +249,22 @@ export function drawStyledFrame(ctx, blurCtx, video, landmarker, mirror, timesta
   ctx.filter = 'none';
   ctx.restore();
 
-  // 2 · skin smoothing, only where there is a face
-  if (smooth > 0 && hasFace) {
+  // 2 · skin smoothing on the face only — never the whole frame
+  if (smooth > 0 && faces.length) {
     blurCtx.save();
-    blurCtx.filter = 'blur(4px)';
+    blurCtx.filter = 'blur(3px)';
     drawMirroredImage(blurCtx, video, w, h, mirror);
     blurCtx.restore();
     blurCtx.filter = 'none';
 
-    ctx.save();
-    ctx.globalAlpha = smooth;
-    ctx.drawImage(blurCtx.canvas, 0, 0, w, h);
-    ctx.globalAlpha = 1;
-    ctx.restore();
+    for (const landmarks of faces) {
+      ctx.save();
+      clipFeatheredFace(ctx, landmarks, w, h, mirror, 0.92);
+      ctx.clip();
+      ctx.globalAlpha = Math.min(0.28, smooth);
+      ctx.drawImage(blurCtx.canvas, 0, 0, w, h);
+      ctx.restore();
+    }
   }
 
   // 3 · bloom

@@ -2319,7 +2319,7 @@
   .live-host__avatar--pop { animation: none; }
 }
 
-.mmnav-pad { padding-bottom: calc(72px + max(env(safe-area-inset-bottom, 0px), 10px)); }
+.mmnav-pad { padding-bottom: calc(58px + max(env(safe-area-inset-bottom, 0px), 10px)); }
 
 .pwa-update {
   position: fixed;

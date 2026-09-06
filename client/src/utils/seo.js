@@ -60,7 +60,7 @@ export function applyPageSeo({
   setMeta('twitter:image', image);
 }
 
-export function applyCreatorProfileSeo(handle, bio = '') {
+export function applyCreatorProfileSeo(handle, bio = '', path = '/') {
   const safeHandle = String(handle || '').trim();
   const desc = bio
     ? `${bio.slice(0, 140)}${bio.length > 140 ? '…' : ''}`
@@ -68,8 +68,9 @@ export function applyCreatorProfileSeo(handle, bio = '') {
   applyPageSeo({
     title: `@${safeHandle} on Helloooo | Creator Profile`,
     description: desc,
-    path: `/creator/${encodeURIComponent(safeHandle)}`,
+    path: path || '/',
     type: 'profile',
+    noindex: true,
   });
 }
 

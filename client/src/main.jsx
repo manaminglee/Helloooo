@@ -3,7 +3,15 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import { BootScreen } from './components/BootScreen';
 import { isChunkLoadError } from './utils/lazyRetry';
+import { markIosPlatformClasses } from './utils/iosPlatform';
+import { armIosMediaUnlock } from './utils/iosMediaUnlock';
+import { bootIosNativeShell } from './utils/iosNativeBoot';
 import './index.css';
+import './styles/ios-native.css';
+
+markIosPlatformClasses();
+armIosMediaUnlock();
+void bootIosNativeShell();
 
 // Admin is a separate route — never ship it in the main landing bundle.
 const AdminDashboard = lazy(() =>

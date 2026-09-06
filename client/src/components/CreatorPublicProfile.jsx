@@ -3,6 +3,7 @@ import { API_BASE } from '../config/apiBase';
 import { applyCreatorProfileSeo, applyPageSeo } from '../utils/seo';
 import { HellooooLoader } from './HellooooBrand';
 import { VerifiedBadge } from './icons/VerifiedBadge';
+import { CreatorAvatar } from './CreatorAvatar';
 
 const API = API_BASE;
 
@@ -10,9 +11,15 @@ function normalizeHandle(raw) {
   return String(raw || '').trim().replace(/^@/, '');
 }
 
+function compact(n) {
+  const v = Number(n) || 0;
+  if (v < 1000) return String(v);
+  if (v < 1_000_000) return `${(v / 1000).toFixed(v < 10_000 ? 1 : 0).replace(/\.0$/, '')}K`;
+  return `${(v / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+}
+
 /**
- * Public /creator/:handle page — viewer-style profile (no admin tools).
- * Uses the canonical profile API; missing creators show a calm empty state.
+ * Public /u/:navId profile — viewer-style page (no admin tools).
  */
 export function CreatorPublicProfile({ handle }) {
   const [profile, setProfile] = useState(null);
@@ -36,7 +43,7 @@ export function CreatorPublicProfile({ handle }) {
         }
         const c = d.creator;
         setProfile(c);
-        applyCreatorProfileSeo(c.handle || key, c.bio || '');
+        applyCreatorProfileSeo(c.handle || key, c.bio || '', c.profilePath || `/u/${encodeURIComponent(key)}`);
       } catch {
         if (alive) setError('Could not load profile');
       }
@@ -50,101 +57,87 @@ export function CreatorPublicProfile({ handle }) {
 
   if (error) {
     return (
-      <main className="min-h-[60dvh] flex flex-col items-center justify-center p-6 text-center gap-4">
-        <p className="text-white/50 text-sm max-w-xs">
-          @{normalizeHandle(handle) || 'creator'} isn&apos;t on Helloooo yet, or this profile isn&apos;t public.
+      <main className="mm-cprofile mm-cprofile--empty">
+        <p className="mm-cprofile__empty-copy">
+          This creator isn&apos;t on Helloooo yet, or the profile isn&apos;t public.
         </p>
-        <a href="/" className="text-sm font-bold text-violet-300 hover:text-violet-200">
-          Browse lives →
-        </a>
+        <a href="/" className="mm-cprofile__btn mm-cprofile__btn--ghost">Back to Helloooo</a>
       </main>
     );
   }
 
   if (!profile) {
     return (
-      <div className="min-h-[50dvh] flex items-center justify-center p-6">
+      <div className="mm-cprofile mm-cprofile--empty">
         <HellooooLoader transparent size={100} label="Loading profile…" />
       </div>
     );
   }
 
   const p = profile;
+  const name = p.displayName || p.handle || 'Creator';
+  const avatarSrc = p.avatarUrl || p.avatar_url || '';
+  const social = p.profileLink || p.profile_link;
 
   return (
-    <main className="min-h-[60dvh] p-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] max-w-lg mx-auto">
-      <article className="rounded-3xl border border-white/10 bg-[#12151c] overflow-hidden">
-        <div className="p-6 text-center border-b border-white/5">
-          {p.avatarUrl ? (
-            <img
-              src={p.avatarUrl}
-              alt=""
-              className="w-20 h-20 rounded-full mx-auto mb-3 object-cover ring-2 ring-violet-500/30"
-            />
-          ) : (
-            <div className="w-20 h-20 rounded-full mx-auto mb-3 bg-white/10 flex items-center justify-center text-2xl">
-              ⭐
-            </div>
-          )}
-          <h1 className="text-xl font-black text-white flex items-center justify-center gap-1.5">
-            {p.displayName || p.handle}
-            {p.verified && <VerifiedBadge size={16} />}
+    <main className="mm-cprofile">
+      <div className="mm-cprofile__glow" aria-hidden />
+      <article className="mm-cprofile__card">
+        <header className="mm-cprofile__hero">
+          <div className="mm-cprofile__avatar-wrap">
+            <CreatorAvatar src={avatarSrc} name={name} size={112} live={!!p.liveNow} />
+            {p.liveNow && <span className="mm-cprofile__live-pill">Live</span>}
+          </div>
+          <h1 className="mm-cprofile__name">
+            {name}
+            {p.verified && <VerifiedBadge size={18} />}
           </h1>
-          <p className="text-sm text-white/45 mt-0.5">@{p.handle}</p>
-          {p.code && (
-            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 mt-2">
-              Creator ID {p.code}
-            </p>
-          )}
-        </div>
+          <p className="mm-cprofile__handle">@{p.handle}</p>
+          {p.code && <p className="mm-cprofile__id">Creator ID {p.code}</p>}
+          {p.bio && <p className="mm-cprofile__bio">{p.bio}</p>}
+        </header>
 
         {p.liveNow && (
-          <div className="px-6 py-4 border-b border-white/5 bg-rose-500/10">
-            <a
-              href={`/?mode=lives&live=${encodeURIComponent(p.liveNow.id)}`}
-              className="block w-full py-3 rounded-2xl bg-rose-500 text-black text-center text-xs font-black uppercase tracking-widest"
-            >
-              🔴 Watch live · {p.liveNow.viewerCount ?? 0} watching
-            </a>
+          <a href="/" className="mm-cprofile__btn mm-cprofile__btn--live">
+            Watch live · {compact(p.liveNow.viewerCount)} watching
+          </a>
+        )}
+
+        <div className="mm-cprofile__stats">
+          <div>
+            <strong>{compact(p.followers)}</strong>
+            <span>Followers</span>
+          </div>
+          <div>
+            <strong>#{p.rank ?? '—'}</strong>
+            <span>Rank</span>
+          </div>
+          <div>
+            <strong>{compact(p.score)}</strong>
+            <span>Score</span>
+          </div>
+        </div>
+
+        {(p.totalLives > 0 || p.giftsReceived > 0) && (
+          <div className="mm-cprofile__meta-row">
+            {p.totalLives > 0 && <span>{p.totalLives} lives</span>}
+            {p.giftsReceived > 0 && <span>{compact(p.giftsReceived)} gifts</span>}
+            {p.platform && <span>{p.platform}</span>}
           </div>
         )}
 
-        <div className="p-6 space-y-4">
-          {p.bio && <p className="text-sm text-white/70 leading-relaxed text-center">{p.bio}</p>}
-
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-xl bg-white/[0.04] p-3">
-              <p className="text-lg font-black text-white">{p.followers ?? 0}</p>
-              <p className="text-[9px] uppercase tracking-widest text-white/35">Followers</p>
-            </div>
-            <div className="rounded-xl bg-white/[0.04] p-3">
-              <p className="text-lg font-black text-violet-300">#{p.rank ?? '—'}</p>
-              <p className="text-[9px] uppercase tracking-widest text-white/35">Rank</p>
-            </div>
-            <div className="rounded-xl bg-white/[0.04] p-3">
-              <p className="text-lg font-black text-amber-300">{p.score ?? 0}</p>
-              <p className="text-[9px] uppercase tracking-widest text-white/35">Score</p>
-            </div>
-          </div>
-
-          {(p.profileLink || p.profile_link) && (
-            <a
-              href={p.profileLink || p.profile_link}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block text-center text-sm text-violet-300 underline underline-offset-2"
-            >
-              Verify profile link
-            </a>
-          )}
-
+        {social && (
           <a
-            href="/"
-            className="block w-full py-3 rounded-2xl border border-white/10 text-center text-xs font-bold text-white/60 hover:bg-white/5"
+            href={social}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mm-cprofile__btn mm-cprofile__btn--link"
           >
-            Back to Helloooo
+            {p.platform ? `Open ${p.platform}` : 'Open profile link'}
           </a>
-        </div>
+        )}
+
+        <a href="/" className="mm-cprofile__btn mm-cprofile__btn--ghost">Back to Helloooo</a>
       </article>
     </main>
   );

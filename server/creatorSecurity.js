@@ -134,13 +134,26 @@ async function verifyPassword(plain, creator) {
   return false;
 }
 
+function attachNavId(out) {
+  if (!out) return out;
+  try {
+    const opaqueNav = require('./opaqueNav');
+    const code = out.creator_code;
+    if (code) {
+      out.navId = opaqueNav.profileNavId(code);
+      out.profilePath = opaqueNav.profilePath(code);
+    }
+  } catch { /* nav helper optional */ }
+  return out;
+}
+
 function stripCreatorSecrets(creator, { includePasswordOnce = false } = {}) {
   if (!creator) return null;
   const out = { ...creator };
   delete out.password_hash;
   if (!includePasswordOnce) delete out.password;
   delete out.follower_ips;
-  return out;
+  return attachNavId(out);
 }
 
 // referral_code is accepted as a legacy credential by getApprovedCreatorForRequest,
@@ -168,7 +181,7 @@ function publicCreatorView(creator, { keep = [] } = {}) {
   for (const field of CREATOR_PRIVATE_FIELDS) {
     if (!keepSet.has(field)) delete out[field];
   }
-  return out;
+  return attachNavId(out);
 }
 
 function checkRateBucket(map, key, max, windowMs) {

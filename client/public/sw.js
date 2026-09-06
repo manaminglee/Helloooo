@@ -1,5 +1,5 @@
 /* Helloooo PWA — static cache, offline shell, web push */
-const CACHE = 'helloooo-static-v18';
+const CACHE = 'helloooo-static-v19';
 const OFFLINE = '/index.html';
 
 const offlineResponse = () => new Response('Offline', {
@@ -28,7 +28,7 @@ self.addEventListener('message', (e) => {
 });
 
 self.addEventListener('push', (e) => {
-  let data = { title: 'Helloooo', body: 'Something new is happening', url: '/live' };
+  let data = { title: 'Helloooo', body: 'Something new is happening', url: '/' };
   try {
     if (e.data) data = { ...data, ...e.data.json() };
   } catch { /* plain text */ }
@@ -38,14 +38,14 @@ self.addEventListener('push', (e) => {
       icon: '/helloooo-logo.png',
       badge: '/favicon.png',
       tag: data.tag || 'helloooo',
-      data: { url: data.url || '/live' },
+      data: { url: data.url || '/' },
     })
   );
 });
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const url = e.notification.data?.url || '/live';
+  const url = e.notification.data?.url || '/';
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
       for (const c of list) {

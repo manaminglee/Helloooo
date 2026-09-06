@@ -130,7 +130,7 @@ export default function LiveStudio({ socket, identityHook, creatorsHook = null, 
     videoRef: previewRef,
   });
 
-  const [beautyOn, setBeautyOn] = useState(true);
+  const [beautyOn, setBeautyOn] = useState(false);
 
   /* The chosen look persists — a creator who found their filter should not have
      to hunt for it before every stream. */

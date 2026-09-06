@@ -513,7 +513,7 @@ function registerLiveStreams(app, io, deps) {
         await pushNotify.sendToKeys(keys, {
           title: `${room.displayName || creator.handle_name} is LIVE`,
           body: room.title || 'Tap to watch now',
-          url: `/live/${room.id}`,
+          url: `/`,
           tag: `live-${room.id}`,
         });
       } catch (e) { console.error('[live] push notify', e.message); }
@@ -1014,7 +1014,7 @@ function registerLiveStreams(app, io, deps) {
           await pushNotify.sendToKeys(keys, {
             title: `@${ev.handle} goes live soon`,
             body: ev.title,
-            url: `/live?reminder=${ev.id}`,
+            url: `/`,
             tag: `live-reminder-${ev.id}`,
           });
         }

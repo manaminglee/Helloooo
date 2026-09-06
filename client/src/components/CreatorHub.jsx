@@ -1,6 +1,7 @@
 import { getCreatorSessionToken } from '../utils/creatorAuth';
 import { NutsAmount } from './NutsSymbol';
 import VirtualMarketPanel from './VirtualMarketPanel';
+import { CreatorAvatar } from './CreatorAvatar';
 
 const ACTIONS = [
   {
@@ -78,13 +79,12 @@ export default function CreatorHub({
   return (
     <section className="mm-creator-hub">
       <header className="mm-creator-hub__head">
-        <div className="mm-creator-hub__avatar">
-          {creator?.avatar_url ? (
-            <img src={creator.avatar_url} alt="" />
-          ) : (
-            <span>{(creator?.handle_name || '?').slice(0, 1).toUpperCase()}</span>
-          )}
-        </div>
+        <CreatorAvatar
+          className="mm-creator-hub__avatar"
+          src={creator?.avatar_url}
+          name={creator?.handle_name}
+          size={52}
+        />
         <div>
           <p className="mm-eyebrow">Creator hub</p>
           <h2 className="mm-creator-hub__name">@{creator?.handle_name || 'creator'}</h2>

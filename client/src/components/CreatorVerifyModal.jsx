@@ -288,7 +288,7 @@ export default function CreatorVerifyModal({
         {featuredCreators.length > 0 && tab === 'apply' && !done && (
           <div className="mm-creator-verify__featured">
             {featuredCreators.slice(0, 6).map((c) => (
-              <a key={c.handle_name} href={`/creator/${c.handle_name}`} className="mm-creator-verify__chip">
+              <a key={c.handle_name} href={c.profilePath || (c.navId ? `/u/${c.navId}` : '/')} className="mm-creator-verify__chip">
                 @{c.handle_name}
               </a>
             ))}

@@ -73,7 +73,7 @@ export function useLiveKitLive({
   asHost = false,
   asGuest = false,
   videoElRef = null,
-  beautyEnabled = true,
+  beautyEnabled = false,
   /* Look chosen by the creator. Held in a ref and read inside the render loop,
      so switching filter mid-broadcast costs one frame and never republishes. */
   filterId = 'natural',
@@ -475,13 +475,16 @@ export function useLiveKitLive({
           };
 
           if (videoTrack) {
-            try {
-              const piped = await startCameraPipeline(videoTrack);
-              if (piped) publishVideo = null;
-            } catch (err) {
-              console.warn('[live] camera pipeline unavailable, using raw camera', err);
-              stopBeautyPipeline();
-              publishVideo = videoTrack;
+            const wantBeauty = beautyEnabledRef.current && filterRef.current?.id && filterRef.current.id !== 'off';
+            if (wantBeauty) {
+              try {
+                const piped = await startCameraPipeline(videoTrack);
+                if (piped) publishVideo = null;
+              } catch (err) {
+                console.warn('[live] camera pipeline unavailable, using raw camera', err);
+                stopBeautyPipeline();
+                publishVideo = videoTrack;
+              }
             }
           }
 

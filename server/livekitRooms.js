@@ -51,6 +51,7 @@ async function mintParticipantToken({
   roomAdmin = false,
   identitySuffix = '',
   ttl = '2h',
+  anonymous = false,
 }) {
   if (!isConfigured()) {
     throw new Error('LiveKit is not configured on this server');
@@ -59,17 +60,18 @@ async function mintParticipantToken({
   // from evicting that person's real participant session in the same room.
   const identity = `${socketId}${identitySuffix || ''}`;
   const room = sfuRoomName(roomId);
+  const displayName = anonymous ? 'Anonymous' : String(nickname || 'Anonymous').slice(0, 64);
   const at = new AccessToken(
     process.env.LIVEKIT_API_KEY.trim(),
     process.env.LIVEKIT_API_SECRET.trim(),
     {
       identity,
-      name: String(nickname || 'Anonymous').slice(0, 64),
+      name: displayName,
       metadata: JSON.stringify({
         hellooooRoomId: roomId,
-        nickname: String(nickname || 'Anonymous').slice(0, 64),
-        country: String(country || '').slice(0, 8),
-        isCreator: !!isCreator,
+        nickname: displayName,
+        country: anonymous ? '' : String(country || '').slice(0, 8),
+        isCreator: anonymous ? false : !!isCreator,
       }),
       ttl,
     }

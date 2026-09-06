@@ -5,7 +5,7 @@
   "lang": "en",
   "dir": "ltr",
   "id": "/",
-  "start_url": "/live?src=pwa",
+  "start_url": "/?src=pwa",
   "scope": "/",
   "display": "standalone",
   "background_color": "#07060f",
@@ -23,13 +23,13 @@
     {
       "name": "Live now",
       "short_name": "Live",
-      "url": "/live?src=shortcut",
+      "url": "/?src=shortcut-live",
       "description": "Creators streaming right now"
     },
     {
       "name": "Voice rooms",
       "short_name": "Audio",
-      "url": "/audio?src=shortcut",
+      "url": "/?src=shortcut-audio",
       "description": "Join a voice room"
     }
   ]

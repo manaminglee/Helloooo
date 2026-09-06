@@ -330,13 +330,9 @@ function registerAudioIdentity(app, io, deps) {
     return token;
   }
 
-  async function restoreByIp(ip) {
-    await ensureHydrated();
-    const row = touchIpSession(ip);
-    if (!row) return { ok: false, error: 'No recent session on this connection.' };
-    const rec = identities.get(row.usernameKey);
-    if (!rec) return { ok: false, error: 'Identity not found.' };
-    return { ok: true, token: row.token, identity: publicView(rec) };
+  async function restoreByIp(_ip) {
+    // Disabled: same public IP / Wi‑Fi must not sign another device into an account.
+    return { ok: false, error: 'Sign in on this device.' };
   }
 
   function getSession(token) {

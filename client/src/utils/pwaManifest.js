@@ -47,16 +47,9 @@ export function isInstalled() {
   }
 }
 
-/** Which surface a deep link asked for: /live and /audio open straight in. */
+/** Live/audio no longer open from a typed URL. Navigation must mint a grant. */
 export function launchTarget() {
-  try {
-    const path = (window.location.pathname || '/').toLowerCase();
-    if (path.startsWith('/live')) return 'live';
-    if (path.startsWith('/audio')) return 'audio';
-    return null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 export function isLiveAudioSurface(mode) {

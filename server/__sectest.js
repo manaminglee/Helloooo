@@ -18,6 +18,7 @@ const path = require('path');
 
 const { httpClientIp, socketClientIp, normalizeIp } = require('./clientIp');
 const creatorSecurity = require('./creatorSecurity');
+const opaqueNav = require('./opaqueNav');
 
 const PORT = 3996;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -116,6 +117,51 @@ function testPublicCreatorView() {
   ok('the creator’s own view keeps their access code');
 }
 
+function testOpaqueNav() {
+  console.log('\n── opaque numeric pages need a visitor grant ──');
+  const pages = opaqueNav.allPageNumbers();
+  assert.ok(/^\d{16}$/.test(pages.lives), 'live page id is 16 digits');
+  assert.ok(/^\d{16}$/.test(pages.audio), 'audio page id is 16 digits');
+  assert.notStrictEqual(pages.lives, pages.audio, 'live and audio ids differ');
+  ok('pages use long numeric ids');
+
+  const navId = opaqueNav.profileNavId('482910');
+  assert.match(navId, /^\d{16}$/);
+  assert.strictEqual(opaqueNav.parseProfileNavId(navId), '482910');
+  assert.strictEqual(opaqueNav.parseProfileNavId('482910'), null);
+  ok('profiles resolve only from the full numeric id');
+
+  const grant = opaqueNav.mintGrant({ page: 'lives', sid: 'sid12345678abcd', ip: '203.0.113.9' });
+  assert.ok(grant?.a && grant.path.startsWith('/n/'));
+  assert.ok(opaqueNav.verifyGrant({
+    page: 'lives',
+    sid: 'sid12345678abcd',
+    ip: '203.0.113.9',
+    auth: grant.a,
+  }));
+  assert.ok(!opaqueNav.verifyGrant({
+    page: 'lives',
+    sid: 'sid12345678abcd',
+    ip: '198.51.100.2',
+    auth: grant.a,
+  }));
+  assert.ok(!opaqueNav.verifyGrant({
+    page: 'lives',
+    sid: 'someone-else-sid99',
+    ip: '203.0.113.9',
+    auth: grant.a,
+  }));
+  ok('live grants are bound to this visitor');
+
+  const blocked = opaqueNav.parsePath('/live');
+  assert.strictEqual(blocked.kind, 'blocked');
+  const blockedAudio = opaqueNav.parsePath('/audio/room');
+  assert.strictEqual(blockedAudio.kind, 'blocked');
+  const blockedCreator = opaqueNav.parsePath('/creator/nova');
+  assert.strictEqual(blockedCreator.kind, 'blocked');
+  ok('memorable live, audio, and profile paths are blocked');
+}
+
 // The exact state the legacy header used to authenticate: an approved creator
 // with a withdrawable balance. Seeded directly because creator registration and
 // login both require Supabase, while the legacy referral path does not.
@@ -175,9 +221,36 @@ async function testLegacyCredentialCannotMoveMoney() {
   ok('read-only legacy access still works');
 }
 
+async function testNavHttp() {
+  console.log('\n── live/audio URLs refuse a grant-less visitor ──');
+  const pages = await req('GET', '/api/nav/pages');
+  assert.strictEqual(pages.status, 200);
+  assert.match(pages.body.pages.lives, /^\d{16}$/);
+  ok('page numbers are published as digits only');
+
+  const noSid = await req('POST', '/api/nav/grant', { body: { page: 'lives', sid: 'short' } });
+  assert.strictEqual(noSid.status, 400);
+  ok('a grant without a session id is refused');
+
+  const granted = await req('POST', '/api/nav/grant', { body: { page: 'lives', sid: 'sid12345678abcd' } });
+  assert.strictEqual(granted.status, 200, JSON.stringify(granted.body));
+  assert.ok(granted.body.a);
+  ok('a signed-in visitor can mint a live grant');
+
+  const denied = await req('GET', `/api/nav/verify?n=${granted.body.n}&sid=sid12345678abcd&a=`);
+  assert.strictEqual(denied.status, 403);
+  ok('live page without auth in the URL is refused');
+
+  const okv = await req('GET', `/api/nav/verify?n=${granted.body.n}&sid=sid12345678abcd&a=${encodeURIComponent(granted.body.a)}`);
+  assert.strictEqual(okv.status, 200, JSON.stringify(okv.body));
+  assert.strictEqual(okv.body.page, 'lives');
+  ok('the matching visitor grant opens live');
+}
+
 async function main() {
   testClientIp();
   testPublicCreatorView();
+  testOpaqueNav();
 
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-sec-'));
   fs.writeFileSync(
@@ -222,6 +295,7 @@ async function main() {
 
   try {
     await testLegacyCredentialCannotMoveMoney();
+    await testNavHttp();
   } finally {
     stop();
     // Let the child's handles unwind before the loop tears down.

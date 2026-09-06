@@ -5,6 +5,7 @@ import { useState, Suspense } from 'react';
 import { lazyRetry } from '../utils/lazyRetry';
 import { API_BASE } from '../config/apiBase';
 import { HellooooBrand, HellooooLogo, HELLOOOO_EMOJI } from './HellooooBrand';
+import { unlockIosMedia } from '../utils/iosMediaUnlock';
 
 const Turnstile = lazyRetry(() =>
   import('react-turnstile').then((m) => ({ default: m.Turnstile }))
@@ -36,6 +37,7 @@ export function AgeVerificationGate({ onVerified }) {
   const finishVerified = async () => {
     sessionStorage.setItem('wc_age', '1');
     sessionStorage.setItem('wc_bot', '1');
+    await unlockIosMedia();
     await fetch(`${apiBase}/api/user/credit-age`, { method: 'POST' }).catch(() => {});
     onVerified?.();
   };

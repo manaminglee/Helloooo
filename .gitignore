@@ -172,3 +172,9 @@ server/__selftest.js
 server/_orig_index_test.js
 # Vite config cache artifacts (auto-generated)
 client/vite.config.js.timestamp-*.mjs
+
+# Capacitor iOS — generated web copy + CocoaPods (sync on a Mac)
+client/ios/App/Pods/
+client/ios/App/App/public/
+client/ios/App/App.xcworkspace/xcuserdata/
+client/ios/DerivedData/

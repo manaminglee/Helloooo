@@ -4,8 +4,8 @@
   "description": "Watch creators live, join voice rooms, and send gifts. One app for Live and Audio.",
   "lang": "en",
   "dir": "ltr",
-  "id": "/live",
-  "start_url": "/live?src=pwa",
+  "id": "/",
+  "start_url": "/?src=pwa",
   "scope": "/",
   "display": "standalone",
   "background_color": "#07060f",
@@ -19,7 +19,7 @@
     { "src": "/helloooo-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
-    { "name": "Live now", "short_name": "Live", "url": "/live?src=shortcut", "description": "Creators streaming right now" },
-    { "name": "Voice rooms", "short_name": "Audio", "url": "/audio?src=shortcut", "description": "Join a voice room" }
+    { "name": "Live now", "short_name": "Live", "url": "/?src=shortcut-live", "description": "Creators streaming right now" },
+    { "name": "Voice rooms", "short_name": "Audio", "url": "/?src=shortcut-audio", "description": "Join a voice room" }
   ]
 }

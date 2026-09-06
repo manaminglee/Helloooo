@@ -74,7 +74,7 @@ export default function LiveRoom({
   } = room;
 
   const [creatorOpen, setCreatorOpen] = useState(false);
-  const [beautyOn, setBeautyOn] = useState(() => live?.beautyEnabled !== false);
+  const [beautyOn, setBeautyOn] = useState(() => !!live?.beautyEnabled);
   const [text, setText] = useState('');
   const [giftOpen, setGiftOpen] = useState(false);
   const [viewersOpen, setViewersOpen] = useState(false);
@@ -106,8 +106,8 @@ export default function LiveRoom({
     asHost: isHost,
     asGuest: !isHost && guestPublish,
     videoElRef: videoRef,
-    beautyEnabled: (isHost || guestPublish) && (live?.beautyEnabled !== false) && beautyOn,
-    filterId: live?.filterId || 'natural',
+    beautyEnabled: (isHost || guestPublish) && !!live?.beautyEnabled && beautyOn,
+    filterId: beautyOn ? (live?.filterId || 'natural') : 'off',
   });
 
   /* HP split screen. `hpActive` is derived straight from the battle record, so
@@ -287,7 +287,7 @@ export default function LiveRoom({
   }, [following, follow, live?.handle]);
 
   const onShare = useCallback(async () => {
-    const url = `${window.location.origin}/live/${live.id}`;
+    const url = `${window.location.origin}/`;
     const payload = {
       title: `${live.displayName || live.handle} is LIVE`,
       text: `${live.displayName || live.handle} is LIVE now`,

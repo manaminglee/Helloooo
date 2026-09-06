@@ -840,9 +840,15 @@ export function GroupAudioRoom({
     const rid = channel?.channelId || channel?.id;
     if (!rid) return;
     const token = channel?.paInviteToken;
-    const url = token
-      ? `${window.location.origin}/join/${rid}?pa=${token}${cohostLink ? '&cohost=1' : ''}`
-      : `${window.location.origin}/join/${rid}`;
+    let url = `${window.location.origin}/`;
+    try {
+      const { requestNavGrant } = await import('../utils/opaqueRoutes');
+      const grant = await requestNavGrant('join', rid);
+      const next = new URL(grant.path, window.location.origin);
+      if (token) next.searchParams.set('pa', token);
+      if (cohostLink) next.searchParams.set('cohost', '1');
+      url = next.toString();
+    } catch { /* stay on home if grant fails */ }
     if (navigator.share) {
       try {
         await navigator.share({

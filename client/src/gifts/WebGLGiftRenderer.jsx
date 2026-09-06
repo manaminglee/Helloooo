@@ -1,13 +1,17 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CssGiftRenderer } from './CssGiftRenderer';
 
 export function WebGLGiftRenderer({ gift, mode = 'preview', still = false, quality = 'mid' }) {
   const hostRef = useRef(null);
   const sceneId = gift?.scene || gift?.id;
+  const [failed, setFailed] = useState(false);
+  const ios = typeof document !== 'undefined'
+    && (document.documentElement.classList.contains('is-ios')
+      || document.documentElement.classList.contains('is-ios-native'));
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || still || quality === 'low') return undefined;
+    if (!host || still || quality === 'low' || failed) return undefined;
     let disposed = false;
     let renderer;
     let raf = 0;
@@ -19,10 +23,22 @@ export function WebGLGiftRenderer({ gift, mode = 'preview', still = false, quali
       if (disposed || !hostRef.current) return;
       const w = host.clientWidth || 160;
       const h = host.clientHeight || 160;
-      renderer = new THREE.WebGLRenderer({ antialias: quality === 'high', alpha: true, powerPreference: 'high-performance' });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality === 'high' ? 2 : 1.25));
+      try {
+        renderer = new THREE.WebGLRenderer({
+          antialias: quality === 'high' && !ios,
+          alpha: true,
+          powerPreference: ios ? 'default' : 'high-performance',
+          failIfMajorPerformanceCaveat: false,
+        });
+      } catch {
+        setFailed(true);
+        return;
+      }
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, ios ? 1.5 : quality === 'high' ? 2 : 1.25));
       renderer.setSize(w, h, false);
       renderer.setClearColor(0x000000, 0);
+      const onLost = (e) => { e.preventDefault(); setFailed(true); };
+      renderer.domElement.addEventListener('webglcontextlost', onLost, false);
       host.appendChild(renderer.domElement);
 
       const scene = new THREE.Scene();
@@ -56,9 +72,9 @@ export function WebGLGiftRenderer({ gift, mode = 'preview', still = false, quali
       disposed = true;
       cleanup();
     };
-  }, [sceneId, mode, still, quality]);
+  }, [sceneId, mode, still, quality, ios, failed]);
 
-  if (still || quality === 'low') {
+  if (still || quality === 'low' || failed) {
     return <CssGiftRenderer gift={gift} mode={mode} still={still} quality={quality} size={mode === 'celebration' ? 140 : 64} />;
   }
 
