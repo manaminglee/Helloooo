@@ -39,7 +39,7 @@ export function LandingHero({
           variants={stagger(0.1, 0.05)}
         >
           <motion.div variants={fadeUp} className="lv2-hero__brand">
-            <HellooooLockup logoSize={48} brandSize="xl" showTagline />
+            <HellooooLockup logoSize={88} brandSize="xl" showTagline className="helloooo-lockup--hero" />
           </motion.div>
 
           <motion.div variants={fadeUp} className="lv2-hero__eyebrow-wrap">
@@ -57,10 +57,9 @@ export function LandingHero({
           </motion.div>
 
           <motion.h1 variants={fadeUp} className="lv2-hero__title">
-            <span className="lv2-hero__title-line">
-              {HELLOOOO_EMOJI} Where strangers become
-            </span>{' '}
-            <span className="lv2-hero__gradient">your people</span>
+            <span className="lv2-hero__title-emoji" aria-hidden>{HELLOOOO_EMOJI}</span>
+            <span className="lv2-hero__title-line">Where strangers become</span>
+            <span className="lv2-hero__title-line lv2-hero__gradient">your people</span>
           </motion.h1>
 
           <motion.p variants={fadeUp} className="lv2-hero__sub">
