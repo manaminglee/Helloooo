@@ -32,6 +32,7 @@ export function useCoins() {
     const [registered, setRegistered] = useState(false);
     const [activeSeconds, setActiveSeconds] = useState(0);
     const [loading, setLoading] = useState(true);
+    const [hasSynced, setHasSynced] = useState(false);
     const retryTimerRef = useRef(null);
 
     const fetchStatus = async (retries = 3) => {
@@ -41,10 +42,11 @@ export function useCoins() {
                 const data = await res.json();
                 setBalance(data.coins);
                 setStreak(data.streak);
-                setCanClaim(data.canClaim);
+                setCanClaim(!!data.canClaim);
                 setNextClaim(data.nextClaim ?? 0);
                 if (data.registered !== undefined) setRegistered(!!data.registered);
                 if (data.activeSeconds !== undefined) setActiveSeconds(Number(data.activeSeconds) || 0);
+                setHasSynced(true);
             } else if (retries > 0) {
                 retryTimerRef.current = setTimeout(() => fetchStatus(retries - 1), 2000);
             }
@@ -59,6 +61,7 @@ export function useCoins() {
     };
 
     const claimCoins = async () => {
+        if (!canClaim) return false;
         try {
             const res = await fetch(`${API_BASE}/api/user/claim`, { method: 'POST', credentials: 'include' });
             if (res.ok) {
@@ -69,6 +72,8 @@ export function useCoins() {
                 setNextClaim(CLAIM_INTERVAL_MS);
                 return true;
             }
+            // Server rejected (usually too early) — resync instead of leaving UI claimable.
+            await fetchStatus(0);
         } catch (e) {
             mmDebug('coins.claim', e);
         }
@@ -86,14 +91,16 @@ export function useCoins() {
 
     // Countdown every second when !canClaim
     useEffect(() => {
-        if (canClaim || nextClaim <= 0) return;
+        if (!hasSynced || canClaim || nextClaim <= 0) return;
         const t = setInterval(() => setNextClaim((p) => Math.max(0, p - 1000)), 1000);
         return () => clearInterval(t);
-    }, [canClaim, nextClaim]);
+    }, [canClaim, nextClaim, hasSynced]);
 
+    // When local timer hits zero, ask the server before showing claim again.
     useEffect(() => {
-        if (!canClaim && nextClaim <= 0) setCanClaim(true);
-    }, [nextClaim]);
+        if (!hasSynced || canClaim || nextClaim > 0) return;
+        fetchStatus(0);
+    }, [nextClaim, hasSynced, canClaim]);
 
     return {
         balance,
