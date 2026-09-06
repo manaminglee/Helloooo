@@ -1,9 +1,62 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Room, RoomEvent, Track, createLocalTracks, ConnectionState } from 'livekit-client';
+import { Room, RoomEvent, Track, createLocalTracks, ConnectionState, LocalVideoTrack } from 'livekit-client';
 import { getFilter } from '../utils/liveFilters';
 import { drawFaceProcessedFrame, loadFaceLandmarker } from '../utils/faceBlurEngine';
 
 const CLARITY_TIMEOUT_MS = 20_000;
+
+function trackMediaId(track) {
+  if (!track) return '';
+  return track.mediaStreamTrack?.id || track.sid || track.id || '';
+}
+
+async function unpublishBySource(participant, source) {
+  if (!participant) return;
+  const pubs = [...participant.trackPublications.values()];
+  await Promise.all(pubs.map(async (pub) => {
+    if (pub.source !== source || !pub.track) return;
+    try {
+      await participant.unpublishTrack(pub.track, true);
+    } catch { /* ignore */ }
+  }));
+}
+
+async function safePublishTrack(participant, track, options = {}) {
+  if (!participant || !track) return null;
+  const msId = trackMediaId(track);
+  for (const pub of participant.trackPublications.values()) {
+    if (!pub.track) continue;
+    if (msId && trackMediaId(pub.track) === msId) return pub;
+  }
+  if (options.source != null) {
+    await unpublishBySource(participant, options.source);
+  }
+  try {
+    return await participant.publishTrack(track, options);
+  } catch (err) {
+    const msg = String(err?.message || err);
+    if (/same ID/i.test(msg) || err?.name === 'TrackInvalidError') return null;
+    throw err;
+  }
+}
+
+async function waitForRoomConnected(room, timeoutMs = 15000) {
+  if (room.state === ConnectionState.Connected) return;
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      room.off(RoomEvent.ConnectionStateChanged, onState);
+      reject(new Error('Live connect timeout'));
+    }, timeoutMs);
+    const onState = (state) => {
+      if (state === ConnectionState.Connected) {
+        clearTimeout(timeout);
+        room.off(RoomEvent.ConnectionStateChanged, onState);
+        resolve();
+      }
+    };
+    room.on(RoomEvent.ConnectionStateChanged, onState);
+  });
+}
 
 /**
  * Subscribe to (or publish) an in-app live via LiveKit.
@@ -44,6 +97,9 @@ export function useLiveKitLive({
   const beautyTsRef = useRef(0);
   /** @type {React.MutableRefObject<{ hidden: HTMLVideoElement, landmarker: object, outStream: MediaStream, rawTrack: import('livekit-client').LocalTrack } | null>} */
   const beautyPipelineRef = useRef(null);
+  const connectGenRef = useRef(0);
+  const publishingRef = useRef(false);
+  const disconnectingRef = useRef(false);
 
   const beautyEnabledRef = useRef(beautyEnabled);
   beautyEnabledRef.current = beautyEnabled;
@@ -75,12 +131,27 @@ export function useLiveKitLive({
   }, []);
 
   const disconnect = useCallback(async () => {
+    if (disconnectingRef.current) return;
+    disconnectingRef.current = true;
+    connectGenRef.current += 1;
     if (clarityTimerRef.current) {
       clearTimeout(clarityTimerRef.current);
       clarityTimerRef.current = null;
     }
     stopBeautyPipeline();
     hasMediaRef.current = false;
+    publishingRef.current = false;
+    const room = roomRef.current;
+    roomRef.current = null;
+    try {
+      if (room?.localParticipant) {
+        const pubs = [...room.localParticipant.trackPublications.values()];
+        await Promise.all(pubs.map(async (pub) => {
+          if (!pub.track) return;
+          try { await room.localParticipant.unpublishTrack(pub.track, true); } catch { /* */ }
+        }));
+      }
+    } catch { /* */ }
     try {
       localTracksRef.current.forEach((t) => {
         try { t.stop(); } catch { /* */ }
@@ -88,11 +159,11 @@ export function useLiveKitLive({
     } catch { /* */ }
     localTracksRef.current = [];
     clearRemoteAudio();
-    try { await roomRef.current?.disconnect(); } catch { /* */ }
-    roomRef.current = null;
+    try { await room?.disconnect(); } catch { /* */ }
     setConnected(false);
     setHasMedia(false);
     setConnecting(false);
+    disconnectingRef.current = false;
   }, [clearRemoteAudio, stopBeautyPipeline]);
 
   const markMedia = useCallback(() => {
@@ -129,6 +200,8 @@ export function useLiveKitLive({
       return undefined;
     }
     let cancelled = false;
+    const gen = ++connectGenRef.current;
+    const isStale = () => cancelled || connectGenRef.current !== gen || disconnectingRef.current;
 
     (async () => {
       try {
@@ -161,7 +234,7 @@ export function useLiveKitLive({
           }
         }
         if (!tokenRes) throw new Error('Could not get a live token');
-        if (cancelled) return;
+        if (isStale()) return;
 
         const room = new Room({
           adaptiveStream: true,
@@ -246,7 +319,7 @@ export function useLiveKitLive({
           recheckRemoteMedia();
         });
         room.on(RoomEvent.ConnectionStateChanged, (state) => {
-          if (cancelled) return;
+          if (isStale()) return;
           if (state === ConnectionState.Connected) {
             setConnected(true);
             return;
@@ -261,7 +334,12 @@ export function useLiveKitLive({
         });
 
         await room.connect(tokenRes.url, tokenRes.token, { autoSubscribe: true });
-        if (cancelled) {
+        if (isStale()) {
+          await room.disconnect();
+          return;
+        }
+        await waitForRoomConnected(room);
+        if (isStale()) {
           await room.disconnect();
           return;
         }
@@ -269,9 +347,12 @@ export function useLiveKitLive({
         watch();
 
         if (asHost || asGuest) {
+          if (publishingRef.current) return;
+          publishingRef.current = true;
+          try {
           // Let Safari finish releasing the studio preview camera handle.
           await new Promise((r) => setTimeout(r, 150));
-          if (cancelled) return;
+          if (isStale()) return;
 
           const tracks = await createLocalTracks({
             audio: {
@@ -284,7 +365,7 @@ export function useLiveKitLive({
               resolution: { width: 720, height: 1280, frameRate: 24 },
             },
           });
-          if (cancelled) {
+          if (isStale()) {
             tracks.forEach((t) => t.stop());
             return;
           }
@@ -293,15 +374,18 @@ export function useLiveKitLive({
           const videoTrack = tracks.find((t) => t.kind === Track.Kind.Video || t.kind === 'video');
           localTracksRef.current = tracks.filter(Boolean);
 
+          const participant = room.localParticipant;
           if (audioTrack) {
-            await room.localParticipant.publishTrack(audioTrack, { source: Track.Source.Microphone });
+            await safePublishTrack(participant, audioTrack, { source: Track.Source.Microphone });
           }
+          if (isStale()) return;
 
           let publishVideo = videoTrack;
 
           /** Canvas pipeline — beauty toggles at runtime without republishing. */
           const startCameraPipeline = async (rawVideoTrack) => {
             const landmarker = await loadFaceLandmarker();
+            if (isStale()) return false;
             const rawMsTrack = rawVideoTrack.mediaStreamTrack;
             const hidden = document.createElement('video');
             hidden.playsInline = true;
@@ -314,12 +398,24 @@ export function useLiveKitLive({
             hidden.srcObject = new MediaStream([rawMsTrack]);
             await hidden.play().catch(() => {});
 
+            await new Promise((resolve) => {
+              if (hidden.videoWidth > 0) resolve();
+              else hidden.addEventListener('loadedmetadata', resolve, { once: true });
+            });
+
+            const w = hidden.videoWidth || 720;
+            const h = hidden.videoHeight || 1280;
             const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
             const blurCanvas = document.createElement('canvas');
+            blurCanvas.width = w;
+            blurCanvas.height = h;
             const ctx = canvas.getContext('2d', { alpha: false });
             const blurCtx = blurCanvas.getContext('2d', { alpha: false });
             const outStream = canvas.captureStream(24);
             const processedMsTrack = outStream.getVideoTracks()[0];
+            const processedTrack = new LocalVideoTrack(processedMsTrack, undefined, false);
             beautyTsRef.current = 0;
 
             const loop = () => {
@@ -347,6 +443,7 @@ export function useLiveKitLive({
               landmarker,
               outStream,
               rawTrack: rawVideoTrack,
+              processedTrack,
             };
             beautyCleanupRef.current = () => {
               cancelAnimationFrame(beautyRafRef.current);
@@ -354,10 +451,12 @@ export function useLiveKitLive({
               beautyTsRef.current = 0;
               try { hidden.srcObject = null; hidden.remove(); } catch { /* */ }
               try { processedMsTrack.stop(); } catch { /* */ }
+              try { processedTrack.stop(); } catch { /* */ }
               beautyPipelineRef.current = null;
             };
 
-            await room.localParticipant.publishTrack(processedMsTrack, {
+            if (isStale()) return false;
+            await safePublishTrack(participant, processedTrack, {
               source: Track.Source.Camera,
               name: 'processed-cam',
             });
@@ -377,8 +476,8 @@ export function useLiveKitLive({
 
           if (videoTrack) {
             try {
-              await startCameraPipeline(videoTrack);
-              publishVideo = null;
+              const piped = await startCameraPipeline(videoTrack);
+              if (piped) publishVideo = null;
             } catch (err) {
               console.warn('[live] camera pipeline unavailable, using raw camera', err);
               stopBeautyPipeline();
@@ -386,8 +485,8 @@ export function useLiveKitLive({
             }
           }
 
-          if (publishVideo) {
-            await room.localParticipant.publishTrack(publishVideo, {
+          if (publishVideo && !isStale()) {
+            await safePublishTrack(participant, publishVideo, {
               source: Track.Source.Camera,
             });
             if (vRef?.current) {
@@ -401,7 +500,10 @@ export function useLiveKitLive({
               void el.play?.().catch(() => {});
             }
           }
-          mark();
+          if (!isStale()) mark();
+          } finally {
+            publishingRef.current = false;
+          }
         } else {
           room.remoteParticipants.forEach((p) => {
             p.trackPublications.forEach((pub) => {
@@ -410,7 +512,7 @@ export function useLiveKitLive({
           });
         }
       } catch (e) {
-        if (!cancelled) {
+        if (!isStale()) {
           setError(e.message || 'Live connect failed');
           setConnecting(false);
         }
@@ -420,6 +522,7 @@ export function useLiveKitLive({
 
     return () => {
       cancelled = true;
+      connectGenRef.current += 1;
       void disconnectRef.current();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -440,10 +543,20 @@ export function useLiveKitLive({
 
   const toggleCam = useCallback(async () => {
     const room = roomRef.current;
-    if (!room?.localParticipant) return camEnabled;
+    if (!room?.localParticipant || room.state !== ConnectionState.Connected) return camEnabled;
     const next = !camEnabled;
+    const pipeline = beautyPipelineRef.current;
     try {
-      await room.localParticipant.setCameraEnabled(next);
+      if (pipeline?.processedTrack) {
+        for (const pub of room.localParticipant.trackPublications.values()) {
+          if (pub.source === Track.Source.Camera && pub.track) {
+            if (next) await pub.track.unmute();
+            else await pub.track.mute();
+          }
+        }
+      } else {
+        await room.localParticipant.setCameraEnabled(next);
+      }
       setCamEnabled(next);
       return next;
     } catch {
@@ -453,7 +566,7 @@ export function useLiveKitLive({
 
   const switchCamera = useCallback(async () => {
     const room = roomRef.current;
-    if (!room?.localParticipant) return;
+    if (!room?.localParticipant || room.state !== ConnectionState.Connected) return;
     const next = facingRef.current === 'user' ? 'environment' : 'user';
     try {
       const oldTrack = localTracksRef.current.find(
@@ -478,11 +591,11 @@ export function useLiveKitLive({
         await pipeline.hidden.play().catch(() => {});
       } else {
         if (oldTrack) {
-          try { await room.localParticipant.unpublishTrack(oldTrack); } catch { /* */ }
+          try { await room.localParticipant.unpublishTrack(oldTrack, true); } catch { /* */ }
           try { oldTrack.stop(); } catch { /* */ }
           localTracksRef.current = localTracksRef.current.filter((t) => t !== oldTrack);
         }
-        await room.localParticipant.publishTrack(newTrack, { source: Track.Source.Camera });
+        await safePublishTrack(room.localParticipant, newTrack, { source: Track.Source.Camera });
         localTracksRef.current.push(newTrack);
         const el = videoElRefStable.current?.current;
         if (el) {
