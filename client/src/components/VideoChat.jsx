@@ -35,6 +35,7 @@ import { ChatInputWithEmoji } from './ChatInputWithEmoji';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { useUniqueSession } from '../hooks/useUniqueSession';
 import { useAdminMonitorFrames } from '../hooks/useAdminMonitorFrames';
+import { useNetworkRecovery } from '../hooks/useNetworkRecovery';
 import { useFaceBlurStream } from '../hooks/useFaceBlurStream';
 import {
   AiStatusPill,
@@ -61,6 +62,10 @@ import {
   VideoSessionBanners,
   VideoSearchingOverlay,
 } from './VideoSessionUI';
+import {
+  MatchStatusLine, isMatchStatus, searchingMessage, connectedMessage,
+} from './MatchStatusLine';
+import { MatchSuspendedNotice } from './MatchSuspendedNotice';
 import { SkipProSheet } from './SkipProSheet';
 import { loadProMatchPrefs } from '../utils/proMatchPrefs';
 
@@ -192,6 +197,7 @@ function MobChatBubble({ m, isMe, myCountry, peerCountry, onViewCreator }) {
     return <CreatorIntroChatCard m={m} onViewCreator={onViewCreator} />;
   }
 
+  if (isMatchStatus(m)) return <MatchStatusLine m={m} />;
   if (m.system) {
     return (
       <div className="flex justify-center my-2">
@@ -242,6 +248,7 @@ function DeskChatBubble({ m, isMe, myCountry, peerCountry, onViewCreator }) {
     return <CreatorIntroChatCard m={m} onViewCreator={onViewCreator} />;
   }
 
+  if (isMatchStatus(m)) return <MatchStatusLine m={m} />;
   if (m.system) {
     return (
       <div className="flex justify-center my-2">
@@ -492,6 +499,30 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const firstSocketConnectRef = useRef(true);
   const isMounted = useRef(true);
   const statusRef = useRef(status);
+  /* The status effect keys off `status` alone; reading the country through a
+     ref keeps the peer out of its dependency list, so a late-arriving country
+     cannot re-fire the connect sound and the moderation banner. */
+  const peerCountryRef = useRef('');
+  const throttleTimerRef = useRef(null);
+  /* Set when the server pauses matching for this device after reports. */
+  const [suspension, setSuspension] = useState(null);
+  const suspensionRef = useRef(null);
+
+  useEffect(() => {
+    peerCountryRef.current = peer?.country || '';
+  }, [peer?.country]);
+
+  useEffect(() => { suspensionRef.current = suspension; }, [suspension]);
+
+  /* Clear the pause the moment it expires, so the person is not stuck looking
+     at a stale notice waiting for a page reload. */
+  useEffect(() => {
+    if (!suspension) return undefined;
+    const ms = suspension.until - Date.now();
+    if (ms <= 0) { setSuspension(null); return undefined; }
+    const t = setTimeout(() => setSuspension(null), ms + 250);
+    return () => clearTimeout(t);
+  }, [suspension]);
 
   useEffect(() => {
     statusRef.current = status;
@@ -578,6 +609,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   }, [socket]);
 
   const bindLocalVideo = useCallback((el) => {
+    if (localVideoRef.current && localVideoRef.current !== el) attachStreamToVideo(localVideoRef.current, null);
     localVideoRef.current = el;
     if (el && localPreviewStream) {
       attachStreamToVideo(el, localPreviewStream);
@@ -585,6 +617,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   }, [localPreviewStream]);
 
   const bindLocalSplitVideo = useCallback((el) => {
+    if (localVideoSplitRef.current && localVideoSplitRef.current !== el) attachStreamToVideo(localVideoSplitRef.current, null);
     localVideoSplitRef.current = el;
     if (el && localPreviewStream) {
       attachStreamToVideo(el, localPreviewStream);
@@ -804,7 +837,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const desktopLayout = !isMobile;
   const [deskLayoutMode, setDeskLayoutMode] = useState(() => {
     try {
-      return sessionStorage.getItem('mm_video_desk_layout') === 'sidebar' ? 'sidebar' : 'horizontal';
+      return localStorage.getItem('mm_video_desk_layout') === 'sidebar' ? 'sidebar' : 'horizontal';
     } catch {
       return 'horizontal';
     }
@@ -814,7 +847,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const setDeskLayout = (mode) => {
     setDeskLayoutMode(mode);
     try {
-      sessionStorage.setItem('mm_video_desk_layout', mode);
+      localStorage.setItem('mm_video_desk_layout', mode);
     } catch { /* ignore */ }
   };
 
@@ -823,8 +856,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (!desktopLayout) return;
     const el = localVideoRef.current;
     const stream = localStreamRef.current;
-    if (el && stream) attachStreamToVideo(el, stream);
-  }, [deskLayoutMode, desktopLayout]);
+    if (el && stream) return attachStreamToVideo(el, localPreviewStream || stream);
+  }, [deskLayoutMode, desktopLayout, localPreviewStream]);
 
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -903,6 +936,31 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       playConnectSound();
     };
     const onContentFlagged = (data) => setToast(`⚠️ ${data.message}`);
+
+    /* Matching paused after reports. Stop the search loop and say why —
+       silently sitting on "finding a stranger" forever is the worst possible
+       way to communicate a suspension. */
+    const onSuspended = (data) => {
+      findPartnerEmittedRef.current = true;   // don't re-queue behind their back
+      setStatus('idle');
+      setConnectPhase('boot');
+      setSuspension({
+        until: Date.now() + (Number(data?.secondsLeft) || 0) * 1000,
+        strikes: Number(data?.strikes) || 0,
+        message: data?.message || 'Matching is paused on this device.',
+      });
+    };
+    const onSuspensionLifted = () => setSuspension(null);
+
+    /* Throttled: keep the search state but back off, rather than spinning. */
+    const onThrottled = (data) => {
+      findPartnerEmittedRef.current = true;
+      setToast(data?.message || 'Slow down a moment.');
+      const wait = Math.min(30000, Number(data?.retryAfterMs) || 10000);
+      throttleTimerRef.current = setTimeout(() => {
+        findPartnerEmittedRef.current = false;
+      }, wait);
+    };
     const onTyping = ({ isTyping }) => {
       setStrangerTyping(isTyping);
       if (isTyping) {
@@ -913,8 +971,15 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     socket.on('wave-reaction', onWave);
     socket.on('good-vibes-match', onGoodVibesMatch);
     socket.on('content-flagged', onContentFlagged);
+    socket.on('match-suspended', onSuspended);
+    socket.on('match-suspension-lifted', onSuspensionLifted);
+    socket.on('find-throttled', onThrottled);
     socket.on('stranger-typing', onTyping);
     return () => {
+      clearTimeout(throttleTimerRef.current);
+      socket.off('match-suspended', onSuspended);
+      socket.off('match-suspension-lifted', onSuspensionLifted);
+      socket.off('find-throttled', onThrottled);
       socket.off('wave-reaction', onWave);
       socket.off('good-vibes-match', onGoodVibesMatch);
       socket.off('content-flagged', onContentFlagged);
@@ -1142,12 +1207,14 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   }, [lowBandwidth, autoBandwidth, effectiveLatency, localStream]);
 
   useEffect(() => {
+    const cleanups = [];
     if (localVideoRef.current && localPreviewStream) {
-      attachStreamToVideo(localVideoRef.current, localPreviewStream);
+      cleanups.push(attachStreamToVideo(localVideoRef.current, localPreviewStream));
     }
     if (localVideoSplitRef.current && localPreviewStream) {
-      attachStreamToVideo(localVideoSplitRef.current, localPreviewStream);
+      cleanups.push(attachStreamToVideo(localVideoSplitRef.current, localPreviewStream));
     }
+    return () => cleanups.forEach((cleanup) => cleanup());
   }, [localPreviewStream, status, chatCollapsed]);
 
   useEffect(() => {
@@ -1256,6 +1323,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
 
   const handleStart = () => {
     if (!socket || !connected) return;
+    // Don't let Start spin against a server that will refuse the search.
+    if (suspension && Date.now() < suspension.until) return;
     if (getPrefs().notifyBrowser) void ensureNotifyPermission();
     clearRoom();
     findPartnerEmittedRef.current = false;
@@ -1285,6 +1354,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   }, [selectedInterests]);
 
   const executeSkip = useCallback((opts = {}) => {
+    if (suspensionRef.current && Date.now() < suspensionRef.current.until) return;
     proMatchOptsRef.current = opts;
     if (statusRef.current === 'connected') saveSessionVibe();
     const rid = roomIdRef.current;
@@ -1434,6 +1504,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       setToast('Could not retry link — try Next or Refresh camera');
     }
   }, [peer?.socketId, socket, iceServers]);
+
+  /* Wifi -> cellular kills every candidate pair instantly, but WebRTC waits
+     for `failed` before reacting, which is 10-15s of frozen video. Restart on
+     the handover itself instead. */
+  useNetworkRecovery(retryIce, status === 'connected' && !!peer?.socketId);
 
   const continueAudioOnly = useCallback(async () => {
     // Camera denied — fall back to mic-only so matching can proceed
@@ -1671,11 +1746,25 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   useEffect(() => {
     if (status === 'connected') {
       setTimeout(() => inputRef.current?.focus(), 500);
-      setMessages(prev => [...prev, { id: nextMsgId('sys'), system: true, text: 'Connected to a stranger' }]);
+      // Replace the "finding" line rather than stacking under it — the chat
+      // should read as one status that changed, not a log of two events.
+      setMessages((prev) => [
+        ...prev.filter((x) => x.kind !== 'match-searching'),
+        connectedMessage(peerCountryRef.current),
+      ]);
       playConnectSound();
       setIsModerating(true);
       const timer = setTimeout(() => setIsModerating(false), 3000);
       return () => clearTimeout(timer);
+    } else if (status === 'searching') {
+      peerCountryRef.current = '';
+      // One searching line at a time — a skip should replace it, not queue
+      // another one behind the last.
+      setMessages((prev) => [
+        ...prev.filter((x) => x.kind !== 'match-searching' && x.kind !== 'match-connected'),
+        searchingMessage(),
+      ]);
+      setIsModerating(false);
     } else if (status === 'disconnected') {
       playDisconnectSound();
       setIsModerating(false);
@@ -2655,7 +2744,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 className={`mm-desk-layout-btn${isSidebarDesk ? ' mm-desk-layout-btn--active' : ''}`}
                 onClick={() => setDeskLayout('sidebar')}
                 title="Stacked panels left, chat and controls right"
-                aria-label="Sidebar layout"
+                aria-label="Vertical layout"
                 aria-pressed={isSidebarDesk}
               >
                 <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
@@ -2696,6 +2785,9 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             )}
           </div>
         </div>
+        <button type="button" className="mm-mobile-header__icon" aria-label={isSidebarDesk ? 'Switch to horizontal panels' : 'Switch to vertical panels'} title="Change video panel layout" onClick={() => { setDeskLayout(isSidebarDesk ? 'horizontal' : 'sidebar'); setChatCollapsed(false); }}>
+          <span aria-hidden="true">{isSidebarDesk ? '↔' : '↕'}</span>
+        </button>
         <SettingsGearButton onClick={() => setShowSettings(true)} className="mm-mobile-header__icon" />
         <button type="button" className="mm-mobile-header__icon" onClick={() => setShowMoreMenu(true)} title="More options" aria-label="Menu">⋯</button>
       </header>
@@ -2722,6 +2814,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         <AdSlot slotKey="chat_banner" script={adScripts?.chat_banner} adsEnabled={adsEnabled} compact />
       </div>
       )}
+
+      <MatchSuspendedNotice
+        suspension={suspension}
+        onAppeal={() => { try { window.open('mailto:support@helloooo.app?subject=Matching%20pause%20appeal', '_blank'); } catch { /* ignore */ } }}
+        onBack={handleBack}
+      />
 
       <VideoSessionBanners
         showSafetyNudge={showSafetyNudge}
@@ -2881,7 +2979,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
               </>
             )}
             {status === 'connected' && (
-              <div className={`mm-mobile-video-stage ${!chatCollapsed ? 'mm-mobile-video-stage--split' : ''}`}>
+              <div className={`mm-mobile-video-stage ${!chatCollapsed ? 'mm-mobile-video-stage--split' : ''} ${!isSidebarDesk && !chatCollapsed ? 'mm-mobile-video-stage--horizontal' : ''}`}>
                 {connectPhase !== 'video' && (
                   <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 backdrop-blur-[2px]">
                     <VideoSearchingOverlay
@@ -3194,18 +3292,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         </div>
       )}
 
-      <ConsentSessionGate
-        visible={status === 'connected' && PHASE_4_UNIQUE.mutualConsent && !unique.consentComplete}
-        partnerReady={unique.partnerReady}
-        totalPartners={unique.totalPartners}
-        topicContract={topicContract}
-        conversationMode={conversationMode}
-        modePrompt={unique.modePrompt}
-        onReady={unique.markReady}
-        onAudioReady={unique.markAudioIntroReady}
-        audioIntroDone={unique.audioIntroComplete}
-        aiOnline={unique.aiOnline}
-      />
       {PHASE_4_UNIQUE.dataSaverHud && status === 'connected' && (
         <div className="shrink-0 px-3 py-1 flex justify-between items-center border-b border-white/5 bg-black/20">
           <DataSaverHud bytesEstimate={unique.bytesEstimate} ultraLow={ultraLow} onToggleUltra={() => { setUltraLow((u) => !u); setLowBandwidth((b) => !b); setAutoBandwidth(false); }} />

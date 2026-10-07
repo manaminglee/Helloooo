@@ -11,6 +11,8 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 const helmet = require('helmet');
+const { validateAdSettings, createAdSettingsStore } = require('./adSettings');
+const { validSignal } = require('./signalValidation');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
@@ -48,6 +50,7 @@ const { createAudioStore } = require('./audioStore');
 const { GIFTS } = require('./giftCatalog');
 const { registerModeration } = require('./moderation');
 const { createMatchQueue } = require('./matchQueue');
+const { createMatchSafety } = require('./matchSafety');
 const opaqueNav = require('./opaqueNav');
 const { createInfra } = require('./infra');
 const { promises: dnsPromises } = require('dns');
@@ -212,6 +215,11 @@ function countryFromIP(ip) {
 
 const GROUP_MAX = 4;
 const PAIR_MAX = 2;
+
+/* Search throttle. A person skipping as fast as they can manage lands well
+   under this; a script does not. */
+const FIND_PARTNER_WINDOW_MS = Number(process.env.FIND_PARTNER_WINDOW_MS || 10000);
+const FIND_PARTNER_MAX = Number(process.env.FIND_PARTNER_MAX || 12);
 /** Max WebRTC signaling messages per socket per rolling minute */
 const SIGNAL_MAX_PER_MINUTE = 400;
 
@@ -236,6 +244,17 @@ const settings = {
   }
 };
 
+const adSettingsStore = createAdSettingsStore(path.dirname(LOCAL_DB_PATH));
+try {
+  const saved = adSettingsStore.load();
+  if (saved) {
+    settings.adsEnabled = saved.adsEnabled === true;
+    Object.assign(settings.adScripts, saved.adScripts);
+  }
+} catch (error) {
+  console.error('[Ads] Could not load saved ads; ads remain disabled:', error.message);
+}
+
 // interestKey -> roomId (for groups: "interest_mode")
 const interestToRoom = new Map();
 const rooms = new Map();
@@ -252,6 +271,28 @@ const blockedIps = new Set();
 const warnedIps = new Set();
 const userBlocks = new Map(); // ip -> Set of blocked IPs (user-level block list)
 const reports = [];
+
+/**
+ * Reports now DO something. See server/matchSafety.js — distinct reporters
+ * inside a rolling window escalate into a suspension from being handed new
+ * strangers (not from the site).
+ */
+const matchSafety = createMatchSafety({
+  onSuspend: (ev) => {
+    console.warn(`[safety] ${ev.key} suspended from matching — strike ${ev.strikes}, ${ev.reporters} reporters, until ${new Date(ev.until).toISOString()}`);
+    // Kick them out of any queue immediately; otherwise the suspension only
+    // starts biting on their next search.
+    for (const [sid, u] of users) {
+      if (identityKeyFor(u) !== ev.key) continue;
+      matchQueue.removeFromQueues(sid).catch(() => {});
+      io.sockets.sockets.get(sid)?.emit('match-suspended', {
+        secondsLeft: Math.ceil((ev.until - Date.now()) / 1000),
+        strikes: ev.strikes,
+      });
+    }
+  },
+});
+setInterval(() => matchSafety.sweep(), 30 * 60 * 1000).unref?.();
 const stats = { totalMessages: 0, totalConnections: 0, uniqueIps: new Set() };
 const errorLogs = []; // Buffer for NVIDIA AI to analyze
 function logSystemError(module, error, context = {}) {
@@ -523,15 +564,55 @@ function sanitize(str, max = 50) {
   return str.trim().slice(0, max).replace(/[<>]/g, '');
 }
 
+/**
+ * The key everything about blocking and safety hangs off.
+ *
+ * Device handle first, IP only as a fallback: an IP both over-identifies
+ * (thousands of people share one carrier address) and under-identifies (it
+ * changes on its own), so keying suspensions on it punishes bystanders and
+ * expires for the person it was meant for.
+ */
+function identityKeyFor(user) {
+  if (!user) return '';
+  if (user.deviceHandle) return `d:${user.deviceHandle}`;
+  return user.ip ? `ip:${user.ip}` : '';
+}
+
+/**
+ * "I never want to see this person again", stored both ways round so the search
+ * can answer it from either side without scanning.
+ */
+function addPersonalBlock(blockerKey, targetKey) {
+  if (!blockerKey || !targetKey || blockerKey === targetKey) return;
+  if (!userBlocks.has(blockerKey)) userBlocks.set(blockerKey, new Set());
+  const set = userBlocks.get(blockerKey);
+  set.add(targetKey);
+  // Bounded: an unbounded per-user block list is a memory leak someone can
+  // drive on purpose. Oldest entries fall off first.
+  if (set.size > 500) {
+    const drop = set.size - 500;
+    let i = 0;
+    for (const k of set) { set.delete(k); i += 1; if (i >= drop) break; }
+  }
+}
+
 function isAnonVideoMode(mode) {
   return mode === 'video' || mode === 'group_video';
 }
 
-function publicAnonPeer(socketId) {
+/**
+ * The public face of a stranger in anonymous video.
+ *
+ * Country is included deliberately: it is coarse enough not to identify anyone
+ * (it is a whole country, and it is already what the flag on each chat bubble
+ * shows) and it is what lets the room say "connected to a stranger from India".
+ * Nickname, user id and creator status stay hidden — those are identity.
+ */
+function publicAnonPeer(socketId, country = '') {
   return {
     socketId,
     nickname: 'Anonymous',
-    country: '',
+    country: country || '',
     isCreator: false,
   };
 }
@@ -540,7 +621,13 @@ function mapRoomPeersPublic(room, selfSocketId) {
   return room.participants
     .filter((p) => p.socketId !== selfSocketId)
     .map((p) => {
-      if (isAnonVideoMode(room.mode)) return publicAnonPeer(p.socketId);
+      if (isAnonVideoMode(room.mode)) {
+        const pu = users.get(p.socketId);
+        return {
+          ...publicAnonPeer(p.socketId, pu?.country || p.country),
+          interests: pu?.interests || [],
+        };
+      }
       const u = users.get(p.socketId);
       return {
         socketId: p.socketId,
@@ -884,7 +971,7 @@ function removeUserFromRoom(socketId, roomId, io) {
                 mode: room.mode,
                 interest: room.interest,
                 participantCount: room.users.size,
-                country: isAnonVideoMode(room.mode) ? '' : nextUser.userData.country,
+                country: nextUser.userData.country,
                 sfu: livekitRooms.isConfigured() && room.mode === 'group_video' && !room.sfuFallback
                   ? { enabled: true, provider: 'livekit', url: livekitRooms.publicUrl() }
                   : { enabled: false },
@@ -896,7 +983,8 @@ function removeUserFromRoom(socketId, roomId, io) {
                 socketId: nextUser.socketId,
                 userId: isAnonVideoMode(room.mode) ? undefined : nextUser.userData.id,
                 nickname: isAnonVideoMode(room.mode) ? 'Anonymous' : nextUser.userData.nickname,
-                country: isAnonVideoMode(room.mode) ? '' : nextUser.userData.country,
+                country: nextUser.userData.country,
+                interests: nextUser.userData.interests || [],
                 isCreator: isAnonVideoMode(room.mode) ? false : !!nextUser.userData.isCreator,
                 participantCount: room.users.size,
               });
@@ -955,14 +1043,14 @@ app.use(helmet({
     useDefaults: false,
     directives: {
       'default-src': ["'self'"],
-      'script-src': ["'self'", "'unsafe-inline'", 'blob:', 'https://challenges.cloudflare.com', 'https://checkout.razorpay.com'],
+      'script-src': ["'self'", "'unsafe-inline'", 'blob:', 'https://challenges.cloudflare.com', 'https://checkout.razorpay.com', 'https://pagead2.googlesyndication.com', 'https://*.googlesyndication.com', 'https://*.doubleclick.net', 'https://fundingchoicesmessages.google.com', 'https://www.googletagservices.com', 'https://www.google.com'],
       'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       'font-src': ["'self'", 'data:', 'https://fonts.gstatic.com'],
       'img-src': ["'self'", 'data:', 'blob:', 'https:'],
       'media-src': ["'self'", 'data:', 'blob:'],
       'worker-src': ["'self'", 'blob:'],
       'connect-src': ["'self'", 'https:', 'wss:', 'blob:', 'data:'],
-      'frame-src': ["'self'", 'https://challenges.cloudflare.com', 'https://api.razorpay.com'],
+      'frame-src': ["'self'", 'https://challenges.cloudflare.com', 'https://api.razorpay.com', 'https://*.googlesyndication.com', 'https://*.doubleclick.net', 'https://www.google.com', 'https://fundingchoicesmessages.google.com'],
       // Nothing here is meant to be embedded or to load plugins, and a
       // stray <base> tag would repoint every relative asset URL.
       'frame-ancestors': ["'none'"],
@@ -1038,6 +1126,11 @@ const aiLimiter = rateLimit({
   standardHeaders: true,
 });
 app.use('/api/ai', aiLimiter);
+
+app.get('/ads.txt', (req, res) => {
+  const clients = [...new Set(Object.values(settings.adScripts).filter((v) => v?.provider === 'adsense').map((v) => v.client))];
+  res.type('text/plain').send(clients.map((client) => `google.com, ${client.replace(/^ca-/, '')}, DIRECT, f08c47fec0942fa0`).join('\n') + '\n');
+});
 
 // Public settings (for client feature flags like ads, dev tools, ad HTML slots)
 app.get('/api/settings', (req, res) => {
@@ -1151,6 +1244,40 @@ app.post('/api/admin/end-room', requireAdmin, async (req, res) => {
 
 app.get('/api/admin/live-panels', requireAdmin, (req, res) => {
   res.json(adminLiveMonitor.buildLivePanelsSnapshot(users, rooms));
+});
+
+/**
+ * Who the report ladder has acted on. This is the queue a moderator should
+ * actually work: everyone currently suspended, plus anyone past the review
+ * threshold whose suspension has since lapsed.
+ */
+app.get('/api/admin/match-safety', requireAdmin, (req, res) => {
+  const entries = matchSafety.reviewQueue(100).map((e) => {
+    // Map the key back to whoever is online under it, so a moderator can watch
+    // the actual stream rather than reading a hash.
+    const online = [];
+    for (const [sid, u] of users) {
+      if (identityKeyFor(u) === e.key) online.push({ socketId: sid, country: u.country, nickname: u.nickname });
+    }
+    return { ...e, online };
+  });
+  res.json({
+    entries,
+    tracked: matchSafety.size(),
+    strikeThreshold: matchSafety.STRIKE_THRESHOLD,
+    windowMs: matchSafety.REPORT_WINDOW_MS,
+  });
+});
+
+/** Moderator override — lifts a suspension and wipes the strike history. */
+app.post('/api/admin/match-safety/clear', requireAdmin, (req, res) => {
+  const key = String(req.body?.key || '');
+  if (!key) return res.status(400).json({ error: 'key required' });
+  const removed = matchSafety.clear(key);
+  for (const [sid, u] of users) {
+    if (identityKeyFor(u) === key) io.to(sid).emit('match-suspension-lifted', {});
+  }
+  res.json({ ok: true, removed });
 });
 
 app.post('/api/admin/warn-user', requireAdmin, (req, res) => {
@@ -2698,6 +2825,19 @@ function requireAdmin(req, res, next) {
 // Admin: toggle settings like ads, allowDevTools, maintenanceMode, etc.
 app.post('/api/admin/settings', requireAdmin, (req, res) => {
   const body = req.body || {};
+  const adError = validateAdSettings(body) || validateAdSettings({ adScripts: { ...settings.adScripts, ...body.adScripts } });
+  if (adError) return res.status(400).json({ error: adError });
+  if (Object.hasOwn(body, 'adsEnabled') || Object.hasOwn(body, 'adScripts')) {
+    try {
+      adSettingsStore.save({
+        adsEnabled: body.adsEnabled ?? settings.adsEnabled,
+        adScripts: { ...settings.adScripts, ...body.adScripts },
+      });
+    } catch (error) {
+      console.error('[Ads] Save failed:', error.message);
+      return res.status(503).json({ error: 'Advertisements could not be saved. Please retry.' });
+    }
+  }
   Object.keys(settings).forEach((k) => {
     if (k === 'adScripts' && body.adScripts && typeof body.adScripts === 'object') {
       settings.adScripts = { ...settings.adScripts, ...body.adScripts };
@@ -2957,7 +3097,7 @@ app.get('/api/livekit/status', (req, res) => {
 opaqueNav.registerOpaqueNav(app, { getClientIp });
 
 // API TURN/ICE — regional UDP-first, then TCP, then TLS
-const { buildIceServers } = require('./iceServers');
+const { buildIceServers, assertRelayCredentialsUsable } = require('./iceServers');
 app.get('/api/turn', (req, res) => {
   const qCountry = String(req.query.country || '').trim();
   const qRegion = String(req.query.region || '').trim();
@@ -3205,6 +3345,11 @@ const io = new Server(server, {
   // Same allowlist as HTTP CORS — never fall back to "any origin" in
   // production, and never reject a domain the HTTP API already allows.
   cors: { origin: ALLOWED_ORIGINS, credentials: true },
+  // CORS alone does not protect WebSocket upgrades from foreign browser origins.
+  allowRequest: (req, done) => {
+    const origin = req.headers.origin;
+    done(null, ALLOWED_ORIGINS === true || !origin || ALLOWED_ORIGINS.includes(origin));
+  },
   pingTimeout: 60000,
   pingInterval: 25000,
   connectTimeout: 45000,
@@ -3642,9 +3787,16 @@ io.on('connection', (socket) => {
     return;
   }
 
+  // Handshake-supplied, so it is present before any event handler runs. Shape
+  // is validated rather than trusted: it is client-provided, and a long or
+  // weird value would otherwise flow into map keys and logs.
+  const rawHandle = String(socket.handshake?.auth?.deviceHandle || '');
+  const deviceHandle = /^[0-9a-f]{32}$/.test(rawHandle) ? rawHandle : null;
+
   users.set(socket.id, {
     id: userId,
     ip,
+    deviceHandle,
     country,
     region: country,
     language: null,
@@ -3781,28 +3933,41 @@ io.on('connection', (socket) => {
         if (targetIp !== 'unknown') break;
       }
     }
+    const reason = sanitize(String(data?.reason || 'unspecified'), 120);
     reports.push({
       id: generateId('rpt'),
       reporterIp: ip,
       targetIp,
-      reason: sanitize(String(data?.reason || 'unspecified'), 120),
+      reason,
       timestamp: Date.now()
     });
     persistence.saveReport(reports[reports.length - 1]).catch(() => {});
     uniqueFeatures.adjustTrust(ip, -2);
     if (targetIp && targetIp !== 'unknown') uniqueFeatures.adjustTrust(targetIp, -8);
-    if (data?.block && targetIp && targetIp !== ip && targetIp !== 'unknown') {
-      if (!userBlocks.has(ip)) userBlocks.set(ip, new Set());
-      userBlocks.get(ip).add(targetIp);
-      audioChannels.kickByIp?.(targetIp, 'blocked');
+
+    // The part that actually protects anyone: enough DISTINCT reporters inside
+    // the window and the target stops being handed new strangers.
+    const targetUser = targetSid ? users.get(targetSid) : null;
+    const targetKey = identityKeyFor(targetUser) || (targetIp !== 'unknown' ? `ip:${targetIp}` : '');
+    const reporterKey = identityKeyFor(users.get(socket.id)) || `ip:${ip}`;
+    if (targetKey) {
+      try { matchSafety.report(targetKey, reporterKey, reason); } catch (e) {
+        console.warn('[safety] report failed:', e.message);
+      }
+    }
+
+    if (data?.block && targetKey && targetKey !== reporterKey) {
+      addPersonalBlock(reporterKey, targetKey);
+      if (targetIp && targetIp !== 'unknown') audioChannels.kickByIp?.(targetIp, 'blocked');
     }
   });
 
   on('block-user', (data) => {
     let targetIp = null;
+    let targetUserForBlock = null;
     if (data?.targetSocketId) {
       const u = users.get(data.targetSocketId);
-      if (u) targetIp = u.ip;
+      if (u) { targetIp = u.ip; targetUserForBlock = u; }
     }
     if (!targetIp) {
       for (const [, room] of rooms) {
@@ -3810,17 +3975,19 @@ io.on('connection', (socket) => {
           for (const pt of room.participants) {
             if (pt.socketId !== socket.id) {
               const opp = users.get(pt.socketId);
-              if (opp) { targetIp = opp.ip; break; }
+              if (opp) { targetIp = opp.ip; targetUserForBlock = opp; break; }
             }
           }
           if (targetIp) break;
         }
       }
     }
-    if (targetIp && targetIp !== ip) {
-      if (!userBlocks.has(ip)) userBlocks.set(ip, new Set());
-      userBlocks.get(ip).add(targetIp);
-      audioChannels.kickByIp?.(targetIp, 'blocked');
+    const blockerKey = identityKeyFor(users.get(socket.id)) || `ip:${ip}`;
+    const blockTargetKey = identityKeyFor(targetUserForBlock)
+      || (targetIp && targetIp !== ip ? `ip:${targetIp}` : '');
+    if (blockTargetKey && blockTargetKey !== blockerKey) {
+      addPersonalBlock(blockerKey, blockTargetKey);
+      if (targetIp && targetIp !== ip) audioChannels.kickByIp?.(targetIp, 'blocked');
     }
   });
 
@@ -3828,6 +3995,37 @@ io.on('connection', (socket) => {
   on('find-partner', async (data) => {
     const userData = users.get(socket.id);
     if (!userData) return;
+
+    // Searching is the one socket event a client can loop on for free, and
+    // every call costs a queue round trip. Unthrottled it is both a cheap DoS
+    // and the fastest way to enumerate everyone online. The allowance is well
+    // above what a person skipping hard can produce by hand.
+    const searchKey = identityKeyFor(userData) || `ip:${ip}`;
+    const searchLimit = await infra.rateLimit(`find:${searchKey}`, {
+      windowMs: FIND_PARTNER_WINDOW_MS,
+      max: FIND_PARTNER_MAX,
+    });
+    if (!searchLimit.ok) {
+      socket.emit('find-throttled', {
+        message: 'Slow down a moment — too many searches in a row.',
+        retryAfterMs: FIND_PARTNER_WINDOW_MS,
+      });
+      return;
+    }
+
+    // Someone strangers keep reporting is not handed new strangers. They are
+    // not thrown off the site: an existing conversation is untouched, and they
+    // can still read, top up and reach support.
+    const suspension = matchSafety.statusOf(searchKey);
+    if (suspension.suspended) {
+      socket.emit('match-suspended', {
+        secondsLeft: suspension.secondsLeft,
+        strikes: suspension.strikes,
+        message: 'Matching is paused on this device after reports from other people.',
+      });
+      return;
+    }
+
     await resolveCreatorIdentity(userData, data, ip);
     const mode = data?.mode === 'video' ? 'video' : 'text';
     const interest = sanitize(String(data?.interest || 'general').toLowerCase(), 30) || 'general';
@@ -3864,13 +4062,26 @@ io.on('connection', (socket) => {
       }
     }
 
-    const myBlocks = userBlocks.get(ip);
+    const myKey = identityKeyFor(userData) || `ip:${ip}`;
+    const myBlocks = userBlocks.get(myKey);
     const baseCanMatch = (e) => {
       if (e.socketId === socket.id) return false;
-      const otherIp = users.get(e.socketId)?.ip || e.userData?.ip;
+      const otherUser = users.get(e.socketId);
+      const otherIp = otherUser?.ip || e.userData?.ip;
       if (!otherIp || blockedIps.has(otherIp)) return false;
-      if (myBlocks && myBlocks.has(otherIp)) return false;
-      if (userBlocks.get(otherIp)?.has(ip)) return false;
+
+      const otherKey = identityKeyFor(otherUser)
+        || (e.userData?.deviceHandle ? `d:${e.userData.deviceHandle}` : `ip:${otherIp}`);
+
+      // Blocking is symmetric: neither of us should be handed the other.
+      if (myBlocks && myBlocks.has(otherKey)) return false;
+      if (userBlocks.get(otherKey)?.has(myKey)) return false;
+
+      // Somebody strangers keep reporting stops being handed to new strangers.
+      // Checked here as well as at entry, because they may already be sitting
+      // in the queue from before the suspension started.
+      if (matchSafety.isSuspended(otherKey)) return false;
+
       return true;
     };
 
@@ -3908,6 +4119,8 @@ io.on('connection', (socket) => {
     const interests = parseInterests(data, interest, sanitize);
     const entry = {
       socketId: socket.id,
+      // Breaks score ties in favour of whoever has waited longest.
+      enqueuedAt: Date.now(),
       userData,
       interest,
       interests,
@@ -3963,10 +4176,10 @@ io.on('connection', (socket) => {
       otherSocket.join(room.id);
 
       const myPeer = isAnonVideoMode(mode)
-        ? publicAnonPeer(socket.id)
+        ? publicAnonPeer(socket.id, userData.country)
         : { socketId: socket.id, userId: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator };
       const otherPeer = isAnonVideoMode(mode)
-        ? publicAnonPeer(match.socketId)
+        ? publicAnonPeer(match.socketId, otherData.country)
         : { socketId: match.socketId, userId: otherData.id, nickname: otherData.nickname, country: otherData.country, isCreator: otherData.isCreator };
 
       userData.lastPartnerUserId = otherData.id;
@@ -3983,8 +4196,8 @@ io.on('connection', (socket) => {
         && Date.now() < (userData.skipWindow?.until || 0)
         && Date.now() < (otherData.skipWindow?.until || 0)
       );
-      socket.emit('partner-found', { roomId: room.id, peer: otherPeer, country: isAnonVideoMode(mode) ? '' : userData.country, sessionConfig, sharedInterests, mutualSkipReconnect });
-      otherSocket.emit('partner-found', { roomId: room.id, peer: myPeer, country: isAnonVideoMode(mode) ? '' : otherData.country, sessionConfig, sharedInterests, mutualSkipReconnect });
+      socket.emit('partner-found', { roomId: room.id, peer: otherPeer, country: userData.country, sessionConfig, sharedInterests, mutualSkipReconnect });
+      otherSocket.emit('partner-found', { roomId: room.id, peer: myPeer, country: otherData.country, sessionConfig, sharedInterests, mutualSkipReconnect });
 
       const reconnectToken = enhancements.issueReconnectToken(socket.id, { roomId: room.id, nickname: userData.nickname, mode });
       socket.emit('reconnect-token', { token: reconnectToken });
@@ -4014,18 +4227,41 @@ io.on('connection', (socket) => {
   on('join-group-by-topics', (data) => {
     const userData = users.get(socket.id);
     if (!userData) return;
+
+    // Group video hands you strangers just like 1:1 does, so the same pause
+    // applies. Gating only find-partner would have left the whole suspension
+    // one tab away from being pointless.
+    const joinKey = identityKeyFor(userData) || `ip:${ip}`;
+    const joinSuspension = matchSafety.statusOf(joinKey);
+    if (joinSuspension.suspended) {
+      socket.emit('match-suspended', {
+        secondsLeft: joinSuspension.secondsLeft,
+        strikes: joinSuspension.strikes,
+        message: 'Matching is paused on this device after reports from other people.',
+      });
+      return;
+    }
+
     const interest = sanitize(String(data?.interest || '').toLowerCase(), 30) || 'general';
     const mode = data?.mode === 'group_text' ? 'group_text' : 'group_video';
     const nickname = sanitize(data?.nickname || 'Anonymous', 30);
     userData.nickname = nickname;
+    // Topics are not identity — they are the thing the person chose to be
+    // matched on — so they travel with the peer and the client can show what
+    // two people have in common without a per-recipient broadcast.
+    userData.interests = parseInterests(data, interest, sanitize);
 
-    const myBlocks = userBlocks.get(ip);
+    const myBlocks = userBlocks.get(joinKey);
     const canJoinRoom = (r) => {
       for (const p of r.participants) {
-        const otherIp = users.get(p.socketId)?.ip;
+        const other = users.get(p.socketId);
+        const otherIp = other?.ip;
         if (!otherIp || blockedIps.has(otherIp)) return false;
-        if (myBlocks && myBlocks.has(otherIp)) return false;
-        if (userBlocks.get(otherIp)?.has(ip)) return false;
+        const otherKey = identityKeyFor(other) || `ip:${otherIp}`;
+        if (myBlocks && myBlocks.has(otherKey)) return false;
+        if (userBlocks.get(otherKey)?.has(joinKey)) return false;
+        // Don't drop somebody into a pod with a suspended stranger.
+        if (matchSafety.isSuspended(otherKey)) return false;
       }
       return true;
     };
@@ -4068,7 +4304,7 @@ io.on('connection', (socket) => {
       mode,
       interest: room.interest,
       participantCount: room.users.size,
-      country: isAnonVideoMode(mode) ? '' : userData.country,
+      country: userData.country,
       sfu: livekitRooms.isConfigured() && mode === 'group_video' && !room.sfuFallback
         ? { enabled: true, provider: 'livekit', url: livekitRooms.publicUrl() }
         : { enabled: false },
@@ -4083,7 +4319,8 @@ io.on('connection', (socket) => {
       socketId: socket.id,
       userId: isAnonVideoMode(mode) ? undefined : userData.id,
       nickname: isAnonVideoMode(mode) ? 'Anonymous' : userData.nickname,
-      country: isAnonVideoMode(mode) ? '' : userData.country,
+      country: userData.country,
+      interests: userData.interests || [],
       isCreator: isAnonVideoMode(mode) ? false : !!userData.isCreator,
       participantCount: room.users.size,
     });
@@ -4131,7 +4368,7 @@ io.on('connection', (socket) => {
       mode: room.mode,
       interest: room.interest,
       participantCount: room.users.size,
-      country: isAnonVideoMode(room.mode) ? '' : userData.country,
+      country: userData.country,
       sfu: livekitRooms.isConfigured() && room.mode === 'group_video' && !room.sfuFallback
         ? { enabled: true, provider: 'livekit', url: livekitRooms.publicUrl() }
         : { enabled: false },
@@ -4146,7 +4383,8 @@ io.on('connection', (socket) => {
       socketId: socket.id,
       userId: isAnonVideoMode(room.mode) ? undefined : userData.id,
       nickname: isAnonVideoMode(room.mode) ? 'Anonymous' : userData.nickname,
-      country: isAnonVideoMode(room.mode) ? '' : userData.country,
+      country: userData.country,
+      interests: userData.interests || [],
       isCreator: isAnonVideoMode(room.mode) ? false : !!userData.isCreator,
       participantCount: room.users.size,
     });
@@ -4701,7 +4939,7 @@ io.on('connection', (socket) => {
     if (!userData || !room || !room.users.has(socket.id) || !room.users.has(targetSocketId)) return;
     // When LiveKit SFU is active for group video, ignore mesh media signaling
     if (room.mode === 'group_video' && livekitRooms.isConfigured() && !room.sfuFallback) return;
-    const valid = ['offer', 'answer', 'ice-candidate'].includes(type);
+    const valid = targetSocketId !== socket.id && validSignal(type, signal);
     if (!valid) return;
     const target = io.sockets.sockets.get(targetSocketId);
     if (!target) return;
@@ -4757,7 +4995,8 @@ io.on('connection', (socket) => {
           nickname,
           country: u.country || '',
           isCreator: !!u.isCreator,
-          canPublish: true,
+          canPublish: livekitRooms.canPublishAudio(channel.members.get(socket.id)),
+          canPublishSources: [2],
           canSubscribe: true,
         });
         return socket.emit('livekit-token', tokenPayload);
@@ -4811,6 +5050,16 @@ io.on('connection', (socket) => {
 });
 
 (async () => {
+  // Checked before anything binds a port: a server with no working relay looks
+  // healthy and serves a black video to everyone on a mobile network, which is
+  // far harder to diagnose than a refusal to start.
+  const relay = assertRelayCredentialsUsable();
+  if (!relay.ok) {
+    console.error(`[FATAL] ${relay.message}`);
+    process.exit(1);
+  }
+  if (relay.level === 'warn') console.warn(`[WARN] ${relay.message}`);
+
   try {
     const redisUrl = (process.env.REDIS_URL || process.env.REDIS_TLS_URL || '').trim();
     await matchQueue.init({ io, redisUrl, memoryQueues: pairQueues });

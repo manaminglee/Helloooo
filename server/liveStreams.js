@@ -667,6 +667,9 @@ function registerLiveStreams(app, io, deps) {
   // -------------------------------------------------------------------------
   async function sendGift(room, socket, { giftId, targetSide = 'A', nonce }) {
     if (!room || room.status !== 'live') return { ok: false, error: 'Live is offline' };
+    if (await store.has('blocked', room.id, socket.id) || await store.has('blocked', room.id, socketIp(socket))) return { ok: false, error: 'You cannot gift in this live' };
+    if (!isHostSocket(room, socket) && !await store.getViewer(room.id, socket.id)) return { ok: false, error: 'Join the live before sending gifts' };
+    if (typeof nonce !== 'string' || !nonce.trim() || nonce.length > 64) return { ok: false, error: 'A gift request ID is required' };
 
     const gift = getGiftById(giftId) || GIFT_BY_ID.get(String(giftId || ''));
     if (!gift) return { ok: false, error: 'Unknown gift' };
@@ -1118,8 +1121,12 @@ function registerLiveStreams(app, io, deps) {
       }
       const socketId = String(req.body?.socketId || '');
       if (!socketId) return res.status(400).json({ ok: false, error: 'Socket connection required to go live.' });
-      if (!users?.get?.(socketId)) {
+      const socketUser = users?.get?.(socketId);
+      if (!socketUser) {
         return res.status(400).json({ ok: false, error: 'Socket not connected — refresh and try again.' });
+      }
+      if (!socketUser.isCreator || socketUser.creatorData?.id !== creator.id) {
+        return res.status(403).json({ ok: false, error: 'Authenticate this creator on the broadcasting socket first.' });
       }
       const result = await startLive({
         creator, socketId,
@@ -1564,6 +1571,7 @@ function registerLiveStreams(app, io, deps) {
       const target = await store.getViewer(room.id, targetSocketId);
       await store.addTo('blocked', room.id, targetSocketId);
       if (block && target?.ip) await store.addTo('blocked', room.id, String(target.ip));
+      void livekitRooms.removeParticipant(room.roomName, targetSocketId).catch(() => {});
       await leaveViewer(room.id, targetSocketId);
       try {
         const s = io.sockets.sockets.get(targetSocketId);
@@ -1901,6 +1909,14 @@ function registerLiveStreams(app, io, deps) {
         l.hostGraceTimer = null;
       }
       const canPublish = asHost || isGuestPublisher;
+      if (await store.has('blocked', room.id, socket.id) || await store.has('blocked', room.id, ip)) {
+        cb?.({ ok: false, error: 'You cannot join this live' });
+        return;
+      }
+      if (!asHost && !await store.getViewer(room.id, socket.id)) {
+        cb?.({ ok: false, error: 'Join the live before requesting media', retryable: true });
+        return;
+      }
       const u = users?.get?.(socket.id);
       const tokenPayload = await livekitRooms.mintParticipantToken({
         socketId: socket.id,
@@ -1911,6 +1927,7 @@ function registerLiveStreams(app, io, deps) {
         canPublish,
         canSubscribe: true,
         roomAdmin: asHost,
+        ttl: '5m',
       });
       const out = { ok: true, ...tokenPayload, liveId: room.id };
       if (cb) cb(out); else socket.emit('live:token', out);

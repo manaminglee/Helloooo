@@ -1,9 +1,14 @@
+let cachedWebgl;
 function webglAvailable() {
   if (typeof document === 'undefined') return false;
+  if (cachedWebgl !== undefined) return cachedWebgl;
   try {
     const c = document.createElement('canvas');
-    return !!(c.getContext('webgl', { failIfMajorPerformanceCaveat: false })
-      || c.getContext('experimental-webgl'));
+    const context = c.getContext('webgl', { failIfMajorPerformanceCaveat: false })
+      || c.getContext('experimental-webgl');
+    cachedWebgl = !!context;
+    context?.getExtension('WEBGL_lose_context')?.loseContext();
+    return cachedWebgl;
   } catch {
     return false;
   }

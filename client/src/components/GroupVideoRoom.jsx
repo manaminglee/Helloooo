@@ -8,6 +8,9 @@ import { HellooooBrand } from './HellooooBrand';
 import { useIceServers } from '../hooks/useIceServers';
 import { API_BASE } from '../config/apiBase';
 import { nextMsgId } from '../utils/uniqueId';
+import {
+  MatchStatusLine, isMatchStatus, searchingMessage, connectedMessage, leftMessage,
+} from './MatchStatusLine';
 import { CoinBadge } from './CoinBadge';
 import { GiftDrawer } from './GiftDrawer';
 import { ReportSafetyModal } from './ReportSafetyModal';
@@ -25,6 +28,10 @@ import { CreatorLiveModal } from './CreatorLiveModal';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { useUniqueSession } from '../hooks/useUniqueSession';
 import { useAdminMonitorFrames } from '../hooks/useAdminMonitorFrames';
+import { useNetworkRecovery } from '../hooks/useNetworkRecovery';
+import { MatchSuspendedNotice } from './MatchSuspendedNotice';
+import { CountryFlag } from './CountryFlag';
+import { countryName } from '../utils/countryFlag';
 import {
   AiStatusPill,
   CalmModeToggle,
@@ -112,6 +119,7 @@ function GroupChatFadeNotice({ text, noticeKey }) {
 
 function GroupDeskChatRow({ m, isMe }) {
   const timeLeft = useMessageTtl(m);
+  if (isMatchStatus(m)) return <MatchStatusLine m={m} />;
   if (m.system) {
     return (
       <div className="mm-group-desk-chat__system">{m.text}</div>
@@ -171,7 +179,7 @@ function TileMicIcon({ muted }) {
   );
 }
 
-function VideoTile({ stream, isMe, isEmpty, isSearching, isActiveSpeaker = false, quality = 'good', handRaised = false, deskStyle = false, isMuted = false, hideTileMic = false }) {
+function VideoTile({ stream, isMe, isEmpty, isSearching, isActiveSpeaker = false, quality = 'good', handRaised = false, deskStyle = false, isMuted = false, hideTileMic = false, country = '' }) {
   const ref = useRef(null);
   const [streamTick, setStreamTick] = useState(0);
   const streamLive = hasPlayableVideo(stream);
@@ -222,6 +230,10 @@ function VideoTile({ stream, isMe, isEmpty, isSearching, isActiveSpeaker = false
   }
 
   const tileLabel = isMe ? 'You' : 'Stranger';
+  // Where this person is, on the tile itself. The chat already says it once on
+  // join, but that scrolls away, and in a pod of four "which one is the
+  // stranger from Brazil" is otherwise unanswerable.
+  const place = country ? countryName(country) : '';
 
   return (
     <div className={`video-tile relative min-h-0 min-w-0 transition-all duration-500 overflow-hidden ${deskStyle ? 'mm-group-desk-tile' : ''} ${isMe ? 'mirror' : ''} ${isActiveSpeaker && !deskStyle ? 'ring-4 ring-violet-500/40 ring-inset shadow-[0_0_30px_rgba(167,139,250,0.2)] scale-[1.02] z-10' : deskStyle && isActiveSpeaker ? 'mm-group-desk-tile--speaking' : 'brightness-90 hover:brightness-100'}`}>
@@ -257,11 +269,13 @@ function VideoTile({ stream, isMe, isEmpty, isSearching, isActiveSpeaker = false
       {deskStyle ? (
         <div className="mm-group-desk-tile__tag">
           <span className="mm-desk-dot mm-desk-dot--green" aria-hidden />
+          {!isMe && country && <CountryFlag country={country} size={13} title={place} />}
           <span className="truncate">{tileLabel}</span>
         </div>
       ) : (
       <div className="tile-label flex items-center justify-between gap-4">
         <div className="flex items-center gap-1.5 min-w-0">
+          {!isMe && country && <CountryFlag country={country} size={13} title={place} />}
           <button type="button" className="truncate max-w-[80px] text-left">
             {tileLabel}
           </button>
@@ -308,6 +322,8 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const [peers, setPeers] = useState([]);
   const [participantCount, setParticipantCount] = useState(1);
   const [messages, setMessages] = useState([]);
+  /* Set when the server pauses matching for this device after reports. */
+  const [suspension, setSuspension] = useState(null);
   const [sparks, setSparks] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [muted, setMuted] = useState(false);
@@ -450,8 +466,8 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     if (!sfuEnabled || !livekit.connected || isScreenSharing) return;
     const vt = faceBlur ? outboundStream?.getVideoTracks()?.[0] : cameraSource?.getVideoTracks()?.[0];
     if (!vt) return;
-    livekit.replacePublishedVideo(vt);
-  }, [sfuEnabled, livekit.connected, faceBlur, outboundStream, cameraSource, isScreenSharing, livekit]);
+    void livekit.replacePublishedVideo(vt).catch(() => showChatNotice('Could not update camera. Try toggling the camera.'));
+  }, [sfuEnabled, livekit.connected, faceBlur, outboundStream, cameraSource, isScreenSharing, livekit.replacePublishedVideo]);
 
   useEffect(() => {
     if (!sfuEnabled) return;
@@ -814,6 +830,43 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   }, []);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  /* Matching paused after reports — say so instead of leaving them queueing
+     against a server that will refuse every join. */
+  useEffect(() => {
+    if (!socket) return undefined;
+    const onSuspended = (d) => setSuspension({
+      until: Date.now() + (Number(d?.secondsLeft) || 0) * 1000,
+      strikes: Number(d?.strikes) || 0,
+    });
+    const onLifted = () => setSuspension(null);
+    socket.on('match-suspended', onSuspended);
+    socket.on('match-suspension-lifted', onLifted);
+    return () => {
+      socket.off('match-suspended', onSuspended);
+      socket.off('match-suspension-lifted', onLifted);
+    };
+  }, [socket]);
+
+  useEffect(() => {
+    if (!suspension) return undefined;
+    const ms = suspension.until - Date.now();
+    if (ms <= 0) { setSuspension(null); return undefined; }
+    const t = setTimeout(() => setSuspension(null), ms + 250);
+    return () => clearTimeout(t);
+  }, [suspension]);
+
+  /* While the pod is still filling, the chat says so. It clears itself the
+     moment somebody arrives, because the join handler drops every searching
+     line when it writes the connected one. */
+  useEffect(() => {
+    if (!isQueuing) return;
+    setMessages((prev) => (
+      prev.some((x) => x.kind === 'match-searching')
+        ? prev
+        : [...prev.filter((x) => x.kind !== 'match-connected'), searchingMessage()]
+    ));
+  }, [isQueuing]);
 
   useEffect(() => {
     if (!isRecording && !youtubeLive.isLive) return;
@@ -1238,6 +1291,15 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     showChatNotice('Reconnecting group video links…');
   }, [roomId, socket]);
 
+  /* No shared-interest chip here on purpose: a pod is keyed by its topic, so
+     everyone in it joined the SAME interest. A per-tile "you both like X" would
+     print the same word on every tile and tell nobody anything. The country
+     flag below does carry information, so that stays. */
+
+  /* Same handover problem as 1:1, multiplied by the number of peers in the
+     pod — every one of those links dies on the address change. */
+  useNetworkRecovery(retryAllIce, !isQueuing && peers.length > 0);
+
   const sendMessage = (overrideText) => {
     // onClick passes a SyntheticEvent — only treat real strings as override text
     const raw = typeof overrideText === 'string' ? overrideText : chatInput;
@@ -1358,13 +1420,23 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       if (data.nickname) peerNicksRef.current.set(data.socketId, data.nickname);
       if (data.country) peerCountriesRef.current.set(data.socketId, data.country);
       if (data.isCreator) peerCreatorsRef.current.set(data.socketId, true);
-        setMessages((m) => [...m, { id: nextMsgId('sys'), system: true, text: 'A stranger joined 👋' }]);
+      setMessages((prev) => [
+        ...prev.filter((x) => x.kind !== 'match-searching'),
+        connectedMessage(data.country, { group: true }),
+      ]);
       playConnectSound();
 
       setPeers((prev) => {
         const isKnown = prev.some((p) => p.socketId === data.socketId);
         if (isKnown) return prev;
-        return [...prev, { socketId: data.socketId, stream: null, nickname: data.nickname || 'Anonymous', country: data.country, isCreator: !!data.isCreator }];
+        return [...prev, {
+          socketId: data.socketId,
+          stream: null,
+          nickname: data.nickname || 'Anonymous',
+          country: data.country,
+          interests: Array.isArray(data.interests) ? data.interests : [],
+          isCreator: !!data.isCreator,
+        }];
       });
 
       // Joining peer runs offers to everyone in existing-peers; avoid duplicate offers here (mesh glare).
@@ -1407,6 +1479,8 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           peerConnectionsRef.current.delete(sid);
         }
         pendingCandidatesRef.current.delete(sid);
+        // Read the country before the maps are cleared — the goodbye line needs it.
+        const goneCountry = peerCountriesRef.current.get(sid);
         peerNicksRef.current.delete(sid);
         peerCountriesRef.current.delete(sid);
         peerCreatorsRef.current.delete(sid);
@@ -1415,7 +1489,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
           n.delete(sid);
           return n;
         });
-        setMessages((m) => [...m, { id: nextMsgId('sys-left'), system: true, text: 'A stranger left the room' }]);
+        setMessages((m) => [...m, leftMessage(goneCountry)]);
         playDisconnectSound();
         cleanupAudioAnalyzer(sid);
       }
@@ -1827,6 +1901,12 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         </div>
       )}
 
+      <MatchSuspendedNotice
+        suspension={suspension}
+        onAppeal={() => { try { window.open('mailto:support@helloooo.app?subject=Matching%20pause%20appeal', '_blank'); } catch { /* ignore */ } }}
+        onBack={handleLeaveRoom}
+      />
+
       {/* Media permission error overlay */}
       {mediaError && (
         <div className="absolute inset-0 z-[300] bg-[#0c0e1a]/98 backdrop-blur-xl flex flex-col items-center justify-center p-6 text-center animate-fade-in">
@@ -1917,6 +1997,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                     isActiveSpeaker={activeSpeakerId === p.socketId}
                     quality={connectionQuality.get(p.socketId) || 'good'}
                     handRaised={remoteRaisedHands.has(p.socketId)}
+                    country={p.country}
                   />
                 ))}
                 {Array.from({ length: Math.max(0, 3 - peers.length) }).map((_, i) => (
@@ -2074,6 +2155,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                   isActiveSpeaker={activeSpeakerId === p.socketId}
                   quality={connectionQuality.get(p.socketId) || 'good'}
                   handRaised={remoteRaisedHands.has(p.socketId)}
+                  country={p.country}
                 />
               ))}
               {Array.from({ length: Math.max(0, 3 - peers.length) }).map((_, i) => (

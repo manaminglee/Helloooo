@@ -58,7 +58,6 @@ export function LandingModeCards({ onStart, connected, isJoining, className = ''
             <p className="lv2-mode-card__hint">{m.hint}</p>
           </div>
           <span className="lv2-mode-card__arrow" aria-hidden>→</span>
-          {m.id === 'lives' && <span className="lv2-mode-card__featured">Featured</span>}
         </motion.button>
       ))}
     </motion.div>

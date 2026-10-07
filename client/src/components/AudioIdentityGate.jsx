@@ -11,6 +11,7 @@ import {
 import { openRazorpayCoinCheckout } from '../utils/paymentCheckout';
 import { VirtualMarketRateChip } from './VirtualMarketPanel';
 import { NutsSymbol } from './NutsSymbol';
+import { HellooooLogo } from './HellooooBrand';
 
 function UsernameMirrorPreview({ username, nameColor }) {
   const display = username.trim() || 'YourName';
@@ -19,7 +20,7 @@ function UsernameMirrorPreview({ username, nameColor }) {
   return (
     <div className="mm-audio-id-mirror">
       <div className="mm-audio-id-mirror__glass" aria-hidden />
-      <p className="mm-audio-id-mirror__label">Preview</p>
+      <p className="mm-audio-id-mirror__label">Live preview</p>
       <p className="mm-audio-id-mirror__name">
         <span
           className={`mm-audio-id-mirror__text${gradient ? ' mm-audio-name--gradient' : ''}`}
@@ -42,6 +43,7 @@ function AudioIdentityRegisterModal({ open, onClose, identityHook, onSignedIn })
   const [nameColor, setNameColor] = useState(NAME_COLORS[0]);
   const [colors, setColors] = useState(NAME_COLORS);
   const [gradients, setGradients] = useState(NAME_GRADIENTS);
+  const [step, setStep] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -59,6 +61,7 @@ function AudioIdentityRegisterModal({ open, onClose, identityHook, onSignedIn })
       setUsername('');
       setPin('');
       setPin2('');
+      setStep(0);
       setError('');
     }
   }, [open, setError]);
@@ -67,11 +70,12 @@ function AudioIdentityRegisterModal({ open, onClose, identityHook, onSignedIn })
     e.preventDefault();
     setError('');
     const userErr = validateAudioUsername(username);
-    if (userErr) { setError(userErr); return; }
+    if (userErr) { setError(userErr); setStep(0); return; }
     const pinErr = validateAudioPin(pin);
-    if (pinErr) { setError(pinErr); return; }
+    if (pinErr) { setError(pinErr); setStep(1); return; }
     if (pin !== pin2) {
       setError('PINs do not match');
+      setStep(1);
       return;
     }
     const ok = await register({ username: username.trim(), pin, nameColor, remember });
@@ -84,7 +88,7 @@ function AudioIdentityRegisterModal({ open, onClose, identityHook, onSignedIn })
   if (!open) return null;
 
   return createPortal(
-      <div className="mm-modal-overlay mm-modal-overlay--sheet z-[500]" onClick={onClose}>
+    <div className="mm-modal-overlay mm-modal-overlay--sheet z-[6600]" onClick={onClose}>
       <div
         className="mm-audio-id-card mm-audio-id-card--register w-full max-w-md"
         role="dialog"
@@ -93,91 +97,149 @@ function AudioIdentityRegisterModal({ open, onClose, identityHook, onSignedIn })
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mm-audio-id-card__glow" aria-hidden />
-        <span className="mm-audio-id-card__icon">✨</span>
-        <h2 className="mm-audio-id-card__title">New user</h2>
+        <div className="mm-audio-id-card__brand">
+          <HellooooLogo size={32} />
+        </div>
+        <h2 className="mm-audio-id-card__title">Create voice identity</h2>
         <p className="mm-audio-id-card__sub">
-          Pick a username, 4-digit PIN, and color. Next time you only need your PIN.
+          Username + 4-digit PIN. Next visits only need your PIN on this device.
         </p>
 
-        <form onSubmit={submitRegister} className="space-y-3 mt-5">
-          <label className="mm-audio-id-label">
-            Username
-            <input
-              className="mm-audio-id-input"
-              value={username}
-              onChange={(e) => setUsername(sanitizeAudioUsernameInput(e.target.value))}
-              placeholder="e.g. Star_Voice!"
-              maxLength={20}
-              autoFocus
-              required
-            />
-          </label>
-          <label className="mm-audio-id-label">
-            Login PIN
-            <input
-              className="mm-audio-id-input mm-audio-id-input--pin"
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
-              placeholder="••••"
-              inputMode="numeric"
-              maxLength={4}
-              required
-            />
-          </label>
-          <label className="mm-audio-id-label">
-            Confirm PIN
-            <input
-              className="mm-audio-id-input mm-audio-id-input--pin"
-              value={pin2}
-              onChange={(e) => setPin2(e.target.value.replace(/\D/g, '').slice(0, 4))}
-              placeholder="••••"
-              inputMode="numeric"
-              maxLength={4}
-              required
-            />
-          </label>
-          <div>
-            <p className="mm-audio-id-label !mb-2">Username color</p>
-            <p className="mm-audio-id-sublabel">Solid</p>
-            <div className="mm-audio-id-colors">
-              {colors.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  className={`mm-audio-id-color${nameColor === c ? ' mm-audio-id-color--on' : ''}`}
-                  style={{ '--swatch': c }}
-                  onClick={() => setNameColor(c)}
-                  aria-label={`Color ${c}`}
+        <div className="mm-audio-id-steps" aria-hidden>
+          <span className={step === 0 ? 'on' : ''} />
+          <span className={step === 1 ? 'on' : ''} />
+          <span className={step === 2 ? 'on' : ''} />
+        </div>
+
+        <form onSubmit={submitRegister} className="space-y-3 mt-4">
+          {step === 0 && (
+            <>
+              <label className="mm-audio-id-label">
+                Username
+                <input
+                  className="mm-audio-id-input"
+                  value={username}
+                  onChange={(e) => setUsername(sanitizeAudioUsernameInput(e.target.value))}
+                  placeholder="e.g. Star_Voice"
+                  maxLength={20}
+                  autoFocus
+                  required
                 />
-              ))}
-            </div>
-            <p className="mm-audio-id-sublabel mt-2">Gradient</p>
-            <div className="mm-audio-id-colors mm-audio-id-colors--gradients">
-              {gradients.map((g) => (
-                <button
-                  key={g.id}
-                  type="button"
-                  className={`mm-audio-id-gradient${nameColor === g.id ? ' mm-audio-id-gradient--on' : ''}`}
-                  style={{ backgroundImage: g.css }}
-                  onClick={() => setNameColor(g.id)}
-                  aria-label={`Gradient ${g.label}`}
-                  title={g.label}
+              </label>
+              <UsernameMirrorPreview username={username} nameColor={nameColor} />
+              <button
+                type="button"
+                className="mm-btn mm-btn--primary w-full"
+                disabled={!username.trim()}
+                onClick={() => {
+                  const err = validateAudioUsername(username);
+                  if (err) { setError(err); return; }
+                  setError('');
+                  setStep(1);
+                }}
+              >
+                Continue
+              </button>
+            </>
+          )}
+
+          {step === 1 && (
+            <>
+              <label className="mm-audio-id-label">
+                Login PIN
+                <input
+                  className="mm-audio-id-input mm-audio-id-input--pin"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  placeholder="••••"
+                  inputMode="numeric"
+                  maxLength={4}
+                  autoFocus
+                  required
                 />
-              ))}
-            </div>
-            <UsernameMirrorPreview username={username} nameColor={nameColor} />
-          </div>
-          <label className="mm-remember">
-            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-            <span className="mm-remember__text">
-              <strong>Remember this device</strong>
-              <em>Stay signed in here so you only type your PIN once.</em>
-            </span>
-          </label>
+              </label>
+              <label className="mm-audio-id-label">
+                Confirm PIN
+                <input
+                  className="mm-audio-id-input mm-audio-id-input--pin"
+                  value={pin2}
+                  onChange={(e) => setPin2(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  placeholder="••••"
+                  inputMode="numeric"
+                  maxLength={4}
+                  required
+                />
+              </label>
+              <div className="flex gap-2">
+                <button type="button" className="mm-btn mm-btn--ghost flex-1" onClick={() => setStep(0)}>Back</button>
+                <button
+                  type="button"
+                  className="mm-btn mm-btn--primary flex-1"
+                  disabled={pin.length !== 4 || pin !== pin2}
+                  onClick={() => {
+                    const pinErr = validateAudioPin(pin);
+                    if (pinErr) { setError(pinErr); return; }
+                    if (pin !== pin2) { setError('PINs do not match'); return; }
+                    setError('');
+                    setStep(2);
+                  }}
+                >
+                  Continue
+                </button>
+              </div>
+            </>
+          )}
+
+          {step === 2 && (
+            <>
+              <div>
+                <p className="mm-audio-id-label !mb-2">Username color</p>
+                <p className="mm-audio-id-sublabel">Solid</p>
+                <div className="mm-audio-id-colors">
+                  {colors.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={`mm-audio-id-color${nameColor === c ? ' mm-audio-id-color--on' : ''}`}
+                      style={{ '--swatch': c }}
+                      onClick={() => setNameColor(c)}
+                      aria-label={`Color ${c}`}
+                    />
+                  ))}
+                </div>
+                <p className="mm-audio-id-sublabel mt-2">Gradient</p>
+                <div className="mm-audio-id-colors mm-audio-id-colors--gradients">
+                  {gradients.map((g) => (
+                    <button
+                      key={g.id}
+                      type="button"
+                      className={`mm-audio-id-gradient${nameColor === g.id ? ' mm-audio-id-gradient--on' : ''}`}
+                      style={{ backgroundImage: g.css }}
+                      onClick={() => setNameColor(g.id)}
+                      aria-label={`Gradient ${g.label}`}
+                      title={g.label}
+                    />
+                  ))}
+                </div>
+                <UsernameMirrorPreview username={username} nameColor={nameColor} />
+              </div>
+              <label className="mm-remember">
+                <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+                <span className="mm-remember__text">
+                  <strong>Remember this device</strong>
+                  <em>Stay signed in so you only type your PIN once.</em>
+                </span>
+              </label>
+              <div className="flex gap-2">
+                <button type="button" className="mm-btn mm-btn--ghost flex-1" onClick={() => setStep(1)}>Back</button>
+                <button type="submit" className="mm-btn mm-btn--primary flex-1" disabled={loading}>
+                  {loading ? 'Creating…' : 'Create & enter'}
+                </button>
+              </div>
+            </>
+          )}
+
           {error && <p className="mm-audio-id-error">{error}</p>}
-          <button type="submit" className="mm-btn mm-btn--primary w-full" disabled={loading || pin.length !== 4 || pin !== pin2}>
-            {loading ? 'Creating…' : 'Create & enter'}
-          </button>
           <button type="button" className="mm-audio-id-link w-full" onClick={onClose}>
             Back to PIN login
           </button>
@@ -198,7 +260,7 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
     e.preventDefault();
     setError('');
     if (!savedUsername) {
-      setError('No account on this device — register as a new user below.');
+      setError('No account on this device — create a new user below.');
       return;
     }
     const pinErr = validateAudioPin(pin);
@@ -215,14 +277,16 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
   const card = (
     <div className="mm-audio-id-card w-full max-w-md" role="dialog" aria-modal="true" aria-label="Voice room sign in">
       <div className="mm-audio-id-card__glow" aria-hidden />
-      <span className="mm-audio-id-card__icon">🎙️</span>
-      <h1 className="mm-audio-id-card__title">Voice Room</h1>
+      <div className="mm-audio-id-card__brand">
+        <HellooooLogo size={36} />
+      </div>
+      <h1 className="mm-audio-id-card__title">Voice rooms</h1>
       <p className="mm-audio-id-card__sub">
         {hydrating
           ? 'Checking your session…'
           : savedUsername
             ? <>Welcome back, <strong style={{ color: '#c4b5fd' }}>@{savedUsername}</strong></>
-            : 'Enter your 4-digit PIN to sign in'}
+            : 'Sign in with your 4-digit PIN, or create a new voice identity.'}
       </p>
 
       <form onSubmit={submitLogin} className="space-y-3 mt-5">
@@ -248,14 +312,14 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
           />
           <span className="mm-remember__text">
             <strong>Remember this device</strong>
-            <em>Stay signed in here. Your PIN still guards every recharge and gift.</em>
+            <em>Stay signed in. Your PIN still guards gifts and recharges.</em>
           </span>
         </label>
         {error && <p className="mm-audio-id-error">{error}</p>}
         <button
           type="submit"
           className="mm-btn mm-btn--primary w-full"
-          disabled={loading || hydrating || pin.length !== 4}
+          disabled={loading || hydrating || pin.length !== 4 || !savedUsername}
         >
           {loading ? 'Signing in…' : 'Enter voice rooms'}
         </button>
@@ -267,9 +331,9 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
       </form>
 
       <div className="mm-audio-id-register-cta mt-4">
-        <p className="mm-audio-id-hint">First time here?</p>
+        <p className="mm-audio-id-hint">{savedUsername ? 'Need another identity?' : 'First time here?'}</p>
         <button type="button" className="mm-audio-id-register-btn" disabled={hydrating} onClick={openRegister}>
-          New user registration
+          Create new username
         </button>
       </div>
 
@@ -290,7 +354,7 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
 
   if (variant === 'popup') {
     return (
-      <div className="mm-modal-overlay z-[400]">
+      <div className="mm-modal-overlay z-[6550]">
         {card}
       </div>
     );
@@ -401,15 +465,12 @@ export function AudioCoinShop({ open, onClose, identity, onBalanceUpdate, shortf
 
   if (!open) return null;
 
-  // With a shortfall in hand the shop is not a price list, it is one decision:
-  // the cheapest pack that unblocks the send, with the rest still available
-  // underneath for anyone who wants a better rate.
   const need = Math.max(0, Number(shortfall) || 0);
   const suggested = need ? packages.find((p) => p.coins >= need) || packages[packages.length - 1] : null;
   const best = packages.reduce((a, p) => (!a || (p.perRupee || 0) > (a.perRupee || 0) ? p : a), null);
 
   return (
-    <div className="mm-modal-overlay z-[600]" onClick={onClose}>
+    <div className="mm-modal-overlay z-[6700]" onClick={onClose}>
       <div className="mm-modal-surface max-w-sm nuts-shop" onClick={(e) => e.stopPropagation()}>
         <h3 className="mm-audio-coin-shop__title">Nuts Market</h3>
         <p className="mm-audio-coin-shop__bal">
@@ -424,8 +485,7 @@ export function AudioCoinShop({ open, onClose, identity, onBalanceUpdate, shortf
 
         <VirtualMarketRateChip className="mm-audio-coin-shop__rate" />
         <p className="nuts-shop__note">
-          Every pack starts at 100 Nuts per ₹. The bonus on top is what makes the bigger packs
-          worth it — the value per rupee is printed on each one.
+          Every pack starts at 100 Nuts per ₹. Bigger packs unlock better value per rupee.
         </p>
 
         <div className="nuts-shop__list">
@@ -455,8 +515,10 @@ export function AudioCoinShop({ open, onClose, identity, onBalanceUpdate, shortf
 
                 <span className="nuts-pack__price">₹{inr(p.priceInr)}</span>
 
-                {(isPick || p.badge) && (
-                  <span className="nuts-pack__tag">{isPick ? 'Covers it' : p.badge}</span>
+                {(isPick || isBest || p.badge) && (
+                  <span className="nuts-pack__tag">
+                    {isPick ? 'Covers it' : (isBest ? 'Best value' : p.badge)}
+                  </span>
                 )}
               </button>
             );

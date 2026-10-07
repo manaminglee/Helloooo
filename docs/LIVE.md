@@ -216,3 +216,168 @@ One base rate, then visible bonuses:
   before a price change still completes.
 - **Shortfall** — a failed gift send carries its shortfall to the market sheet,
   which highlights the cheapest pack that covers it (`packForShortfall`).
+
+## Matchmaking (1:1 video, text, group video)
+
+Two tiers, always in this order:
+
+1. **Shared interest.** Candidates who share at least one real interest with the
+   seeker, ranked by how many they share. `general` (and `any` / `random` /
+   empty) is the default everybody carries, so it is excluded — counting it
+   would put the whole queue in tier 1 and the preference would mean nothing.
+2. **Anyone.** If tier 1 is empty, the search takes the best remaining
+   stranger. Nobody waits on a hobby match that may never arrive.
+
+Scoring lives in `enhancements.smartMatchScore`: one shared interest is worth
+40 points plus 12 per overlap (capped at 3), which is deliberately more than
+region and language can add together — a same-country stranger with nothing in
+common must not beat a genuine interest match. Waiting time adds up to 6 points
+so that among equals the person who has waited longest goes first.
+
+**Speed.** Two things kept searches slow:
+
+- The Redis path did one `GET` per waiting person on every search, so the
+  busier the queue the slower each match became. It is now one `LRANGE` plus
+  one `MGET`, with stale ids swept in a single pipeline off the blocking path.
+  `__matchtest.js` asserts this — a search across 40 waiting people must cost
+  exactly one `MGET` and zero `GET`s.
+- Searches read the whole queue. They now stop at `MATCH_SCAN_LIMIT` (80,
+  `MATCH_SCAN_LIMIT` env). The head of the list is the longest-waiting people,
+  so a bounded scan is also the fairer half.
+
+A lost claim (another instance took the same person) retries down the list up
+to four times instead of dropping the seeker back into the queue — under load
+that race is common, and re-queueing turned it into a visible stall.
+
+**Skip.** `canMatch` refuses the partner you just skipped for the length of the
+skip window, unless you both skipped each other at the same moment, which
+reconnects you instead. `clearRoom()` nulls `roomIdRef` synchronously so the
+re-queue effect fires on the very next render rather than waiting for the
+2.5-second stall recovery.
+
+## Match status line
+
+`client/src/components/MatchStatusLine.jsx` owns the chat line that reports
+where you are in a match, and both 1:1 video and group video write it, so the
+wording is identical in both:
+
+- searching — "Now finding a stranger…" with a pulsing meter
+- connected — "Connected to a stranger from" plus a flag and country name
+- left — "The stranger from <country> left"
+
+Build them with `searchingMessage()` / `connectedMessage(country)` /
+`leftMessage(country)`; each stamps a `kind` that the renderer switches on. A
+plain `system: true` message still renders as the old grey line.
+
+Writing a connected line drops any searching line, and writing a searching line
+drops both, so the chat reads as one status that changed rather than a log.
+
+Country reaches the client even in anonymous video: `publicAnonPeer` includes
+it deliberately. A whole country does not identify anyone — it is already what
+the flag on every chat bubble shows — and without it the room cannot say where
+the stranger is. Nickname, user id and creator status stay hidden.
+
+`CountryFlag` falls back from the CDN image to an emoji flag, then to the
+country code, so a blocked or slow CDN leaves text rather than a blank gap.
+
+## Video attach
+
+`attachStreamToVideo` retries `play()` on `loadedmetadata`, `canplay`,
+`stalled`, `suspend`, `emptied`, on track mute/unmute/ended, on `addtrack`, and
+on returning from the background. Every one of those is a case where the first
+`play()` legitimately rejects and then becomes possible a moment later; without
+the retries the result is a live track behind a black pane.
+
+## Match safety
+
+Reports used to be a table nobody read: a row was stored, trust dropped 8, and
+nothing else happened until a human manually banned an IP. Somebody exposing
+themselves could be reported by fifty people in an hour and keep matching all
+night. `server/matchSafety.js` is the missing middle.
+
+- **Distinct reporters, not report count.** One angry person hammering the
+  button must not remove anybody, and the queue makes being matched with the
+  same person twice easy. Repeat reports refresh a timestamp; they do not count
+  again. Three distinct reporters inside the window is the first strike.
+- **Escalate, don't ban.** 30 minutes → 6 hours → 24 hours → 7 days, and it
+  stops there. Bad-faith reporting is real and devices are shared, so a first
+  strike is a cooling-off period. Reports arriving *during* a pause do not
+  compound it — otherwise one incident runs the whole ladder.
+- **Strikes decay.** They survive one report window past the last strike (so a
+  second incident that week really is a second strike) and then reset. Decay
+  happens on read, not on the sweep: tying it to the sweep meant a record kept
+  for moderator review never decayed and escalated somebody forever.
+- **Suspension is from MATCHING, not the site.** An existing conversation is
+  untouched, and the person can still read, top up and reach support. Both
+  `find-partner` and `join-group-by-topics` are gated — gating only one would
+  have left the whole thing a tab away from pointless.
+- **It can never take matching down.** Every call is wrapped; a throwing
+  listener does not stop a suspension, and a failure here does not fail a match.
+
+Moderators get `/api/admin/match-safety` (the review queue, with anyone
+currently online under each key so the stream can be watched) and
+`/api/admin/match-safety/clear` to lift a pause.
+
+The person sees `MatchSuspendedNotice` — what happened, a live countdown, and a
+way to appeal. A pause with a visible end reads as a consequence; a pause with
+no end reads as a permanent ban.
+
+## Identity keys
+
+Anonymous video has no account, so the only identifier used to be the IP, which
+fails both ways: one carrier IP is thousands of people (blocking it punishes
+bystanders) and an IP rotates daily (a block evaporates on its own).
+`client/src/utils/deviceHandle.js` stores a random 128-bit handle in
+localStorage and sends it in the socket handshake; `identityKeyFor()` prefers it
+and falls back to `ip:<addr>`.
+
+This is not security. Clearing site data produces a new handle, and it should —
+it exists to keep "I never want to see this person again" working across a
+reconnect, not to stop someone determined to evade it. The server validates the
+shape rather than trusting it.
+
+Personal blocks are stored on this key and checked in both directions.
+
+## Search throttle
+
+`find-partner` is the one socket event a client can loop on for free, and each
+call costs a queue round trip. Unthrottled it is both a cheap DoS and the
+fastest way to enumerate everyone online. 12 searches per 10s per device
+(`FIND_PARTNER_MAX` / `FIND_PARTNER_WINDOW_MS`), which is far above what a
+person skipping hard produces by hand. The client backs off on `find-throttled`
+rather than spinning.
+
+## Network handover
+
+Wifi → cellular changes your local address and silently kills every candidate
+pair. WebRTC notices eventually — `iceConnectionState` must reach `failed`,
+which browsers delay on purpose — so the user sees 10–15 seconds of frozen
+video first. `useNetworkRecovery` listens for `online` and
+`navigator.connection` change and restarts ICE immediately, turning the freeze
+into a blip. Debounced at 400ms with a 4s floor between restarts so a flapping
+connection cannot become an offer loop.
+
+## TURN credentials
+
+The shared relay fallback ships public demo credentials. They are fine locally
+and useless in production: rate limited, shared with everyone who copied them,
+revocable without warning — and when they stop working there is no error
+anywhere. ICE simply never finds a relay pair and every user behind symmetric
+NAT (most mobile networks) gets a black remote video.
+
+`assertRelayCredentialsUsable()` therefore makes production **refuse to start**
+on them. A warning would scroll past in a deploy log, and the symptom looks like
+an app bug rather than missing config. Configure `TURN_URL` /
+`TURN_USERNAME` / `TURN_PASSWORD`, or your own `TURN_FALLBACK_*`, or set
+`TURN_ALLOW_DEMO_RELAY=1` to accept a relay that will fail.
+
+## Test suites
+
+    node server/__matchtest.js       queue: interest tiers, scan cost, both backends
+    node server/__matchflowtest.js   real server + real sockets: pairing, signalling,
+                                     glare, skip, throttle
+    node server/__safetytest.js      report ladder, decay, review queue, TURN guard
+
+`__matchflowtest.js` boots `server/index.js` as a child process and drives it
+with Socket.IO clients. Every wait is an explicit event await with a named
+timeout rather than a sleep, so it does not go flaky when CI is busy.

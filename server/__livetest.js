@@ -31,6 +31,8 @@ const BIG_COST = giftCost(BIG);
 process.env.LIVEKIT_URL = 'wss://test.livekit.cloud';
 process.env.LIVEKIT_API_KEY = 'devkey';
 process.env.LIVEKIT_API_SECRET = 'devsecretdevsecretdevsecretdevsecret';
+// Unit suite has no media server; real removal is covered by the browser suite.
+require('./livekitRooms').removeParticipant = async () => {};
 
 let passed = 0;
 const ok = (name) => { passed += 1; console.log(`  ✓ ${name}`); };

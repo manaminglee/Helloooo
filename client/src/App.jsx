@@ -48,8 +48,8 @@ const CreatorPublicProfile = lazyRetry(() =>
 );
 
 const LoadingFallback = () => (
-  <div className="flex items-center justify-center min-h-[50vh] w-full">
-    <HellooooLoader size={140} label="Helloooo" hint="Loading..." transparent />
+  <div className="flex items-center justify-center min-h-[50vh] w-full px-4">
+    <HellooooLoader size={132} label="Helloooo" hint="Loading your session…" transparent />
   </div>
 );
 

@@ -97,6 +97,7 @@ function registerAudioChannels(app, io, deps) {
   const memberships = new Map();
   const joinRates = new Map();
   const signalRates = new Map();
+  const pendingPaidJoins = new Set();
   /** inviteId -> { fromSocketId, toSocketId, sourceChannelId, fromNickname, at } */
   const paInvites = new Map();
   const PA_INVITE_TTL_MS = 5 * 60 * 1000;
@@ -222,6 +223,23 @@ function registerAudioChannels(app, io, deps) {
   });
 
   const broadcastState = (c) => {
+    if (c.useSfu) {
+      for (const member of c.members.values()) {
+        const allowed = livekitRooms.canPublishAudio(member);
+        if (member.sfuCanPublish === allowed) continue;
+        member.sfuCanPublish = allowed;
+        member.sfuPermissionUpdate = Promise.resolve(member.sfuPermissionUpdate).catch(() => {}).then(async () => {
+          if (!c.members.has(member.socketId)) return;
+          try {
+            await livekitRooms.setAudioPermission(c.id, member.socketId, livekitRooms.canPublishAudio(member));
+          } catch (error) {
+            // A participant may not have joined the SFU yet. Its initial token
+            // carries current permissions; retry subsequent state changes.
+            member.sfuCanPublish = undefined;
+          }
+        });
+      }
+    }
     io.to(c.id).emit('audio:state', channelState(c));
     if (typeof onChannelChange === 'function') {
       try {
@@ -396,6 +414,7 @@ function registerAudioChannels(app, io, deps) {
     }
 
     c.members.delete(socketId);
+    if (c.useSfu) void livekitRooms.removeParticipant(c.id, socketId).catch(() => {});
     memberships.get(socketId)?.delete(channelId);
 
     const sock = io.sockets.sockets.get(socketId);
@@ -505,6 +524,7 @@ function registerAudioChannels(app, io, deps) {
       }
     }
 
+    if (opts.validateOnly) return true;
     const isFirst = channel.members.size === 0;
     let role = 'listener';
     let slot = null;
@@ -741,20 +761,33 @@ function registerAudioChannels(app, io, deps) {
       }
 
       const fee = Number(channel.entryFee) || 0;
+      const joinOptions = { lockCode: data.lockCode, paToken: data.paToken };
+      if (!joinChannel(socket, channel, userData, ip, { ...joinOptions, validateOnly: true })) return;
       if (fee > 0 && !channel.isPa && economy?.debit) {
+        if (pendingPaidJoins.has(socket.id)) return;
+        pendingPaidJoins.add(socket.id);
         const hostMember = [...channel.members.values()].find((m) => m.role === 'host');
-        const hostIp = hostMember && users.get(hostMember.socketId)?.ip;
+        const wallet = economy.wallet;
+        const payer = wallet?.ctxFromSocket(socket.id, ip);
+        const debit = (amount, reason) => wallet ? wallet.debit(payer, amount, reason, { channelId: channel.id }) : economy.debit(ip, amount, reason, { channelId: channel.id });
+        const refund = () => wallet ? wallet.credit(payer, fee, 'audio_room_entry_refund', { channelId: channel.id }) : economy.credit(ip, fee, 'audio_room_entry_refund', { channelId: channel.id });
         try {
-          const spent = await economy.debit(ip, fee, 'audio_room_entry', { channelId: channel.id });
+          const spent = await debit(fee, 'audio_room_entry');
           if (!spent.ok) {
             return socket.emit('audio:error', {
               message: `This room costs ${fee} coins to enter.`,
               needCoins: fee,
             });
           }
-          if (hostIp && hostIp !== ip && economy.credit) {
+          if (!socket.connected || !channels.has(channel.id) || !joinChannel(socket, channel, userData, ip, joinOptions)) {
+            await refund();
+            return;
+          }
+          if (hostMember && hostMember.socketId !== socket.id && economy.credit) {
             const hostShare = Math.max(1, Math.floor(fee * 0.85));
-            await economy.credit(hostIp, hostShare, 'audio_room_entry_host', { channelId: channel.id, from: ip });
+            const hostIp = users.get(hostMember.socketId)?.ip;
+            if (wallet) await wallet.credit(wallet.ctxFromSocket(hostMember.socketId, hostIp), hostShare, 'audio_room_entry_host', { channelId: channel.id });
+            else if (hostIp) await economy.credit(hostIp, hostShare, 'audio_room_entry_host', { channelId: channel.id });
             const hostSid = hostMember?.socketId;
             if (hostSid) {
               io.to(hostSid).emit('audio:entry-fee-earned', { channelId: channel.id, coins: hostShare });
@@ -762,7 +795,10 @@ function registerAudioChannels(app, io, deps) {
           }
         } catch {
           return socket.emit('audio:error', { message: 'Could not process entry fee.' });
+        } finally {
+          pendingPaidJoins.delete(socket.id);
         }
+        return;
       }
 
       joinChannel(socket, channel, userData, ip, {
@@ -785,6 +821,9 @@ function registerAudioChannels(app, io, deps) {
       const channel = getChannel(data.channelId);
       const target = String(data.targetSocketId || '');
       if (!channel || !channel.members.has(socket.id) || !channel.members.has(target)) return;
+      const signal = data.signal;
+      const { validSignal } = require('./signalValidation');
+      if (!signal || !validSignal(signal.type === 'candidate' ? 'ice-candidate' : signal.type, signal.type === 'candidate' ? signal.candidate : signal)) return;
 
       io.to(target).emit('audio:signal', {
         channelId: channel.id,

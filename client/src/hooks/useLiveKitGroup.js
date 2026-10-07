@@ -193,16 +193,16 @@ export function useLiveKitGroup({
     if (!room || !mediaStreamTrack) return;
     const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
     if (pub?.track) {
-      try { await room.localParticipant.unpublishTrack(pub.track, true); } catch { /* ignore */ }
+      if (pub.track.mediaStreamTrack === mediaStreamTrack) return;
+      await pub.track.replaceTrack(mediaStreamTrack, { userProvidedTrack: true, stopProcessor: false });
+      return;
     }
     localTracksRef.current = localTracksRef.current.filter((t) => t.kind !== Track.Kind.Video);
     const nextVideo = new LocalVideoTrack(mediaStreamTrack);
     localTracksRef.current.push(nextVideo);
-    await room.localParticipant.publishTrack(nextVideo);
-    const audioTracks = localTracksRef.current
-      .filter((t) => t.kind === Track.Kind.Audio)
-      .map((t) => t.mediaStreamTrack);
-    setLocalStream(new MediaStream([...audioTracks, mediaStreamTrack]));
+    await room.localParticipant.publishTrack(nextVideo, { source: Track.Source.Camera });
+    // Keep localStream as the raw camera input; feeding processed output back
+    // into the face pipeline restarts capture and repeatedly republishes it.
   }, []);
 
   return {

@@ -56,3 +56,20 @@ Probe: `GET /api/livekit/status` → `{ enabled, url, provider }` (no secrets).
 - Only `.env.example` and `client/.env.example` (no real values) should be committed.
 - In production, set `ADMIN_KEY` to a strong value so the `/admin` dashboard is protected.
 - The server never logs `ADMIN_KEY`, `TURN_PASSWORD`, `LIVEKIT_API_SECRET`, or any other secret env value.
+
+## Matchmaking, safety and relay
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `TURN_URL`, `TURN_USERNAME`, `TURN_PASSWORD` | — | Your own TURN server. Set these in production. |
+| `TURN_FALLBACK_USERNAME`, `TURN_FALLBACK_PASSWORD` | public demo creds | Credentials for the shared regional relay. |
+| `TURN_ALLOW_DEMO_RELAY` | — | Set to `1` to let production start on the public demo relay. It will fail for users behind symmetric NAT; only set this knowingly. |
+| `MATCH_SCAN_LIMIT` | `80` | How deep a search reads the waiting queue. Bounded so a busy night does not slow every match. |
+| `FIND_PARTNER_MAX` | `12` | Searches allowed per window, per device. |
+| `FIND_PARTNER_WINDOW_MS` | `10000` | Length of that window. |
+| `REPORT_STRIKE_THRESHOLD` | `3` | Distinct reporters before matching is paused. |
+| `REPORT_WINDOW_MS` | `604800000` (7d) | How long a report counts, and how long strikes take to decay. |
+| `REPORT_REVIEW_THRESHOLD` | `8` | Distinct reporters that flag someone for a human. |
+
+**Production will not start** with no TURN configured and the demo relay
+credentials still in place. See the TURN section in `docs/LIVE.md`.

@@ -8,8 +8,9 @@
  *   LIVEKIT_ROOM_PREFIX  optional (default helloooo)
  */
 let AccessToken = null;
+let RoomServiceClient = null;
 try {
-  ({ AccessToken } = require('livekit-server-sdk'));
+  ({ AccessToken, RoomServiceClient } = require('livekit-server-sdk'));
 } catch {
   AccessToken = null;
 }
@@ -52,6 +53,7 @@ async function mintParticipantToken({
   identitySuffix = '',
   ttl = '2h',
   anonymous = false,
+  canPublishSources,
 }) {
   if (!isConfigured()) {
     throw new Error('LiveKit is not configured on this server');
@@ -83,6 +85,7 @@ async function mintParticipantToken({
     canSubscribe,
     canPublishData: !!canPublishData,
     roomAdmin: !!roomAdmin,
+    ...(canPublishSources ? { canPublishSources } : {}),
   });
   const token = await at.toJwt();
   return {
@@ -101,10 +104,30 @@ function statusPayload() {
   };
 }
 
+function serviceClient() {
+  return new RoomServiceClient(publicUrl().replace(/^ws/, 'http'), process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET);
+}
+async function removeParticipant(roomId, identity) {
+  if (!isConfigured()) return;
+  return serviceClient().removeParticipant(sfuRoomName(roomId), identity);
+}
+async function setAudioPermission(roomId, identity, canPublish) {
+  if (!isConfigured()) return;
+  return serviceClient().updateParticipant(sfuRoomName(roomId), identity, {
+    permission: { canSubscribe: true, canPublish, canPublishData: true, canPublishSources: [2] },
+  });
+}
+function canPublishAudio(member) {
+  return !!member && ['speaker', 'moderator', 'host'].includes(member.role) && !member.forceMuted;
+}
+
 module.exports = {
   isConfigured,
   publicUrl,
   sfuRoomName,
   mintParticipantToken,
   statusPayload,
+  removeParticipant,
+  setAudioPermission,
+  canPublishAudio,
 };

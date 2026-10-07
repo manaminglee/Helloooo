@@ -18,6 +18,9 @@
     "test:live": "node server/__livetest.js",
     "test:agency": "node server/__agencytest.js && node server/__agencyhttp.js",
     "test:sec": "node server/__sectest.js",
+    "test:ads": "node server/__adstest.js",
+    "test:video": "playwright test --config playwright.features.config.js",
+    "test:rooms": "playwright test --config playwright.rooms.config.js",
     "test:pay": "node server/__paytest.js",
     "test:e2e:live": "playwright test e2e/live-api.spec.js e2e/live-mobile.spec.js"
   },

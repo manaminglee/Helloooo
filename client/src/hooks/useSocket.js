@@ -1,6 +1,7 @@
 import { useReducer, useEffect } from 'react';
 import { API_BASE } from '../config/apiBase';
 import { mmDebug } from '../utils/mmDebug';
+import { deviceHandle } from '../utils/deviceHandle';
 
 const BASE_URL = API_BASE;
 
@@ -51,6 +52,10 @@ async function ensureSocket() {
     const { io } = await import('socket.io-client');
     const s = io(BASE_URL, {
       path: '/socket.io',
+      // A stable per-browser handle so personal blocks and report-based
+      // suspensions survive an IP change and do not punish everyone sharing a
+      // carrier IP. Not an identity — see utils/deviceHandle.js.
+      auth: { deviceHandle: deviceHandle() },
       transports: ['websocket', 'polling'],
       withCredentials: true,
       reconnection: true,

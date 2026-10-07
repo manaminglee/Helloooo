@@ -18,7 +18,7 @@ import { LandingModeCards } from './LandingModeCards';
 import LandingBackground from './LandingBackground';
 import { fadeUp, slideDown, stagger } from '../utils/landingMotion';
 import '../styles/landing-motion.css';
-import { HellooooBrand, HellooooLogo, HELLOOOO_TAGLINE, HELLOOOO_EMOJI } from './HellooooBrand';
+import { HellooooBrand, HellooooLogo, HellooooLoader, HELLOOOO_TAGLINE, HELLOOOO_EMOJI } from './HellooooBrand';
 import { lazyRetry } from '../utils/lazyRetry';
 import { CreatorNotificationBell } from './CreatorNotificationBell';
 import { compressImageFile } from '../utils/compressImage';
@@ -31,6 +31,7 @@ import { VirtualMarketRateChip } from './VirtualMarketPanel';
 import { LandingSideMenu } from './LandingSideMenu';
 import { OnlineViewersBadge } from './OnlineViewersBadge';
 import { CreatorAvatar } from './CreatorAvatar';
+import { JoinUsernameModal } from './JoinUsernameModal';
 
 // Below-the-fold / secondary UI — keep landing first paint light.
 const MiniTrendChart = lazyRetry(() =>
@@ -186,11 +187,12 @@ const INSIGHTS = [
 // Mode cards are defined in LandingHero.jsx (single source of truth).
 // `group_text` now routes to live Voice Rooms.
 
-export function LandingPage({ onJoin, coinState, isJoining = false, registered = false, currentActiveSeconds = 0, joinMeta = {}, setJoinMeta, country: userCountry = null }) {
+export function LandingPage({ onJoin, connected: appConnected, coinState, isJoining = false, registered = false, currentActiveSeconds = 0, joinMeta = {}, setJoinMeta, country: userCountry = null }) {
   const { balance, streak, canClaim, nextClaim, claimCoins, adsEnabled, adScripts } = coinState || {};
   const [interests, setInterests] = useState([]);
   const [inputValue, setInputValue] = useState('');
-  const { socket, connected, country, onlineCount: socketOnlineCount, isCreator: socketIsCreator } = useSocket();
+  const { socket, connected: localConnected, country, onlineCount: socketOnlineCount, isCreator: socketIsCreator } = useSocket();
+  const connected = appConnected ?? localConnected;
   const onlineCount = typeof socketOnlineCount === 'object' ? socketOnlineCount?.count : (socketOnlineCount || 0);
   const [modal, setModal] = useState(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
@@ -246,6 +248,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
   const [dialog, setDialog] = useState(null); // { title, body, confirm?, onConfirm?, onCancel? }
   const [showCommunityPolicy, setShowCommunityPolicy] = useState(false);
   const [pendingVideoMode, setPendingVideoMode] = useState(null);
+  const [pendingJoinMode, setPendingJoinMode] = useState(null);
+  const [pendingRoomJoin, setPendingRoomJoin] = useState(null);
   const { creatorStatus, registerCreator, verifyReferral, requestWithdrawal, login, logout, checkStatus, reRequestApproval, updateProfile, fetchStatus, fetchMyActivity, fetchMyWithdrawals, fetchMyAnalytics, fetchFeaturedCreators, requestPasswordReset, resetPassword } = useCreators();
 
   const creatorReferralCode =
@@ -525,8 +529,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
     }
   };
 
-  const handleStartInteraction = (mode, policyBypass = false) => {
-    const nick = (joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
+  const beginModeJoin = (mode, nickOverride, policyBypass = false) => {
+    const nick = (nickOverride || joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
     const meta = {
       language: languageFilter,
       region: userCountry || country,
@@ -548,27 +552,48 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
         /* sessionStorage unavailable */
       }
     }
-    if (mode === 'lives') {
-      setScanning(true);
-      setTimeout(() => {
-        onJoin('general', nick, mode, null, meta);
-        setScanning(false);
-      }, 350);
-      return;
-    }
-    if (mode === 'group_video' || mode === 'group_text') {
-      setScanning(true);
-      setTimeout(() => {
-        onJoin(interests.length === 0 ? 'general' : interests.map(i => i.label || i).join(', '), nick, mode, null, meta);
-        setScanning(false);
-      }, 600);
-      return;
-    }
+    const interest = interests.length === 0
+      ? 'general'
+      : interests.map((i) => i.label || i).join(', ');
+    const delay = mode === 'lives' ? 320 : (mode === 'group_video' || mode === 'group_text') ? 520 : 780;
     setScanning(true);
-    setTimeout(() => {
-      onJoin(interests.length === 0 ? 'general' : interests.map(i => i.label || i).join(', '), nick, mode, null, meta);
+    window.setTimeout(() => {
+      onJoin(mode === 'lives' ? 'general' : interest, nick, mode, null, meta);
       setScanning(false);
-    }, 1000);
+    }, delay);
+  };
+
+  const handleStartInteraction = (mode, policyBypass = false) => {
+    if (!connected || isJoining || scanning) return;
+    // Always confirm name for voice + lives; for other modes open when still default.
+    const current = (joinMeta.displayNickname || '').trim();
+    const needsNameGate = mode === 'group_text' || mode === 'lives' || !current || current === 'Anonymous';
+    if (!policyBypass && needsNameGate) {
+      setPendingJoinMode(mode);
+      return;
+    }
+    beginModeJoin(mode, current, policyBypass);
+  };
+
+  const confirmJoinUsername = (nick) => {
+    const mode = pendingJoinMode;
+    const room = pendingRoomJoin;
+    setPendingJoinMode(null);
+    setPendingRoomJoin(null);
+    if (room) {
+      const displayNick = (nick || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
+      if (setJoinMeta) setJoinMeta((p) => ({ ...p, displayNickname: displayNick, language: languageFilter }));
+      onJoin(room.interest || 'general', displayNick, room.mode, room.id, {
+        language: languageFilter,
+        region: userCountry || country,
+        displayNickname: displayNick,
+        conversationMode: sessionMode,
+        topicContract: sessionContract,
+      });
+      return;
+    }
+    if (!mode) return;
+    beginModeJoin(mode, nick, false);
   };
 
   const acceptCommunityPolicyAndContinue = () => {
@@ -578,7 +603,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
     const mode = pendingVideoMode;
     setShowCommunityPolicy(false);
     setPendingVideoMode(null);
-    if (mode) handleStartInteraction(mode, true);
+    if (mode) beginModeJoin(mode, joinMeta.displayNickname, true);
   };
 
   const handleAvatarUpload = async (e) => {
@@ -732,29 +757,40 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       <LandingBackground lowPower={lowPower} />
 
+      <JoinUsernameModal
+        open={!!pendingJoinMode}
+        mode={pendingJoinMode || pendingRoomJoin?.mode || 'video'}
+        initialName={joinMeta.displayNickname === 'Anonymous' ? '' : (joinMeta.displayNickname || '')}
+        language={languageFilter}
+        languages={LANGUAGE_OPTIONS}
+        onLanguageChange={setLanguageFilter}
+        onCancel={() => { setPendingJoinMode(null); setPendingRoomJoin(null); }}
+        onConfirm={confirmJoinUsername}
+      />
+
       {/* COMMUNITY POLICY (first-time video / group video) */}
       {showCommunityPolicy && (
-        <div className="mm-modal-overlay z-[2100]" role="dialog" aria-modal="true" aria-labelledby="community-policy-title">
-          <div className="w-full max-w-lg rounded-[2rem] border border-white/10 bg-[#0c0e14] p-8 shadow-2xl">
-            <h2 id="community-policy-title" className="text-lg font-black uppercase tracking-wide text-white mb-2">Community safety</h2>
-            <p className="text-[11px] text-white/50 leading-relaxed mb-6">
-              Video on Helloooo 👋 is anonymous and live. You must be 18+ where required. No nudity, no harassment, no illegal content.
-              Reports are reviewed; violations can lead to blocks and bans. By continuing you agree to follow these rules and our guidelines.
+        <div className="mm-modal-overlay z-[6300]" role="dialog" aria-modal="true" aria-labelledby="community-policy-title">
+          <div className="mm-join-modal mm-join-modal--policy">
+            <h2 id="community-policy-title" className="mm-join-modal__title">Community safety</h2>
+            <p className="mm-join-modal__hint">
+              Video on Helloooo is anonymous and live. You must be 18+ where required. No nudity, no harassment, no illegal content.
+              Reports are reviewed; violations can lead to blocks and bans.
             </p>
-            <div className="flex gap-3">
+            <div className="mm-join-modal__actions">
               <button
                 type="button"
                 onClick={() => { setShowCommunityPolicy(false); setPendingVideoMode(null); }}
-                className="flex-1 rounded-2xl border border-white/10 py-3 text-[11px] font-black uppercase text-white/50 hover:bg-white/5"
+                className="mm-join-modal__btn mm-join-modal__btn--ghost"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={acceptCommunityPolicyAndContinue}
-                className="flex-1 rounded-2xl bg-violet-500 py-3 text-[11px] font-black uppercase text-black hover:bg-violet-400"
+                className="mm-join-modal__btn mm-join-modal__btn--primary"
               >
-                I understand — continue
+                I understand
               </button>
             </div>
           </div>
@@ -766,18 +802,12 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
         <AnimatePresence>
           <motion.div
             key="scan"
-            className="fixed inset-0 z-[2000] mm-landing-scan flex flex-col items-center justify-center"
+            className="fixed inset-0 z-[6400] mm-landing-scan flex flex-col items-center justify-center"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <motion.div
-              className="mm-landing-scan-ring"
-              animate={{ rotate: 360 }}
-              transition={{ duration: 2.4, repeat: Infinity, ease: 'linear' }}
-            />
-            <span className="mt-5 text-sm font-semibold tracking-wide text-white/75">Finding your match...</span>
-            <span className="mt-1 text-xs text-white/35">Secure anonymous connection</span>
+            <HellooooLoader size={120} label="Connecting…" hint="Secure anonymous session" transparent />
           </motion.div>
         </AnimatePresence>
       )}
@@ -884,37 +914,29 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             onlineCount={onlineCount ?? 0}
             lowPower={lowPower}
             onGoLive={() => handleStartInteraction('lives')}
+            onVoice={() => handleStartInteraction('group_text')}
             onScrollToStart={scrollToStart}
           />
 
-          {/* Names block — centered vertical stack */}
           <motion.section
-            className="mm-landing-section mm-landing-names lv2-section"
+            className="mm-landing-section mm-landing-setup lv2-section"
             initial="hidden"
             whileInView="visible"
             viewport={{ once: true, margin: '-30px' }}
             variants={stagger(0.06)}
           >
-            <motion.div className="mm-landing-names__stack" variants={fadeUp}>
-              <Suspense fallback={null}>
-                <AiStatusPill online={aiOnline} />
-              </Suspense>
-              <input
-                type="text"
-                value={joinMeta.displayNickname || ''}
-                onChange={(e) => setJoinMeta?.((p) => ({ ...p, displayNickname: e.target.value.slice(0, 30) }))}
-                placeholder="Display name (optional)"
-                className="mm-landing-field"
-              />
-              <LanguagePicker
-                value={languageFilter}
-                onChange={setLanguageFilter}
-              />
-              <button type="button" onClick={openCreatorFlow} className="mm-hide-desktop mm-landing-chip px-4">
+            <motion.div className="mm-landing-setup__card" variants={fadeUp}>
+              <div className="mm-landing-setup__row">
+                <Suspense fallback={null}>
+                  <AiStatusPill online={aiOnline} />
+                </Suspense>
+                <button type="button" onClick={() => setLowPower(!lowPower)} className="mm-landing-chip px-3">
+                  {lowPower ? 'Low power on' : 'Low power off'}
+                </button>
+              </div>
+              <LanguagePicker value={languageFilter} onChange={setLanguageFilter} />
+              <button type="button" onClick={openCreatorFlow} className="mm-hide-desktop mm-landing-chip px-4 w-full justify-center">
                 For Creators
-              </button>
-              <button type="button" onClick={() => setLowPower(!lowPower)} className="mm-landing-chip px-4">
-                {lowPower ? '⚡ Low power: On' : 'Low power: Off'}
               </button>
             </motion.div>
           </motion.section>
@@ -928,12 +950,12 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
             viewport={{ once: true, margin: '-50px' }}
             variants={fadeUp}
           >
-            <div className="mm-landing-glass mm-landing-step-panel p-6 sm:p-8">
+            <div className="mm-landing-glass mm-landing-step-panel p-5 sm:p-8">
               <div className="flex flex-col items-center text-center relative z-[1] w-full">
-                <span className="mm-landing-section-label">Step 1</span>
-                <span className="mm-landing-section-title mb-2">Pick how you want to talk</span>
+                <span className="mm-landing-section-label">Choose a mode</span>
+                <span className="mm-landing-section-title mb-2">Start chatting</span>
                 <p className="text-xs text-white/45 mb-5 max-w-md">
-                  Choose a mode, then add interests below for better matches.
+                  Pick video, voice, text, or lives. Add interests below for better matches.
                 </p>
 
                 <LandingModeCards
@@ -943,8 +965,8 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                   className="mb-8 w-full"
                 />
 
-                <span className="mm-landing-section-label">Step 2</span>
-                <span className="mm-landing-section-title mb-5">Choose your interests</span>
+                <span className="mm-landing-section-label">Optional</span>
+                <span className="mm-landing-section-title mb-5">Add interests</span>
 
                 <div className="flex flex-wrap justify-center gap-2 mb-8">
                   {INTERESTS.filter(r => !interests.find(i => i.id === r.id)).slice(0, 8).map((r) => (
@@ -1063,6 +1085,11 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
                 connected={connected}
                 onJoinRoom={(room) => {
                   const nick = (joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
+                  if (!nick || nick === 'Anonymous') {
+                    setPendingRoomJoin(room);
+                    setPendingJoinMode(room.mode || 'video');
+                    return;
+                  }
                   onJoin(room.interest || 'general', nick, room.mode, room.id, {
                     language: languageFilter,
                     region: userCountry || country,
@@ -1747,7 +1774,7 @@ export function LandingPage({ onJoin, coinState, isJoining = false, registered =
 
       {/* STANDARD MODAL */}
       {modal && (
-        <div className="mm-modal-overlay z-[2000] animate-in-zoom" onClick={() => setModal(null)}>
+        <div className="mm-modal-overlay z-[6500] animate-in-zoom" onClick={() => setModal(null)}>
           <div className="relative w-full max-w-sm bg-black border border-white/10 rounded-[40px] p-10 text-center" onClick={e => e.stopPropagation()}>
             <button onClick={() => setModal(null)} className="absolute top-6 right-8 text-white/20 hover:text-white transition-colors text-xl">✕</button>
             <h3 className="text-2xl font-black text-white italic uppercase mb-6 tracking-tighter">{MODALS[modal]?.title}</h3>

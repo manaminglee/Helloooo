@@ -107,6 +107,30 @@
   color: #c084fc;
 }
 
+.boot-screen__stage {
+  position: relative;
+  z-index: 1;
+}
+
+.boot-screen__progress {
+  position: relative;
+  z-index: 1;
+  width: min(11rem, 56vw);
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.boot-screen__progress-bar {
+  display: block;
+  height: 100%;
+  width: 40%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #a78bfa, #f472b6, #22d3ee);
+  animation: boot-progress 1.35s ease-in-out infinite;
+}
+
 .boot-screen__hint {
   margin: 0;
   font-size: 0.78rem;
@@ -156,12 +180,18 @@
   40% { opacity: 1; transform: translateY(-3px); }
 }
 
+@keyframes boot-progress {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(280%); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .boot-screen::before,
   .boot-screen::after,
   .boot-screen__orbit,
   .boot-screen__core,
-  .boot-screen__dots span {
+  .boot-screen__dots span,
+  .boot-screen__progress-bar {
     animation: none !important;
   }
 }

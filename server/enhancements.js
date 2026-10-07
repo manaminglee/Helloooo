@@ -44,28 +44,65 @@ function registerEnhancements(app, io, deps) {
     return bucket.count <= MESSAGE_RATE_MAX;
   }
 
-  function smartMatchScore(entry, interest, region, language, reputationBoost = 0) {
+  /** 'general' is the default, so a shared 'general' is not a shared interest. */
+  const GENERIC_INTERESTS = new Set(['', 'general', 'any', 'anything', 'random']);
+
+  function interestSet(primary, list) {
+    const out = new Set();
+    for (const x of [primary, ...(Array.isArray(list) ? list : [])]) {
+      const v = String(x || '').trim().toLowerCase();
+      if (v && !GENERIC_INTERESTS.has(v)) out.add(v);
+    }
+    return out;
+  }
+
+  /** How many interests two people actually share. */
+  function sharedInterestCount(entry, want) {
+    if (!want || !want.size) return 0;
+    const theirs = interestSet(entry.interest, entry.interests);
+    let n = 0;
+    for (const v of theirs) if (want.has(v)) n += 1;
+    return n;
+  }
+
+  function smartMatchScore(entry, interest, region, language, reputationBoost = 0, want = null) {
     let score = 0;
-    const eInterest = String(entry.interest || 'general').toLowerCase();
-    const want = String(interest || 'general').toLowerCase();
-    if (eInterest === want) score += 12;
-    else if (eInterest.includes(want) || want.includes(eInterest)) score += 6;
+
+    // Shared interests dominate the score: the ask is "same interest first,
+    // anyone second", and one overlap must outrank any amount of region and
+    // language agreement so tier 1 never loses to a same-country stranger with
+    // nothing in common.
+    const shared = sharedInterestCount(entry, want || interestSet(interest, []));
+    if (shared > 0) score += 40 + Math.min(shared, 3) * 12;
+    else {
+      const eInterest = String(entry.interest || 'general').toLowerCase();
+      const wantOne = String(interest || 'general').toLowerCase();
+      if (eInterest === wantOne) score += 12;
+      else if (eInterest.includes(wantOne) || wantOne.includes(eInterest)) score += 6;
+    }
+
     const u = entry.userData || users.get(entry.socketId);
     if (region && u?.region && u.region === region) score += 4;
     if (language && u?.language && u.language === language) score += 4;
     if (u?.country && region && u.country === region) score += 2;
+
+    // Oldest-waiting first among equals — otherwise a queue can starve the
+    // people who have been waiting longest.
+    if (entry.enqueuedAt) score += Math.min(6, (Date.now() - entry.enqueuedAt) / 5000);
+
     score += Number(reputationBoost) || 0;
     return score;
   }
 
-  async function pickSmartMatch(queue, interest, region, language, canMatch, getReputationBoost) {
+  async function pickSmartMatch(queue, interest, region, language, canMatch, getReputationBoost, opts = {}) {
     const eligible = queue.filter((e) => canMatch(e));
     if (!eligible.length) return null;
+    const want = interestSet(interest, opts.interests);
     const scored = await Promise.all(
       eligible.map(async (e) => {
         const otherIp = users.get(e.socketId)?.ip;
         const rep = getReputationBoost ? await getReputationBoost(otherIp) : 0;
-        return { entry: e, score: smartMatchScore(e, interest, region, language, rep) };
+        return { entry: e, score: smartMatchScore(e, interest, region, language, rep, want) };
       })
     );
     scored.sort((a, b) => b.score - a.score);
@@ -298,6 +335,8 @@ function registerEnhancements(app, io, deps) {
   return {
     issueReconnectToken,
     pickSmartMatch,
+    interestSet,
+    sharedInterestCount,
     attachSocketHandlers,
     beforeSendMessage,
     smartMatchScore,

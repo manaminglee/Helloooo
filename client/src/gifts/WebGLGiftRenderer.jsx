@@ -47,8 +47,18 @@ export function WebGLGiftRenderer({ gift, mode = 'preview', still = false, quali
       const { group, extras, envLight, disposeObject } = createHeroScene(sceneId, quality);
       envLight(scene);
       scene.add(group);
+      const resize = new ResizeObserver(() => {
+        if (disposed) return;
+        const width = Math.max(1, host.clientWidth);
+        const height = Math.max(1, host.clientHeight);
+        renderer.setSize(width, height, false);
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+      });
+      resize.observe(host);
       const t0 = performance.now();
       const loop = () => {
+        if (disposed) return;
         const t = (performance.now() - t0) / 1000;
         group.rotation.y = t * (mode === 'preview' ? 0.35 : 0.55);
         if (mode === 'celebration') {
@@ -56,17 +66,24 @@ export function WebGLGiftRenderer({ gift, mode = 'preview', still = false, quali
           camera.position.y = 0.25 + Math.sin(t * 0.7) * 0.08;
         }
         tickHeroScene(extras, t, sceneId);
-        renderer.render(scene, camera);
+        if (!document.hidden) renderer.render(scene, camera);
         raf = requestAnimationFrame(loop);
       };
       raf = requestAnimationFrame(loop);
       cleanup = () => {
         cancelAnimationFrame(raf);
+        resize.disconnect();
+        renderer.domElement.removeEventListener('webglcontextlost', onLost);
         disposeObject(group);
         renderer.dispose();
+        renderer.forceContextLoss();
         renderer.domElement.remove();
       };
-    })();
+    })().catch(() => {
+      cleanup();
+      renderer?.dispose();
+      if (!disposed) setFailed(true);
+    });
 
     return () => {
       disposed = true;
@@ -78,5 +95,5 @@ export function WebGLGiftRenderer({ gift, mode = 'preview', still = false, quali
     return <CssGiftRenderer gift={gift} mode={mode} still={still} quality={quality} size={mode === 'celebration' ? 140 : 64} />;
   }
 
-  return <div ref={hostRef} className={`pg-webgl pg-webgl--${mode}`} />;
+  return <div ref={hostRef} data-gift-scene={sceneId} className={`pg-webgl pg-webgl--${mode}`} />;
 }

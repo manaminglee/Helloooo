@@ -38,13 +38,14 @@ export function useUniqueSession({
   useEffect(() => {
     if (!socket || !roomId) return;
 
-    const onConsent = ({ readyCount, total, allReady }) => {
+    const onConsent = ({ roomId: eventRoomId, readyCount, total, allReady }) => {
+      if (eventRoomId !== roomId) return;
       setPartnerReady(readyCount || 0);
       setTotalPartners(total || 2);
       if (allReady) setConsentComplete(true);
     };
-    const onComplete = () => setConsentComplete(true);
-    const onAudio = ({ complete }) => { if (complete) setAudioIntroComplete(true); };
+    const onComplete = ({ roomId: eventRoomId }) => { if (eventRoomId === roomId) setConsentComplete(true); };
+    const onAudio = ({ roomId: eventRoomId, complete }) => { if (eventRoomId === roomId && complete) setAudioIntroComplete(true); };
     const onCoOp = ({ minutes, coins }) => {
       setCoOpMinutes(minutes || 0);
       if (coins) window.dispatchEvent(new CustomEvent('mm-co-op-coins', { detail: { coins } }));
@@ -68,11 +69,9 @@ export function useUniqueSession({
   }, [messages.length]);
 
   useEffect(() => {
-    if (!roomId) {
-      setConsentComplete(false);
-      setPartnerReady(0);
-      setAudioIntroComplete(false);
-    }
+    setConsentComplete(false);
+    setPartnerReady(0);
+    setAudioIntroComplete(false);
   }, [roomId]);
 
   useEffect(() => {

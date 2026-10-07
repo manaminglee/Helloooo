@@ -22,10 +22,11 @@ function metaKey(socketId) {
 function packEntry(entry) {
   const {
     socketId, userData, interest, interests, region, language, conversationMode, topicContract,
-    matchCountryOnly, matchRegionOnly, reconnectToUserId,
+    matchCountryOnly, matchRegionOnly, reconnectToUserId, enqueuedAt,
   } = entry;
   return {
     socketId,
+    enqueuedAt: enqueuedAt || Date.now(),
     interest,
     interests: Array.isArray(interests) ? interests.slice(0, 12) : [],
     region,
@@ -42,6 +43,9 @@ function packEntry(entry) {
           country: userData.country,
           isCreator: !!userData.isCreator,
           ip: userData.ip,
+          // Carried so a candidate loaded from Redis can be keyed for blocks
+          // and suspensions without a live socket lookup on this instance.
+          deviceHandle: userData.deviceHandle || null,
         }
       : null,
   };
@@ -51,6 +55,7 @@ function unpackEntry(raw) {
   if (!raw?.socketId) return null;
   return {
     socketId: raw.socketId,
+    enqueuedAt: Number(raw.enqueuedAt) || Date.now(),
     interest: raw.interest,
     interests: Array.isArray(raw.interests) ? raw.interests : [],
     region: raw.region,
@@ -62,6 +67,38 @@ function unpackEntry(raw) {
     reconnectToUserId: raw.reconnectToUserId || null,
     userData: raw.userData || {},
   };
+}
+
+/**
+ * How deep to look before giving up on a search.
+ *
+ * A search that reads the whole queue is O(waiting) per person, so a busy night
+ * makes every match slower for everyone — exactly backwards. The head of the
+ * queue is also the people who have waited longest, so a bounded scan is the
+ * fairer half of the queue anyway.
+ */
+const SCAN_LIMIT = Number(process.env.MATCH_SCAN_LIMIT || 80);
+
+const GENERIC_INTERESTS = new Set(['', 'general', 'any', 'anything', 'random']);
+
+function interestsOf(entry) {
+  const out = new Set();
+  for (const x of [entry?.interest, ...(Array.isArray(entry?.interests) ? entry.interests : [])]) {
+    const v = String(x || '').trim().toLowerCase();
+    if (v && !GENERIC_INTERESTS.has(v)) out.add(v);
+  }
+  return out;
+}
+
+/**
+ * Tier 1 of the two-pass search: people who share at least one real interest.
+ * 'general' does not count — it is the default, so counting it would put
+ * everybody in tier 1 and the preference would mean nothing.
+ */
+function sharesInterest(candidate, wanted) {
+  if (!wanted.size) return false;
+  for (const v of interestsOf(candidate)) if (wanted.has(v)) return true;
+  return false;
 }
 
 function createMatchQueue() {
@@ -164,22 +201,24 @@ function createMatchQueue() {
     const queue = memoryQueues[mode];
     queue.splice(0, queue.length, ...queue.filter((e) => isAvailable(e)));
 
+    const wanted = interestsOf({ interest, interests: entry.interests });
+    const pool = queue.slice(0, SCAN_LIMIT);
+    const opts = { interests: entry.interests };
+
+    // Tier 1: shared interest. Tier 2: anyone. Never leave someone waiting
+    // because nobody shares their hobby.
     let match = await pickSmartMatch(
-      queue.filter((e) => e.interest === interest && isAvailable(e)),
-      interest,
-      region,
-      language,
-      canMatch,
-      repFn
+      pool.filter((e) => sharesInterest(e, wanted)),
+      interest, region, language, canMatch, repFn, opts,
     );
     if (!match) {
-      match = await pickSmartMatch(queue.filter(isAvailable), interest, region, language, canMatch, repFn);
+      match = await pickSmartMatch(pool, interest, region, language, canMatch, repFn, opts);
     }
 
     if (match) {
       let idx = queue.indexOf(match);
       if (idx === -1) {
-        match = await pickSmartMatch(queue.filter(isAvailable), interest, region, language, canMatch, repFn);
+        match = await pickSmartMatch(pool, interest, region, language, canMatch, repFn, opts);
         idx = match ? queue.indexOf(match) : -1;
         if (idx === -1) match = null;
       }
@@ -192,36 +231,46 @@ function createMatchQueue() {
     return { status: 'waiting' };
   }
 
+  /**
+   * Read the head of the waiting list.
+   *
+   * One LRANGE and one MGET, not a GET per waiting person: the old shape cost a
+   * network round trip per entry, so the busier the queue the slower every
+   * single search became. Stale ids are swept in one pipeline afterwards, off
+   * the path that the waiting user is blocked on.
+   */
   async function loadRedisQueue(mode, isAvailable) {
-    const ids = await redis.lRange(listKey(mode), 0, -1);
-    const entries = [];
+    const ids = await redis.lRange(listKey(mode), 0, SCAN_LIMIT - 1);
+    if (!ids.length) return [];
+
+    const unique = [];
     const seen = new Set();
+    const dupes = [];
     for (const id of ids) {
-      if (seen.has(id)) {
-        await redis.lRem(listKey(mode), 0, id);
-        continue;
-      }
+      if (seen.has(id)) { dupes.push(id); continue; }
       seen.add(id);
-      const raw = await redis.get(metaKey(id));
-      if (!raw) {
-        await redis.lRem(listKey(mode), 0, id);
-        continue;
-      }
-      let parsed;
-      try {
-        parsed = unpackEntry(JSON.parse(raw));
-      } catch {
-        await redis.lRem(listKey(mode), 0, id);
-        await redis.del(metaKey(id));
-        continue;
-      }
-      if (!parsed || !isAvailable(parsed)) {
-        await redis.lRem(listKey(mode), 0, id);
-        await redis.del(metaKey(id));
-        continue;
-      }
+      unique.push(id);
+    }
+
+    const raws = await redis.mGet(unique.map(metaKey));
+    const entries = [];
+    const stale = [];
+    for (let i = 0; i < unique.length; i += 1) {
+      const raw = raws[i];
+      if (!raw) { stale.push(unique[i]); continue; }
+      let parsed = null;
+      try { parsed = unpackEntry(JSON.parse(raw)); } catch { parsed = null; }
+      if (!parsed || !isAvailable(parsed)) { stale.push(unique[i]); continue; }
       entries.push(parsed);
     }
+
+    if (dupes.length || stale.length) {
+      const sweep = redis.multi();
+      for (const id of dupes) sweep.lRem(listKey(mode), 0, id);
+      for (const id of stale) { sweep.lRem(listKey(mode), 0, id); sweep.del(metaKey(id)); }
+      sweep.exec().catch(() => {});
+    }
+
     return entries;
   }
 
@@ -262,28 +311,32 @@ function createMatchQueue() {
     }
 
     let entries = await loadRedisQueue(mode, isAvailable);
+    const wanted = interestsOf({ interest, interests: entry.interests });
+    const pickOpts = { interests: entry.interests };
 
+    // Tier 1: shared interest. Tier 2: anyone.
     let match = await pickSmartMatch(
-      entries.filter((e) => e.interest === interest),
-      interest,
-      region,
-      language,
-      canMatch,
-      repFn
+      entries.filter((e) => sharesInterest(e, wanted)),
+      interest, region, language, canMatch, repFn, pickOpts,
     );
     if (!match) {
-      match = await pickSmartMatch(entries, interest, region, language, canMatch, repFn);
+      match = await pickSmartMatch(entries, interest, region, language, canMatch, repFn, pickOpts);
     }
 
-    if (match) {
-      let claimed = await claimMatch(mode, match.socketId);
-      if (!claimed) {
-        entries = entries.filter((e) => e.socketId !== match.socketId);
-        match = await pickSmartMatch(entries, interest, region, language, canMatch, repFn);
-        claimed = match ? await claimMatch(mode, match.socketId) : false;
-        if (!claimed) match = null;
-      }
+    // A claim can lose to another instance picking the same person. Retry down
+    // the list instead of dropping the seeker back into the queue — on a busy
+    // night that race is common, and re-queueing turns it into a visible stall.
+    let claimed = false;
+    for (let attempt = 0; match && attempt < 4; attempt += 1) {
+      claimed = await claimMatch(mode, match.socketId);
+      if (claimed) break;
+      entries = entries.filter((e) => e.socketId !== match.socketId);
+      match = await pickSmartMatch(
+        entries.filter((e) => sharesInterest(e, wanted)),
+        interest, region, language, canMatch, repFn, pickOpts,
+      ) || await pickSmartMatch(entries, interest, region, language, canMatch, repFn, pickOpts);
     }
+    if (!claimed) match = null;
 
     if (match) return { status: 'matched', match };
     await enqueueRedis(mode, entry, isCreator);
@@ -292,6 +345,7 @@ function createMatchQueue() {
 
   return {
     init,
+    SCAN_LIMIT,
     shutdown,
     isRedis,
     findOrEnqueue,
@@ -300,7 +354,9 @@ function createMatchQueue() {
     getStats,
     /** Shared Redis client for infra (limits / room presence). */
     getClient: () => redis,
+    /** Test seam: drive the Redis code path against a stand-in client. */
+    __setRedisForTest: (client) => { redis = client; usingRedis = !!client; },
   };
 }
 
-module.exports = { createMatchQueue };
+module.exports = { createMatchQueue, sharesInterest, interestsOf, SCAN_LIMIT };

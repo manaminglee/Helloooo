@@ -30,11 +30,70 @@ const REGION_HOSTS = {
   global: process.env.TURN_HOST_GLOBAL || 'a.relay.metered.ca',
 };
 
-/** Public demo credentials that belong to the Metered relay hosts above. */
-const FALLBACK_RELAY_CREDS = {
-  username: process.env.TURN_FALLBACK_USERNAME || 'e8dd65b92f3c0ab9bda3c714',
-  credential: process.env.TURN_FALLBACK_PASSWORD || '2xMGSyyWIYfJTh3m',
+/**
+ * Demo credentials for the shared relay hosts above.
+ *
+ * These are public sample credentials on somebody else's free tier. They are
+ * fine for local development and useless in production: they are rate limited,
+ * shared with every other person who copied them, and can be revoked without
+ * warning. When they stop working there is no error anywhere — ICE simply never
+ * finds a relay pair, and every user behind symmetric NAT (which is most mobile
+ * networks) gets a black remote video and no explanation.
+ *
+ * That failure is invisible and confusing enough that production refuses to
+ * start on them rather than shipping a product that quietly does not work for
+ * a large fraction of users. See assertRelayCredentialsUsable().
+ */
+const DEMO_RELAY_CREDS = {
+  username: 'e8dd65b92f3c0ab9bda3c714',
+  credential: '2xMGSyyWIYfJTh3m',
 };
+
+const FALLBACK_RELAY_CREDS = {
+  username: process.env.TURN_FALLBACK_USERNAME || DEMO_RELAY_CREDS.username,
+  credential: process.env.TURN_FALLBACK_PASSWORD || DEMO_RELAY_CREDS.credential,
+};
+
+/** True when the shared relay is still running on the copied sample credentials. */
+function usingDemoRelayCreds() {
+  return FALLBACK_RELAY_CREDS.username === DEMO_RELAY_CREDS.username
+    && FALLBACK_RELAY_CREDS.credential === DEMO_RELAY_CREDS.credential;
+}
+
+/**
+ * Refuse to boot a production server whose only relay is the public demo tier.
+ *
+ * Deliberately fatal rather than a warning: a warning scrolls past in a deploy
+ * log, and the symptom it predicts (a black video for mobile users) looks like
+ * a bug in the app rather than a missing config, so it can go unexplained for
+ * weeks. Either configure your own TURN, or set TURN_ALLOW_DEMO_RELAY=1 to say
+ * out loud that you accept a relay that will fail.
+ *
+ * @param {object} [env] injectable for tests
+ * @returns {{ok: boolean, level: 'ok'|'warn'|'fatal', message: string}}
+ */
+function assertRelayCredentialsUsable(env = process.env) {
+  const isProd = String(env.NODE_ENV || '').toLowerCase() === 'production';
+  const hasOperator = !!(String(env.TURN_URL || '').trim()
+    && String(env.TURN_USERNAME || '').trim()
+    && String(env.TURN_PASSWORD || '').trim());
+
+  if (hasOperator) return { ok: true, level: 'ok', message: 'Operator TURN configured.' };
+
+  const onDemo = (env.TURN_FALLBACK_USERNAME || DEMO_RELAY_CREDS.username) === DEMO_RELAY_CREDS.username
+    && (env.TURN_FALLBACK_PASSWORD || DEMO_RELAY_CREDS.credential) === DEMO_RELAY_CREDS.credential;
+
+  if (!onDemo) return { ok: true, level: 'ok', message: 'Shared relay configured with your own credentials.' };
+
+  const message = 'No TURN server is configured and the shared relay is still on public demo credentials. '
+    + 'Users behind symmetric NAT (most mobile networks) will get a black video with no error. '
+    + 'Set TURN_URL / TURN_USERNAME / TURN_PASSWORD, or TURN_FALLBACK_USERNAME / TURN_FALLBACK_PASSWORD.';
+
+  if (isProd && String(env.TURN_ALLOW_DEMO_RELAY || '') !== '1') {
+    return { ok: false, level: 'fatal', message: `${message} Set TURN_ALLOW_DEMO_RELAY=1 to start anyway.` };
+  }
+  return { ok: true, level: 'warn', message };
+}
 
 function env(name) {
   const v = process.env[name];
@@ -185,6 +244,8 @@ function buildIceServers(opts = {}) {
 
 module.exports = {
   buildIceServers,
+  assertRelayCredentialsUsable,
+  usingDemoRelayCreds,
   resolveRegion,
   operatorTurn,
   parseTurnTarget,

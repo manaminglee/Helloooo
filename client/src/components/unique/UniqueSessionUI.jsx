@@ -14,27 +14,21 @@ export function ConsentSessionGate({
 }) {
   if (!visible) return null;
   return (
-    <div className="mm-neural-gate absolute inset-0 z-[200] flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl">
-      <div className="mm-neural-panel max-w-md w-full p-6 sm:p-8 text-center">
-        <div className="mm-neural-badge mx-auto mb-4">NVIDIA AI · Mutual consent</div>
+    <div className="mm-neural-gate absolute inset-0 z-[200] flex items-start justify-center overflow-y-auto p-2 bg-black/85 backdrop-blur-xl">
+      <div className="mm-neural-panel max-w-md w-full my-auto p-3 sm:p-4 text-center">
         <h2 className="text-lg font-black text-white mb-2 uppercase tracking-widest">Both ready?</h2>
         <p className="text-xs text-white/50 mb-4 leading-relaxed">
           Remote video stays blurred until you and your partner both tap ready. Rule: <strong className="text-[#76B900]">{topicContract}</strong> · Mode: <strong className="text-violet-300">{conversationMode}</strong>
         </p>
-        {modePrompt && (
-          <p className="text-sm text-white/80 mb-4 p-3 rounded-xl bg-white/5 border border-[#76B900]/20 italic">&ldquo;{modePrompt}&rdquo;</p>
-        )}
-        <div className="flex items-center justify-center gap-2 mb-6 text-[10px] font-black uppercase tracking-widest text-white/40">
-          <span className={`w-2 h-2 rounded-full ${partnerReady >= 1 ? 'bg-[#76B900]' : 'bg-white/20'}`} /> You
-          <span className="text-white/20">·</span>
-          <span className={`w-2 h-2 rounded-full ${partnerReady >= totalPartners ? 'bg-[#76B900]' : 'bg-white/20 animate-pulse'}`} /> Partner ({partnerReady}/{totalPartners})
+        <div className="flex items-center justify-center gap-2 mb-3 text-[10px] font-black uppercase tracking-widest text-white/40" aria-live="polite">
+          {partnerReady} of {totalPartners} people ready
         </div>
-        {!audioIntroDone ? (
-          <button type="button" onClick={onAudioReady} className="mm-neural-btn w-full mb-2">Start audio intro (15s)</button>
-        ) : null}
         <button type="button" onClick={onReady} className="mm-neural-btn mm-neural-btn--primary w-full">
           I&apos;m ready — show video
         </button>
+        {!audioIntroDone ? (
+          <button type="button" onClick={onAudioReady} className="mm-neural-btn w-full mb-2">Start audio intro (15s)</button>
+        ) : null}
         {aiOnline && <p className="mt-3 text-[9px] text-[#76B900]/80 uppercase tracking-widest">Powered by NVIDIA NIM</p>}
       </div>
     </div>

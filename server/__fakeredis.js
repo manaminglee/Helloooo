@@ -24,7 +24,7 @@ function createFakeRedis() {
 
   const asArray = (k) => (Array.isArray(k) ? k : [k]);
 
-  return {
+  const api = {
     isOpen: true,
     _dump: () => data,
 
@@ -42,9 +42,12 @@ function createFakeRedis() {
       data.set(key, String(n));
       return n;
     },
-    async del(key) {
+    // node-redis accepts del(a, b, c) as well as del([a, b, c]).
+    async del(...keys) {
       let n = 0;
-      for (const k of asArray(key)) { if (data.delete(k)) n += 1; ttl.delete(k); }
+      for (const key of keys) {
+        for (const k of asArray(key)) { if (data.delete(k)) n += 1; ttl.delete(k); }
+      }
       return n;
     },
     async exists(key) { return alive(key) ? 1 : 0; },
@@ -129,8 +132,14 @@ function createFakeRedis() {
     async pfAdd(key, member) { get(key, () => new Set()).add(String(member)); return 1; },
     async pfCount(key) { return alive(key) ? data.get(key).size : 0; },
 
+    async mGet(keys) {
+      return asArray(keys).map((k) => (alive(k) ? data.get(k) : null));
+    },
+
     /* ---- lists ---- */
     async rPush(key, value) { const l = get(key, () => []); l.push(String(value)); return l.length; },
+    async lPush(key, value) { const l = get(key, () => []); l.unshift(String(value)); return l.length; },
+    async lLen(key) { return alive(key) ? data.get(key).length : 0; },
     async lRange(key, start, stop) {
       if (!alive(key)) return [];
       const l = data.get(key);
@@ -154,7 +163,27 @@ function createFakeRedis() {
       l.splice(i, 1);
       return 1;
     },
+
+    /* ---- pipeline ---- */
+    // Queues calls and replays them on exec, which is all the queue sweep needs.
+    multi() {
+      const queued = [];
+      const chain = new Proxy({}, {
+        get: (_t, prop) => {
+          if (prop === 'exec') {
+            return async () => {
+              const out = [];
+              for (const [name, args] of queued) out.push(await api[name](...args));
+              return out;
+            };
+          }
+          return (...args) => { queued.push([prop, args]); return chain; };
+        },
+      });
+      return chain;
+    },
   };
+  return api;
 }
 
 module.exports = { createFakeRedis };

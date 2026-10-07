@@ -316,7 +316,10 @@ export function AdminDashboard({ onJoinRoom }) {
         if (data.adScripts) setAdForm((prev) => ({ ...prev, ...data.adScripts }));
         fetchStats(key);
         setToast('✅ Ad Settings Updated!');
-      } else setToast('⚠️ Ad save failed');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setToast(`⚠️ ${data.error || 'Ad save failed'}`);
+      }
     } catch (e) {
       setToast('⚠️ Network error');
     }
@@ -1481,6 +1484,7 @@ export function AdminDashboard({ onJoinRoom }) {
                 </div>
 
                 <form onSubmit={handleAdSave} className="space-y-8">
+                  <p className="text-sm text-white/60">For Google AdSense, enter your approved publisher and responsive ad unit IDs. Publish your consent message in AdSense Privacy &amp; messaging before enabling ads. Use the same publisher for every placement. Your ads.txt is generated automatically. Leave unused slots empty.</p>
                   <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-8">
                     {[
                       { id: 'hero', label: 'Primary Hero Slot', desc: 'Landing top' },
@@ -1494,12 +1498,22 @@ export function AdminDashboard({ onJoinRoom }) {
                           <label className="text-[10px] font-black uppercase tracking-widest text-white/40">{slot.label}</label>
                           <span className="text-[8px] font-black text-white/10 uppercase italic">{slot.desc}</span>
                         </div>
-                        <textarea
-                          value={adForm[slot.id]}
+                        <select aria-label={`${slot.label} provider`} className="w-full rounded-xl bg-zinc-900 p-3" value={adForm[slot.id]?.provider === 'adsense' ? 'adsense' : 'html'} onChange={(e) => setAdForm(prev => ({ ...prev, [slot.id]: e.target.value === 'adsense' ? { provider: 'adsense', client: '', slot: '' } : '' }))}>
+                          <option value="html">Sponsor HTML / disabled</option>
+                          <option value="adsense">Google AdSense</option>
+                        </select>
+                        {adForm[slot.id]?.provider === 'adsense' ? (
+                          <div className="space-y-3">
+                            <input aria-label={`${slot.label} publisher ID`} placeholder="ca-pub-1234567890123456" pattern="ca-pub-[0-9]{16}" required className="w-full rounded-xl bg-zinc-900 p-3 text-sm" value={adForm[slot.id].client} onChange={(e) => setAdForm(prev => ({ ...prev, [slot.id]: { ...prev[slot.id], client: e.target.value.trim() } }))} />
+                            <input aria-label={`${slot.label} ad unit ID`} placeholder="10-digit ad unit ID" pattern="[0-9]{10}" required className="w-full rounded-xl bg-zinc-900 p-3 text-sm" value={adForm[slot.id].slot} onChange={(e) => setAdForm(prev => ({ ...prev, [slot.id]: { ...prev[slot.id], slot: e.target.value.trim() } }))} />
+                          </div>
+                        ) : <textarea
+                          aria-label={`${slot.label} sponsor HTML`}
+                          value={typeof adForm[slot.id] === 'string' ? adForm[slot.id] : ''}
                           onChange={(e) => setAdForm(prev => ({ ...prev, [slot.id]: e.target.value }))}
-                          placeholder="Paste Ad Script code here..."
+                          placeholder="Sponsor image/link HTML (scripts disabled). Use target=_blank for links."
                           className="w-full bg-black/40 border border-white/10 rounded-[28px] p-6 text-xs h-[240px] focus:border-amber-500/40 transition-all font-mono shadow-inner outline-none text-amber-500/60"
-                        />
+                        />}
                       </div>
                     ))}
                   </div>

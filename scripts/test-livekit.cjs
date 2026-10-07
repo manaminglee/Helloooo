@@ -1,0 +1,10 @@
+const { spawn } = require('node:child_process');
+const path = require('node:path');
+const os = require('node:os');
+const fs = require('node:fs');
+const binary = process.env.LIVEKIT_TEST_BINARY || path.join(os.tmpdir(), 'helloooo-livekit-1.13.7', 'livekit-server.exe');
+const log = fs.openSync(path.join(os.tmpdir(), 'helloooo-test-livekit.log'), 'w');
+const child = spawn(binary, ['--dev', '--bind', '127.0.0.1', '--node-ip', '127.0.0.1'], { stdio: ['ignore', log, log], windowsHide: true });
+child.on('error', error => { console.error('Set LIVEKIT_TEST_BINARY to a local LiveKit server executable:', error.message); process.exitCode = 1; });
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill());
+child.on('exit', code => { process.exitCode = code || 0; });

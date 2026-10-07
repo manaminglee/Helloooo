@@ -242,7 +242,7 @@ const COIN_PACKAGES = [
   pack('nuts_68k', 'Popular', 599, 7.19, 68000, { badge: 'Most popular' }),
   pack('nuts_173k', 'Fan Pack', 1499, 17.99, 173000),
   pack('nuts_347k', 'VIP Bundle', 2999, 35.99, 347000),
-  pack('nuts_936k', 'Whale Pack', 7999, 94.99, 936000, { badge: 'Best value' }),
+  pack('nuts_936k', 'Whale Pack', 7999, 94.99, 936000),
   pack('nuts_2m', 'Legend Pack', 19999, 239.99, 2360000),
 ];
 

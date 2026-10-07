@@ -49,7 +49,7 @@ export function useLiveKitAudio({
 
   const disconnect = useCallback(async () => {
     remoteElsRef.current.forEach((el) => {
-      try { el.pause(); el.srcObject = null; } catch { /* ignore */ }
+      try { el.pause(); el.srcObject = null; el.remove(); } catch { /* ignore */ }
     });
     remoteElsRef.current.clear();
     try {
@@ -118,10 +118,8 @@ export function useLiveKitAudio({
           return;
         }
 
-        const [mic] = await createLocalTracks({ audio: true, video: false });
-        localTrackRef.current = mic;
-        mic.mediaStreamTrack.enabled = false;
-        await room.localParticipant.publishTrack(mic);
+        // Listeners connect without acquiring a microphone. The SFU enforces
+        // role permissions; capture starts only on an authorized unmute.
         setConnected(true);
         mmDebug('livekit.audio.connected', channelId);
       } catch (err) {
@@ -138,6 +136,7 @@ export function useLiveKitAudio({
   const setMicEnabled = useCallback(async (enabledMic) => {
     const room = roomRef.current;
     if (!room) return;
+    if (enabledMic && !room.localParticipant.permissions?.canPublish) return;
     if (localTrackRef.current?.mediaStreamTrack) {
       localTrackRef.current.mediaStreamTrack.enabled = enabledMic;
     }
@@ -146,7 +145,7 @@ export function useLiveKitAudio({
 
   const resumeRemoteAudio = useCallback(() => {
     remoteElsRef.current.forEach((el) => {
-      try { void el.play(); } catch { /* ignore */ }
+      try { void el.play().catch(() => {}); } catch { /* ignore */ }
     });
   }, []);
 

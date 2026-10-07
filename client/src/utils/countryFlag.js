@@ -54,3 +54,26 @@ export function countryFlagImageUrl(cc, width = 40) {
   if (!code) return null;
   return `https://flagcdn.com/w${width}/${code.toLowerCase()}.png`;
 }
+
+/**
+ * Human country name for a code, e.g. "IN" -> "India".
+ *
+ * Intl.DisplayNames covers every ISO code in the browser's own locale data, so
+ * there is no table here to fall out of date. It throws on unsupported locales
+ * in older engines, hence the guard — the code itself is a fine fallback.
+ */
+let displayNames;
+export function countryName(cc) {
+  const code = normalizeCountryCode(cc);
+  if (!code) return '';
+  try {
+    if (displayNames === undefined) {
+      displayNames = typeof Intl !== 'undefined' && Intl.DisplayNames
+        ? new Intl.DisplayNames(undefined, { type: 'region' })
+        : null;
+    }
+    return displayNames?.of(code) || code;
+  } catch {
+    return code;
+  }
+}

@@ -290,7 +290,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
       setError(null);
       setLockRequired(null);
 
-      if (you.role !== 'listener' && you.role !== 'cohost' && you.role !== 'pa_waiting') {
+        if (!sfu && you.role !== 'listener' && you.role !== 'cohost' && you.role !== 'pa_waiting') {
         try {
           await ensureMic();
         } catch (_) {
@@ -626,7 +626,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
   useEffect(() => {
     if (!useSfu || !livekit.connected || micMuted) return;
     livekit.setMicEnabled(true).catch(() => {});
-  }, [useSfu, livekit.connected, micMuted, livekit]);
+  }, [useSfu, livekit.connected, micMuted, livekit.setMicEnabled]);
 
   useEffect(() => {
     ensureNotifyPermission().catch(() => {});
@@ -687,7 +687,8 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
     const me = members.find((m) => m.socketId === socket?.id);
     const role = me?.role || null;
     const wasListener = !roleRef.current || roleRef.current === 'listener';
-    roleRef.current = role;
+      roleRef.current = role;
+      if (useSfu) return;
     if (me && me.role !== 'listener' && me.role !== 'cohost') {
       ensureMic()
         .then(() => {
@@ -696,7 +697,7 @@ export function useAudioChannel(socket, iceServers, nickname = 'Anonymous') {
         })
         .catch(() => {});
     }
-  }, [members, socket?.id, ensureMic, publishAudioToAllPeers]);
+    }, [members, socket?.id, useSfu, ensureMic, publishAudioToAllPeers]);
 
   const teardownRef = useRef(teardown);
   teardownRef.current = teardown;

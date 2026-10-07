@@ -35,7 +35,7 @@ export function HellooooBrand({ size = 'md', className = '', as: Tag = 'span' })
 }
 
 /**
- * Circular Helloooo loader — brand text orbits in a ring.
+ * Circular Helloooo loader — orbit ring with brand core.
  */
 export function HellooooLoader({
   label = 'Connecting…',
@@ -53,6 +53,7 @@ export function HellooooLoader({
       aria-label={label}
     >
       <div className="helloooo-loader__ring" style={{ width: size, height: size }}>
+        <div className="helloooo-loader__halo" aria-hidden />
         <svg className="helloooo-loader__svg" viewBox="0 0 100 100" aria-hidden>
           <defs>
             <path id="helloooo-circle" d="M 50,50 m -36,0 a 36,36 0 1,1 72,0 a 36,36 0 1,1 -72,0" />
@@ -64,11 +65,14 @@ export function HellooooLoader({
           </text>
         </svg>
         <div className="helloooo-loader__core">
-          <HellooooBrand size="sm" />
+          <HellooooLogo size={Math.max(28, Math.round(size * 0.28))} />
         </div>
       </div>
       {label ? <p className="helloooo-loader__label">{label}</p> : null}
       {hint ? <p className="helloooo-loader__hint">{hint}</p> : null}
+      <div className="helloooo-loader__bar" aria-hidden>
+        <span />
+      </div>
     </div>
   );
 }
