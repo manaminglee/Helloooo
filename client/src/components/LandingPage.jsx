@@ -530,7 +530,10 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
   };
 
   const beginModeJoin = (mode, nickOverride, policyBypass = false) => {
-    const nick = (nickOverride || joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
+    const anonymousMode = mode === 'video' || mode === 'group_video';
+    const nick = anonymousMode
+      ? 'Anonymous'
+      : ((nickOverride || joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous');
     const meta = {
       language: languageFilter,
       region: userCountry || country,
@@ -567,7 +570,8 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
     if (!connected || isJoining || scanning) return;
     // Always confirm name for voice + lives; for other modes open when still default.
     const current = (joinMeta.displayNickname || '').trim();
-    const needsNameGate = mode === 'group_text' || mode === 'lives' || !current || current === 'Anonymous';
+    const anonymousMode = mode === 'video' || mode === 'group_video';
+    const needsNameGate = !anonymousMode && (mode === 'group_text' || mode === 'lives' || !current || current === 'Anonymous');
     if (!policyBypass && needsNameGate) {
       setPendingJoinMode(mode);
       return;

@@ -1,11 +1,19 @@
 /**
- * Skip sheet — shown near chat input when user taps Skip / Next.
- * Pro: reconnect same partner, country-only, region-only matching.
+ * Next-match sheet — filters are always available.
+ * Coin prices only appear when the server says VIDEO_PAYMENTS_ENABLED.
  */
 import { useEffect, useState } from 'react';
 import { loadProMatchPrefs, saveProMatchPrefs } from '../utils/proMatchPrefs';
 import { startPayment } from '../utils/paymentCheckout';
 import { API_BASE } from '../config/apiBase';
+import { priceLabel } from '../hooks/useVideoPricing';
+
+const GENDER_OPTIONS = [
+  { id: '', label: 'Anyone' },
+  { id: 'female', label: 'Women' },
+  { id: 'male', label: 'Men' },
+  { id: 'other', label: 'Other' },
+];
 
 export function SkipProSheet({
   open,
@@ -16,6 +24,7 @@ export function SkipProSheet({
   partnerUserId = null,
   userCountry = '',
   onActivated,
+  pricing,
 }) {
   const [prefs, setPrefs] = useState(loadProMatchPrefs);
   const [payLoading, setPayLoading] = useState(false);
@@ -23,6 +32,8 @@ export function SkipProSheet({
   const [activateLoading, setActivateLoading] = useState(false);
   const [err, setErr] = useState('');
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const paymentsOn = !!pricing?.enabled;
+  const costs = pricing?.video || {};
 
   useEffect(() => {
     if (open) {
@@ -37,20 +48,36 @@ export function SkipProSheet({
     saveProMatchPrefs(next);
   };
 
+  const paidFor = (coins) => {
+    if (!paymentsOn) return false;
+    if (isPro) return false;
+    return (Number(coins) || 0) > 0;
+  };
+
+  const costHint = (coins, freeCopy) => {
+    if (!paymentsOn) return freeCopy;
+    if (isPro) return `${freeCopy} · included with Pro`;
+    return `${freeCopy} · ${priceLabel(pricing, coins)}`;
+  };
+
   const toggleCountry = () => {
-    if (!isPro) { setShowUpgrade(true); return; }
     persistPrefs({ ...prefs, matchCountryOnly: !prefs.matchCountryOnly, matchRegionOnly: false });
   };
 
   const toggleRegion = () => {
-    if (!isPro) { setShowUpgrade(true); return; }
     persistPrefs({ ...prefs, matchRegionOnly: !prefs.matchRegionOnly, matchCountryOnly: false });
+  };
+
+  const setGender = (matchGender) => {
+    persistPrefs({ ...prefs, matchGender });
   };
 
   const doSkip = (opts = {}) => {
     onSkip?.({
-      matchCountryOnly: isPro && prefs.matchCountryOnly,
-      matchRegionOnly: isPro && prefs.matchRegionOnly,
+      matchCountryOnly: prefs.matchCountryOnly,
+      matchRegionOnly: prefs.matchRegionOnly,
+      matchGender: prefs.matchGender || '',
+      gender: prefs.gender || '',
       reconnectToUserId: opts.reconnect ? partnerUserId : null,
     });
     onClose?.();
@@ -106,51 +133,85 @@ export function SkipProSheet({
         </div>
 
         <button type="button" className="mm-skip-pro-sheet__action mm-skip-pro-sheet__action--primary" onClick={() => doSkip()}>
-          <span>⏭️ Next stranger</span>
-          <span className="mm-skip-pro-sheet__hint">Free · random match</span>
+          <span>Next stranger</span>
+          <span className="mm-skip-pro-sheet__hint">
+            {prefs.matchCountryOnly || prefs.matchRegionOnly || prefs.matchGender
+              ? 'Uses the filters below'
+              : 'Free · anyone, anywhere'}
+          </span>
         </button>
 
         <div className="mm-skip-pro-sheet__divider">
-          <span>Pro options</span>
-          {!isPro && <span className="mm-skip-pro-sheet__pro-tag">✨ Pro</span>}
+          <span>Match filters</span>
         </div>
 
-        <button
-          type="button"
-          className={`mm-skip-pro-sheet__action${!isPro ? ' mm-skip-pro-sheet__action--locked' : ''}`}
-          disabled={!partnerUserId}
-          onClick={() => (isPro ? doSkip({ reconnect: true }) : setShowUpgrade(true))}
-        >
-          <span>🔄 Same partner again</span>
-          <span className="mm-skip-pro-sheet__hint">
-            {partnerUserId ? `Try reconnecting with ${partnerName}` : 'Need an active match'}
-          </span>
-          {!isPro && <span className="mm-skip-pro-sheet__lock" aria-hidden>🔒</span>}
-        </button>
+        <div className="mm-video-gender-row" role="group" aria-label="Who to match with">
+          {GENDER_OPTIONS.map((opt) => (
+            <button
+              key={opt.id || 'any'}
+              type="button"
+              className={`mm-video-gender-chip${(prefs.matchGender || '') === opt.id ? ' is-on' : ''}`}
+              onClick={() => setGender(opt.id)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        {prefs.matchGender && (
+          <p className="mm-skip-pro-sheet__hint" style={{ margin: '0 0 8px' }}>
+            {costHint(costs.genderFilterCoins, 'Prefers people who shared that option')}
+          </p>
+        )}
 
         <button
           type="button"
-          className={`mm-skip-pro-sheet__action mm-skip-pro-sheet__action--toggle${prefs.matchCountryOnly ? ' mm-skip-pro-sheet__action--on' : ''}${!isPro ? ' mm-skip-pro-sheet__action--locked' : ''}`}
+          className={`mm-skip-pro-sheet__action mm-skip-pro-sheet__action--toggle${prefs.matchCountryOnly ? ' mm-skip-pro-sheet__action--on' : ''}`}
           onClick={toggleCountry}
         >
-          <span>🌍 {userCountry ? `Match ${userCountry} only` : 'Match my country only'}</span>
-          <span className="mm-skip-pro-sheet__hint">{prefs.matchCountryOnly && isPro ? 'On for next searches' : 'Same country strangers'}</span>
-          {!isPro && <span className="mm-skip-pro-sheet__lock" aria-hidden>🔒</span>}
+          <span>{userCountry ? `Match ${userCountry} only` : 'Match my country only'}</span>
+          <span className="mm-skip-pro-sheet__hint">{costHint(costs.countryFilterCoins, 'Same country strangers')}</span>
         </button>
 
         <button
           type="button"
-          className={`mm-skip-pro-sheet__action mm-skip-pro-sheet__action--toggle${prefs.matchRegionOnly ? ' mm-skip-pro-sheet__action--on' : ''}${!isPro ? ' mm-skip-pro-sheet__action--locked' : ''}`}
+          className={`mm-skip-pro-sheet__action mm-skip-pro-sheet__action--toggle${prefs.matchRegionOnly ? ' mm-skip-pro-sheet__action--on' : ''}`}
           onClick={toggleRegion}
         >
-          <span>📍 Match my region only</span>
-          <span className="mm-skip-pro-sheet__hint">{prefs.matchRegionOnly && isPro ? 'On for next searches' : 'Closer regional matches'}</span>
-          {!isPro && <span className="mm-skip-pro-sheet__lock" aria-hidden>🔒</span>}
+          <span>Match my region only</span>
+          <span className="mm-skip-pro-sheet__hint">{costHint(costs.regionFilterCoins, 'Closer regional matches')}</span>
         </button>
+
+        <button
+          type="button"
+          className="mm-skip-pro-sheet__action"
+          disabled={!partnerUserId}
+          onClick={() => doSkip({ reconnect: true })}
+        >
+          <span>Same partner again</span>
+          <span className="mm-skip-pro-sheet__hint">
+            {partnerUserId
+              ? costHint(costs.reconnectCoins, `Try reconnecting with ${partnerName}`)
+              : 'Need an active match'}
+          </span>
+        </button>
+
+        {paymentsOn && !isPro && (prefs.matchCountryOnly || prefs.matchRegionOnly || prefs.matchGender) && (
+          <p className="text-[11px] text-white/45 mt-2">
+            Prices sit on each option and are confirmed when the next match starts.
+            {paidFor(costs.genderFilterCoins) ? '' : ''}
+          </p>
+        )}
+
+        {paymentsOn && !isPro && (
+          <button type="button" className="mm-skip-pro-sheet__action" onClick={() => setShowUpgrade((v) => !v)}>
+            <span>Get Pro for included filters</span>
+            <span className="mm-skip-pro-sheet__hint">Optional — filters also work with coins</span>
+          </button>
+        )}
 
         {showUpgrade && !isPro && (
           <div className="mm-skip-pro-sheet__upgrade">
-            <p className="text-[11px] text-violet-200/90 mb-2">Upgrade to Pro to unlock reconnect &amp; region filters</p>
+            <p className="text-[11px] text-violet-200/90 mb-2">Pro includes filters and reconnect without spending coins</p>
             <button type="button" disabled={payLoading} className="mm-btn mm-btn--primary w-full !text-xs mb-2" onClick={payForPro}>
               {payLoading ? 'Opening checkout…' : 'Get Pro — Stripe / Razorpay'}
             </button>

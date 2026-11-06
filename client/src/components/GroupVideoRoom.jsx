@@ -30,6 +30,9 @@ import { useUniqueSession } from '../hooks/useUniqueSession';
 import { useAdminMonitorFrames } from '../hooks/useAdminMonitorFrames';
 import { useNetworkRecovery } from '../hooks/useNetworkRecovery';
 import { MatchSuspendedNotice } from './MatchSuspendedNotice';
+import { useVideoPricing, priceLabel } from '../hooks/useVideoPricing';
+import { CreatorVerifiedMark } from './VideoSessionUI';
+import '../styles/video-overhaul.css';
 import { CountryFlag } from './CountryFlag';
 import { countryName } from '../utils/countryFlag';
 import {
@@ -319,6 +322,10 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
   const roomIdRef = useRef(null);
   const roomId = roomIdProp ?? roomIdRef.current;
   const [displayInterest, setDisplayInterest] = useState(interestProp || 'general');
+  const videoPricing = useVideoPricing();
+  const [isHost, setIsHost] = useState(false);
+  const [roomMeta, setRoomMeta] = useState({ maxSize: 4, isPrivate: false, branded: false, roomTitle: null, creatorHost: null, entryFee: 0 });
+  const [needCoins, setNeedCoins] = useState(null);
   const [peers, setPeers] = useState([]);
   const [participantCount, setParticipantCount] = useState(1);
   const [messages, setMessages] = useState([]);
@@ -595,8 +602,8 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       } else {
         socket.emit('join-group-by-topics', {
           interest: interestProp || 'general',
-          nickname: nickname || 'Anonymous',
-          mode: 'group_video'
+          nickname: 'Anonymous',
+          mode: 'group_video',
         });
       }
       // Auto-join logic — NO WAITING SCREEN
@@ -1351,6 +1358,16 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         } catch { /* ignore */ }
       }
       if (data.interest) setDisplayInterest(data.interest);
+      setIsHost((data.participantCount || 1) === 1);
+      setRoomMeta((prev) => ({
+        ...prev,
+        maxSize: data.maxSize || prev.maxSize,
+        isPrivate: !!data.isPrivate,
+        branded: !!data.branded,
+        roomTitle: data.roomTitle || prev.roomTitle,
+        creatorHost: data.creatorHost || prev.creatorHost,
+        entryFee: data.entryFee || 0,
+      }));
       if (!hasJoinedRef.current) {
         hasJoinedRef.current = true;
         onJoinedRef.current?.(rid);
@@ -1555,6 +1572,21 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
     socket.on('room-ended-by-admin', onRoomEndedByAdmin);
     socket.on('session-terminated-by-admin', onSessionTerminatedByAdmin);
     socket.on('group-renamed', onGroupRenamed);
+    const onRoomUpdated = (data) => {
+      setRoomMeta((prev) => ({
+        ...prev,
+        maxSize: data.maxSize ?? prev.maxSize,
+        isPrivate: data.isPrivate ?? prev.isPrivate,
+        branded: data.branded ?? prev.branded,
+        roomTitle: data.roomTitle ?? prev.roomTitle,
+        creatorHost: data.creatorHost ?? prev.creatorHost,
+        entryFee: data.entryFee ?? prev.entryFee,
+      }));
+      if (data.roomTitle) setDisplayInterest(data.roomTitle);
+    };
+    const onNeedCoins = (data) => setNeedCoins(data || { message: 'Not enough coins' });
+    socket.on('group-video:updated', onRoomUpdated);
+    socket.on('video:need-coins', onNeedCoins);
     const onSignalRateLimited = (data) => {
       const msg = data?.message || 'Too many WebRTC signals. Please wait.';
       showChatNotice(typeof msg === 'string' ? `⏱️ ${msg}` : '⏱️ Rate limited — wait a few seconds.');
@@ -1584,6 +1616,8 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
       socket.off('room-ended-by-admin', onRoomEndedByAdmin);
       socket.off('session-terminated-by-admin', onSessionTerminatedByAdmin);
       socket.off('group-renamed', onGroupRenamed);
+    socket.off('group-video:updated', onRoomUpdated);
+    socket.off('video:need-coins', onNeedCoins);
       socket.off('signal-rate-limited', onSignalRateLimited);
       socket.off('sfu-fallback', onSfuFallback);
     };
@@ -1969,6 +2003,26 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               <button type="button" className="mm-desk-icon-btn" onClick={() => setShowMoreMenu(true)} title="More" aria-label="More">⋯</button>
             </div>
           </header>
+          {(isHost || roomMeta.creatorHost) && (
+            <div className="mm-group-host-tools px-4">
+              {roomMeta.creatorHost && <CreatorVerifiedMark show handle={roomMeta.creatorHost.handle} />}
+              <span className="text-xs text-white/50">{participantCount}/{roomMeta.maxSize} seats{roomMeta.isPrivate ? ' · private' : ''}</span>
+              {isHost && isCreator && (
+                <>
+                  <button type="button" onClick={() => socket.emit('group-video:configure', { roomId: roomIdRef.current || roomId, branded: true, roomTitle: displayInterest })}>
+                    Brand as creator room
+                  </button>
+                  <button type="button" onClick={() => socket.emit('group-video:configure', { roomId: roomIdRef.current || roomId, maxSize: videoPricing.groupVideo.extraLargeMaxSize })}>
+                    Open {videoPricing.groupVideo.extraLargeMaxSize} seats{videoPricing.enabled ? ` · ${priceLabel(videoPricing, videoPricing.groupVideo.extraLargeRoomCoins)}` : ''}
+                  </button>
+                  <button type="button" onClick={() => socket.emit('group-video:configure', { roomId: roomIdRef.current || roomId, isPrivate: !roomMeta.isPrivate })}>
+                    {roomMeta.isPrivate ? 'Make public' : `Make private${videoPricing.enabled ? ` · ${priceLabel(videoPricing, videoPricing.groupVideo.privateRoomCoins)}` : ''}`}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
 
           <main className={`mm-group-desk-body ${chatCollapsed ? 'mm-group-desk-body--chat-collapsed' : ''}`}>
             <div className="mm-group-desk-stage">
@@ -2406,6 +2460,12 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
         creatorName={peers.find((p) => p.socketId === tipTargetSid)?.nickname || peers.find((p) => p.isCreator)?.nickname}
       />
 
+      {needCoins && (
+        <div className="mm-need-coins" role="status">
+          <p>{needCoins.message || 'Not enough coins for that room option.'}</p>
+          <button type="button" className="mm-need-coins-free" onClick={() => setNeedCoins(null)}>Dismiss</button>
+        </div>
+      )}
       <GiftDrawer
         socket={socket}
         roomId={roomIdProp || roomIdRef.current}

@@ -491,3 +491,109 @@ export function VideoSearchingOverlay({
     </div>
   );
 }
+
+
+export function CreatorVerifiedMark({ show, handle, className = '' }) {
+  if (!show) return null;
+  return (
+    <span className={`mm-creator-mark ${className}`.trim()}>
+      <span aria-hidden>★</span>
+      {handle ? handle : 'Creator'}
+    </span>
+  );
+}
+
+export function VideoTimeBadge({ session, paymentsEnabled }) {
+  if (!paymentsEnabled || !session || session.unlimited || session.remainingSeconds == null) return null;
+  const seconds = Math.max(0, Number(session.remainingSeconds) || 0);
+  const m = Math.floor(seconds / 60);
+  const s = String(seconds % 60).padStart(2, '0');
+  return (
+    <span className={`mm-video-time${seconds <= 60 ? ' mm-video-time--warn' : ''}`} aria-live="polite">
+      {m}:{s} left
+    </span>
+  );
+}
+
+export function VideoSessionPausedOverlay({
+  open,
+  pricing,
+  onExtend,
+  onUnlimited,
+  onKeepText,
+}) {
+  if (!open) return null;
+  const coins = pricing?.video || {};
+  return (
+    <div className="mm-video-paused" role="dialog" aria-label="Video time is up">
+      <div className="mm-video-paused__card">
+        <h3>Free video time is up</h3>
+        <p>You can keep typing, or spend coins to turn the cameras back on.</p>
+        <div className="mm-video-paused__actions">
+          <button type="button" className="mm-btn mm-btn--primary" onClick={onExtend}>
+            +{Math.round((coins.extendSessionSeconds || 600) / 60)} min · {coins.extendSessionCoins || 15} coins
+          </button>
+          <button type="button" className="mm-btn mm-btn--ghost" onClick={onUnlimited}>
+            Unlimited this match · {coins.unlimitedSessionCoins || 50} coins
+          </button>
+          <button type="button" className="mm-video-paused__text" onClick={onKeepText}>
+            Keep chatting in text
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function MatchConnectBar({
+  visible,
+  isCreator,
+  peerIsCreator,
+  peerHandle,
+  incoming,
+  status,
+  onInviteFriend,
+  onInviteFollow,
+  onAccept,
+  onDecline,
+  onReveal,
+}) {
+  if (!visible) return null;
+  return (
+    <div className="mm-match-connect" aria-live="polite">
+      {incoming ? (
+        <>
+          <span>
+            {incoming.kind === 'follow-creator'
+              ? `${incoming.creatorHandle || 'A creator'} invited you to follow`
+              : 'They want to stay connected'}
+          </span>
+          <button type="button" onClick={onAccept}>Accept</button>
+          <button type="button" onClick={onDecline}>Not now</button>
+        </>
+      ) : status === 'sent' ? (
+        <span>Invite sent</span>
+      ) : status === 'accepted' ? (
+        <span>You&apos;re connected{peerHandle ? ` · ${peerHandle}` : ''}</span>
+      ) : (
+        <>
+          <button type="button" onClick={onInviteFriend}>Stay connected</button>
+          {isCreator && <button type="button" onClick={onInviteFollow}>Invite to follow</button>}
+          {isCreator && <button type="button" onClick={onReveal}>Show creator profile</button>}
+          {peerIsCreator && peerHandle && <span className="mm-creator-mark">★ {peerHandle}</span>}
+        </>
+      )}
+    </div>
+  );
+}
+
+export function CreatorVideoStats({ stats }) {
+  if (!stats) return null;
+  return (
+    <div className="mm-creator-stats" aria-label="Your video session stats">
+      <span>{stats.matches || 0} matches</span>
+      <span>{stats.followInvites || 0} follow invites</span>
+      <span>{stats.followsGained || 0} new follows</span>
+    </div>
+  );
+}

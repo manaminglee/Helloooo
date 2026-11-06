@@ -52,8 +52,11 @@ import {
   AudioOnlyFallback,
   ChatMatchStatus,
   ConnectionQualityBadge,
+  CreatorVerifiedMark,
+  CreatorVideoStats,
   DevicePickerSheet,
   FloatingVideoReactions,
+  MatchConnectBar,
   StrangerRevealOverlay,
   TipCreatorModal,
   useChatSwipeCollapse,
@@ -61,6 +64,8 @@ import {
   VideoReactionBar,
   VideoSessionBanners,
   VideoSearchingOverlay,
+  VideoSessionPausedOverlay,
+  VideoTimeBadge,
 } from './VideoSessionUI';
 import {
   MatchStatusLine, isMatchStatus, searchingMessage, connectedMessage,
@@ -68,6 +73,8 @@ import {
 import { MatchSuspendedNotice } from './MatchSuspendedNotice';
 import { SkipProSheet } from './SkipProSheet';
 import { loadProMatchPrefs } from '../utils/proMatchPrefs';
+import { useVideoPricing } from '../hooks/useVideoPricing';
+import '../styles/video-overhaul.css';
 
 function MessageSpark({ x, y }) {
   const [active, setActive] = useState(true);
@@ -476,6 +483,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   const [interestTags, setInterestTags] = useState(['social', 'fun', 'music', 'gaming']);
   const [selectedInterests, setSelectedInterests] = useState([]);
   const [sharedInterests, setSharedInterests] = useState([]);
+  const videoPricing = useVideoPricing();
+  const [videoSession, setVideoSession] = useState(null);
+  const [sessionPaused, setSessionPaused] = useState(false);
+  const [connectInvite, setConnectInvite] = useState(null);
+  const [connectStatus, setConnectStatus] = useState('');
+  const [needCoins, setNeedCoins] = useState(null);
+  const [creatorStats, setCreatorStats] = useState(null);
   const connTimerRef = useRef(null);
   const typingTimerRef = useRef(null);
   const toastTimerRef = useRef(null);
@@ -1281,6 +1295,10 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     });
     setRoomId(null);
     setSharedInterests([]);
+    setVideoSession(null);
+    setSessionPaused(false);
+    setConnectInvite(null);
+    setConnectStatus('');
     setMessages([]);
     roomIdRef.current = null;
     pendingOutIceRef.current.clear();
@@ -1379,6 +1397,29 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   }, [executeSkip]);
 
   const handleSkip = executeSkip;
+
+  const buildFindPartnerPayload = useCallback((extra = {}) => {
+    const prefs = loadProMatchPrefs();
+    const proOpts = { ...(proMatchOptsRef.current || {}), ...extra };
+    let creatorToken = '';
+    try {
+      creatorToken = window.localStorage.getItem('mm_creator_session') || window.localStorage.getItem('mm_creatorId') || '';
+    } catch { /* ignore */ }
+    return {
+      mode: 'video',
+      interest: interest || 'general',
+      nickname: 'Anonymous',
+      conversationMode,
+      topicContract,
+      creatorToken: isCreator || creatorToken ? creatorToken : undefined,
+      interests: [...new Set([...(selectedInterests || []), ...(interest && interest !== 'general' ? [interest] : [])])],
+      matchCountryOnly: proOpts.matchCountryOnly ?? prefs.matchCountryOnly,
+      matchRegionOnly: proOpts.matchRegionOnly ?? prefs.matchRegionOnly,
+      matchGender: proOpts.matchGender ?? prefs.matchGender,
+      gender: prefs.gender || '',
+      reconnectToUserId: proOpts.reconnectToUserId || undefined,
+    };
+  }, [interest, conversationMode, topicContract, isCreator, selectedInterests]);
 
   const handleStop = useCallback(() => {
     if (statusRef.current === 'connected') saveSessionVibe();
@@ -1984,24 +2025,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
     if (findPartnerEmittedRef.current) return;
     findPartnerEmittedRef.current = true;
     setConnectPhase('matching');
-    let creatorToken = '';
-    try {
-      creatorToken = window.localStorage.getItem('mm_creator_session') || window.localStorage.getItem('mm_creatorId') || '';
-    } catch { /* ignore */ }
-    const prefs = loadProMatchPrefs();
-    const proOpts = proMatchOptsRef.current || {};
-    socket.emit('find-partner', {
-      mode: 'video',
-      interest: interest || 'general',
-      nickname: nickname || 'Anonymous',
-      conversationMode,
-      topicContract,
-      creatorToken: isCreator || creatorToken ? creatorToken : undefined,
-      interests: [...new Set([...(selectedInterests || []), ...(interest && interest !== 'general' ? [interest] : [])])],
-      matchCountryOnly: proOpts.matchCountryOnly ?? prefs.matchCountryOnly,
-      matchRegionOnly: proOpts.matchRegionOnly ?? prefs.matchRegionOnly,
-      reconnectToUserId: proOpts.reconnectToUserId || undefined,
-    });
+    socket.emit('find-partner', buildFindPartnerPayload());
     proMatchOptsRef.current = {};
   }, [socket, connected, status, localStream, interest, nickname, conversationMode, topicContract, isCreator]);
 
@@ -2014,29 +2038,88 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       if (!streamHasLiveTracks(localStreamRef.current)) return;
       findPartnerEmittedRef.current = false;
       setConnectPhase('matching');
-      let creatorToken = '';
-      try {
-        creatorToken = window.localStorage.getItem('mm_creator_session') || window.localStorage.getItem('mm_creatorId') || '';
-      } catch { /* ignore */ }
       findPartnerEmittedRef.current = true;
-      const prefs = loadProMatchPrefs();
-      const proOpts = proMatchOptsRef.current || {};
-      socket.emit('find-partner', {
-        mode: 'video',
-        interest: interest || 'general',
-        nickname: nickname || 'Anonymous',
-        conversationMode,
-        topicContract,
-        creatorToken: isCreator || creatorToken ? creatorToken : undefined,
-        interests: [...new Set([...(selectedInterests || []), ...(interest && interest !== 'general' ? [interest] : [])])],
-        matchCountryOnly: proOpts.matchCountryOnly ?? prefs.matchCountryOnly,
-        matchRegionOnly: proOpts.matchRegionOnly ?? prefs.matchRegionOnly,
-        reconnectToUserId: proOpts.reconnectToUserId || undefined,
-      });
+      socket.emit('find-partner', buildFindPartnerPayload());
       proMatchOptsRef.current = {};
     }, 2500);
     return () => clearTimeout(t);
   }, [socket, connected, status, connectPhase, localStream, interest, nickname, conversationMode, topicContract, isCreator, selectedInterests]);
+
+  useEffect(() => {
+    if (!socket) return undefined;
+    const onNeedCoins = (data) => {
+      setNeedCoins(data || { message: 'Not enough coins' });
+      setToast(data?.message || 'Not enough coins for that option');
+    };
+    const onPaused = (data) => {
+      setSessionPaused(true);
+      setVideoSession(data?.session || { paused: true, unlimited: false, remainingSeconds: 0 });
+      const stream = localStreamRef.current;
+      stream?.getVideoTracks?.().forEach((t) => { t.enabled = false; });
+    };
+    const onExtended = (data) => {
+      setSessionPaused(false);
+      setVideoSession(data?.session || { unlimited: !!data?.unlimited });
+      const stream = localStreamRef.current;
+      stream?.getVideoTracks?.().forEach((t) => { t.enabled = true; });
+      setToast(data?.unlimited ? 'Unlimited video for this match' : 'Video time extended');
+    };
+    const onWarn = (data) => {
+      setVideoSession(data?.session || { remainingSeconds: data?.remainingSeconds });
+      setToast('About one minute of free video left');
+    };
+    const onConnectReq = (data) => setConnectInvite(data);
+    const onConnectSent = () => setConnectStatus('sent');
+    const onConnectAcc = (data) => {
+      setConnectInvite(null);
+      setConnectStatus('accepted');
+      if (data?.needsIdentity) setToast('Sign in with a voice name later to save this connection');
+      else setToast('You stayed connected');
+    };
+    const onConnectDec = () => {
+      setConnectStatus('');
+      setToast('They passed on staying connected');
+    };
+    const onCreatorProfile = (data) => {
+      setPeer((prev) => prev && prev.socketId === data?.socketId
+        ? { ...prev, isCreator: true, creatorBadge: true, creatorHandle: data.creatorHandle, nickname: data.creatorHandle || prev.nickname }
+        : prev);
+    };
+    const onStats = (data) => setCreatorStats(data);
+    socket.on('video:need-coins', onNeedCoins);
+    socket.on('video:session-paused', onPaused);
+    socket.on('video:session-extended', onExtended);
+    socket.on('video:time-warning', onWarn);
+    socket.on('match-connect-request', onConnectReq);
+    socket.on('match-connect-sent', onConnectSent);
+    socket.on('match-connect-accepted', onConnectAcc);
+    socket.on('match-connect-declined', onConnectDec);
+    socket.on('creator:profile', onCreatorProfile);
+    socket.on('creator:video-stats', onStats);
+    return () => {
+      socket.off('video:need-coins', onNeedCoins);
+      socket.off('video:session-paused', onPaused);
+      socket.off('video:session-extended', onExtended);
+      socket.off('video:time-warning', onWarn);
+      socket.off('match-connect-request', onConnectReq);
+      socket.off('match-connect-sent', onConnectSent);
+      socket.off('match-connect-accepted', onConnectAcc);
+      socket.off('match-connect-declined', onConnectDec);
+      socket.off('creator:profile', onCreatorProfile);
+      socket.off('creator:video-stats', onStats);
+    };
+  }, [socket]);
+
+  useEffect(() => {
+    if (!videoSession?.endsAt || videoSession.unlimited || sessionPaused) return undefined;
+    const t = setInterval(() => {
+      setVideoSession((prev) => {
+        if (!prev?.endsAt || prev.unlimited) return prev;
+        return { ...prev, remainingSeconds: Math.max(0, Math.ceil((prev.endsAt - Date.now()) / 1000)) };
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [videoSession?.endsAt, videoSession?.unlimited, sessionPaused]);
 
   // Auto-recover if connected but remote video never arrives.
   useEffect(() => {
@@ -2107,6 +2190,11 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         peerInfoRef.current.set(p.socketId, { nickname: p.nickname, country: p.country, isCreator: p.isCreator });
       setPeer({ socketId: p.socketId, userId: p.userId, nickname: p.nickname, country: p.country, isCreator: p.isCreator, stream: null });
       setSharedInterests(Array.isArray(data.sharedInterests) ? data.sharedInterests : []);
+      setVideoSession(data.videoSession || { unlimited: true });
+      setSessionPaused(!!data.videoSession?.paused);
+      setConnectInvite(null);
+      setConnectStatus('');
+      setNeedCoins(null);
       if (data.mutualSkipReconnect) setToast('↩️ Reconnected — you both skipped at the same time');
       createPeerConnection(p.socketId);
         flushPendingOutIce(p.socketId);
@@ -2276,19 +2364,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       if (!roomIdRef.current && statusRef.current === 'searching' && localStreamRef.current) {
         findPartnerEmittedRef.current = true;
         setConnectPhase('matching');
-        let creatorToken = '';
-        try {
-          creatorToken = window.localStorage.getItem('mm_creator_session') || window.localStorage.getItem('mm_creatorId') || '';
-        } catch { /* ignore */ }
-        socket.emit('find-partner', {
-          mode: 'video',
-          interest: interest || 'general',
-          nickname: nickname || 'Anonymous',
-          conversationMode,
-          topicContract,
-          creatorToken: isCreator || creatorToken ? creatorToken : undefined,
-          interests: [...new Set([...(selectedInterests || []), ...(interest && interest !== 'general' ? [interest] : [])])],
-        });
+        socket.emit('find-partner', buildFindPartnerPayload());
       }
     };
     const onSocketDisconnect = (reason) => {
@@ -2674,6 +2750,28 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           peerName={peer?.nickname}
           matchedInterests={chatReady ? sharedInterests : []}
         />
+      )}
+      {status === 'connected' && (
+        <div className="px-3 pt-2 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <CreatorVerifiedMark show={!!peer?.isCreator || !!peer?.creatorBadge} handle={peer?.creatorHandle} />
+            <VideoTimeBadge session={videoSession} paymentsEnabled={videoPricing.enabled} />
+          </div>
+          <MatchConnectBar
+            visible
+            isCreator={!!isCreator}
+            peerIsCreator={!!peer?.isCreator}
+            peerHandle={peer?.creatorHandle}
+            incoming={connectInvite}
+            status={connectStatus}
+            onInviteFriend={() => socket.emit('match-connect-request', { roomId: roomIdRef.current, kind: 'friend' })}
+            onInviteFollow={() => socket.emit('match-connect-request', { roomId: roomIdRef.current, kind: 'follow-creator' })}
+            onAccept={() => socket.emit('match-connect-response', { roomId: roomIdRef.current, from: connectInvite?.from, accepted: true })}
+            onDecline={() => { socket.emit('match-connect-response', { roomId: roomIdRef.current, from: connectInvite?.from, accepted: false }); setConnectInvite(null); }}
+            onReveal={() => socket.emit('creator:reveal-profile', { roomId: roomIdRef.current })}
+          />
+          {isCreator && <CreatorVideoStats stats={creatorStats} />}
+        </div>
       )}
       <div className="mm-desk-chat__messages custom-scrollbar" id="video-chat-messages">
         {messages.filter((m) => !m.system || m.isIntro).map((m, i) => (
@@ -3355,7 +3453,33 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         partnerUserId={peer?.userId}
         userCountry={country}
         onActivated={() => window.location.reload()}
+        pricing={videoPricing}
       />
+      <VideoSessionPausedOverlay
+        open={sessionPaused && videoPricing.enabled && status === 'connected'}
+        pricing={videoPricing}
+        onExtend={() => socket.emit('video:extend-session', { roomId: roomIdRef.current })}
+        onUnlimited={() => socket.emit('video:extend-session', { roomId: roomIdRef.current, unlimited: true })}
+        onKeepText={() => setSessionPaused(false)}
+      />
+      {needCoins && (
+        <div className="mm-need-coins" role="status">
+          <p>{needCoins.message || 'Not enough coins for that option.'}</p>
+          {needCoins.canContinueFree && (
+            <button
+              type="button"
+              className="mm-need-coins-free"
+              onClick={() => {
+                setNeedCoins(null);
+                executeSkip({ matchCountryOnly: false, matchRegionOnly: false, matchGender: '', reconnectToUserId: null });
+              }}
+            >
+              Search anyone for free
+            </button>
+          )}
+          <button type="button" className="mm-need-coins-free" onClick={() => setNeedCoins(null)}>Dismiss</button>
+        </div>
+      )}
     </div>
   );
 }
