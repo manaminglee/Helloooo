@@ -889,10 +889,6 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
               )}
             </div>
             <div className="lv4-header__right mm-hide-desktop">
-            <SettingsGearButton
-              onClick={() => setShowSettings(true)}
-              className="lv4-header__gear"
-            />
             <button
               type="button"
               className="mm-landing-menu-btn"

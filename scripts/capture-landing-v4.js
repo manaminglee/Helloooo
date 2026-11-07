@@ -5,6 +5,8 @@ const { chromium } = require('@playwright/test');
 
 const OUT = '/workspace/helloooo-shots/landing-v4';
 const BASE = process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:5173';
+const SUFFIX = process.env.CAPTURE_SUFFIX || '';
+const LIGHT = process.env.CAPTURE_LIGHT === '1';
 
 function bootScript() {
   return () => {
@@ -65,21 +67,23 @@ async function stills(browser, errors) {
     await page.addInitScript(bootScript());
     await page.goto(BASE, { waitUntil: 'networkidle', timeout: 60000 });
     await waitForLanding(page);
-    await shot(page, `${vp.name}-initial.png`);
+    await shot(page, `${vp.name}-initial${SUFFIX}.png`);
 
     const dest = await pinTravel(page);
     await page.evaluate((y) => window.scrollTo(0, y), dest);
     await page.waitForSelector('[data-landing-stage][data-cards="1"]', { timeout: 8000 });
     await page.waitForTimeout(350);
-    await shot(page, `${vp.name}-cards.png`);
+    await shot(page, `${vp.name}-cards${SUFFIX}.png`);
 
-    if (vp.name === '375' || vp.name === '1440') {
+    if (!LIGHT && (vp.name === '375' || vp.name === '1440')) {
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.waitForTimeout(500);
-      await shot(page, `${vp.name}-reversed.png`);
+      await shot(page, `${vp.name}-reversed${SUFFIX}.png`);
     }
     await page.close();
   }
+
+  if (LIGHT) return;
 
   const reducePage = await browser.newPage({
     viewport: { width: 375, height: 812 },
@@ -90,7 +94,7 @@ async function stills(browser, errors) {
   await reducePage.addInitScript(bootScript());
   await reducePage.goto(BASE, { waitUntil: 'networkidle', timeout: 60000 });
   await waitForLanding(reducePage);
-  await shot(reducePage, '375-reduced-motion.png');
+  await shot(reducePage, `375-reduced-motion${SUFFIX}.png`);
   await reducePage.close();
 }
 
@@ -137,8 +141,10 @@ async function main() {
   const errors = [];
   try {
     await stills(browser, errors);
-    errors.push(...await recordScroll(browser, 'scroll-mobile', { width: 390, height: 844 }));
-    errors.push(...await recordScroll(browser, 'scroll-desktop', { width: 1440, height: 900 }));
+    errors.push(...await recordScroll(browser, `scroll-mobile-dock${SUFFIX || ''}`, { width: 390, height: 844 }));
+    if (!LIGHT) {
+      errors.push(...await recordScroll(browser, `scroll-desktop${SUFFIX}`, { width: 1440, height: 900 }));
+    }
   } finally {
     await browser.close();
   }

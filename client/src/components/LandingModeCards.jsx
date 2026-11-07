@@ -34,51 +34,42 @@ export function Waveform({ bars = 22, className = '' }) {
   );
 }
 
-/** Original illustrated pair — geometric, not a photograph. */
-export function PairPortrait() {
+const PREVIEW_VIDEO_SRC = '/assets/landing/preview-video.webp';
+const AUDIO_AVATARS = [
+  {
+    src: '/assets/landing/avatar-01.webp',
+    alt: 'Young woman in warm indoor light, listening in an audio room',
+  },
+  {
+    src: '/assets/landing/avatar-02.webp',
+    alt: 'Young man in a gray hoodie, joining an audio room from home',
+  },
+  {
+    src: '/assets/landing/avatar-03.webp',
+    alt: 'Young woman with freckles smiling during an audio chat',
+  },
+];
+
+export function PairPortrait({
+  alt = 'Two people talking on a video call',
+  loading = 'lazy',
+}) {
   return (
-    <svg viewBox="0 0 200 126" preserveAspectRatio="xMidYMid slice" aria-hidden>
-      <defs>
-        <linearGradient id="lv4room" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#3a2a3c" />
-          <stop offset="55%" stopColor="#2a2438" />
-          <stop offset="100%" stopColor="#1c1828" />
-        </linearGradient>
-      </defs>
-      <rect width="200" height="126" fill="url(#lv4room)" />
-      <ellipse cx="28" cy="18" rx="40" ry="22" fill="#4a3450" opacity="0.55" />
-      <rect x="142" y="0" width="58" height="46" fill="#44324a" opacity="0.45" />
-      {/* person left */}
-      <ellipse cx="72" cy="128" rx="42" ry="46" fill="#5c3d4a" />
-      <path d="M46 54c4-22 22-32 38-28 10 3 16 14 18 26 1 10-4 16-12 18-9 2-16-1-22-8-5 6-12 8-20 5-7-3-8-8-2-13z" fill="#2b1c18" />
-      <circle cx="74" cy="58" r="20" fill="#e0b094" />
-      <path d="M56 50c6-16 22-22 36-14 4 2 8 8 8 14 0-10-8-20-20-22-14-3-26 6-24 22z" fill="#2b1c18" />
-      <circle cx="68" cy="58" r="1.4" fill="#3a241c" />
-      <circle cx="80" cy="58" r="1.4" fill="#3a241c" />
-      <path d="M69 66c3 3 8 3 11 0" fill="none" stroke="#b57b68" strokeWidth="1.2" strokeLinecap="round" />
-      {/* person right */}
-      <ellipse cx="130" cy="132" rx="44" ry="48" fill="#3d4a62" />
-      <circle cx="128" cy="56" r="21" fill="#c48a62" />
-      <path d="M108 50c3-18 18-28 34-22 8 3 14 12 15 22 0-14-12-28-28-28-16 0-24 12-21 28z" fill="#1c1412" />
-      <path d="M111 58c-2 10 0 18 6 22h24c5-4 8-14 5-24-4 8-14 10-22 6-5-3-10-4-13-4z" fill="#1c1412" opacity="0.35" />
-      <circle cx="122" cy="56" r="1.5" fill="#3a241c" />
-      <circle cx="135" cy="56" r="1.5" fill="#3a241c" />
-      <path d="M123 66c4 3.2 10 3.2 14 0" fill="none" stroke="#8a5a42" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
+    <img
+      src={PREVIEW_VIDEO_SRC}
+      alt={alt}
+      width={800}
+      height={450}
+      decoding="async"
+      loading={loading}
+    />
   );
 }
 
-function MiniFace({ variant = 0 }) {
-  const fills = ['#e0b094', '#c48a62', '#d7b08c'];
-  const hair = ['#2b1c18', '#1c1412', '#4a3024'];
+function MiniFace({ src, alt, loading = 'lazy' }) {
   return (
     <span className="lv4-mini-face">
-      <svg viewBox="0 0 32 32" aria-hidden>
-        <rect width="32" height="32" fill="#2a2436" />
-        <circle cx="16" cy="14" r="8" fill={fills[variant % fills.length]} />
-        <path d={`M8 12c2-8 14-8 16 0-1-6-5-9-8-9s-7 3-8 9z`} fill={hair[variant % hair.length]} />
-        <ellipse cx="16" cy="30" rx="10" ry="7" fill={fills[variant % fills.length]} />
-      </svg>
+      <img src={src} alt={alt} width={128} height={128} decoding="async" loading={loading} />
     </span>
   );
 }
@@ -103,7 +94,7 @@ function PreviewVideo() {
   return (
     <span className="lv4-card__face lv4-card__preview lv4-preview-video">
       <span className="lv4-preview-video__scene">
-        <PairPortrait />
+        <PairPortrait alt="Two people meeting face to face on a video call" loading="eager" />
         <span className="lv4-preview-video__rec" />
       </span>
       <span className="lv4-preview-video__bar">
@@ -148,9 +139,9 @@ function PreviewAudio({ count }) {
       ) : null}
       <Waveform bars={18} />
       <span className="lv4-preview-audio__people">
-        <MiniFace variant={0} />
-        <MiniFace variant={1} />
-        <MiniFace variant={2} />
+        {AUDIO_AVATARS.map((person) => (
+          <MiniFace key={person.src} src={person.src} alt={person.alt} loading="eager" />
+        ))}
       </span>
     </span>
   );
@@ -179,8 +170,8 @@ function NamedFace({ mode, title, hint }) {
         {isAudio ? <Waveform bars={16} /> : null}
       </span>
       {isVideo ? (
-        <span className="lv4-named__thumb" aria-hidden>
-          <PairPortrait />
+        <span className="lv4-named__thumb">
+          <PairPortrait alt="" loading="lazy" />
         </span>
       ) : null}
       <ArrowIcon />

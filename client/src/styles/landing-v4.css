@@ -397,6 +397,13 @@ body:has(.mm-landing--v4),
   min-height: 0;
   display: block;
   width: 100%;
+  overflow: hidden;
+}
+.lv4-preview-video__scene img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .lv4-preview-video__bar {
   display: flex;
@@ -499,7 +506,8 @@ body:has(.mm-landing--v4),
   background: #2a2436;
 }
 .lv4-mini-face:first-child { margin-left: 0; }
-.lv4-mini-face svg { width: 100%; height: 100%; display: block; }
+.lv4-mini-face svg,
+.lv4-mini-face img { width: 100%; height: 100%; display: block; object-fit: cover; }
 
 /* named faces */
 .lv4-named {
@@ -565,7 +573,8 @@ body:has(.mm-landing--v4),
   overflow: hidden;
   align-self: stretch;
 }
-.lv4-named__thumb svg { width: 100%; height: 100%; display: block; object-fit: cover; }
+.lv4-named__thumb svg,
+.lv4-named__thumb img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .lv4-live-flag {
   display: inline-flex;
   align-items: center;
@@ -839,7 +848,7 @@ body:has(.lv4-header) .mm-conn-toast__pill {
   box-shadow: none;
 }
 
-/* Tablet: keep the slim wordmark + settings + menu pill.
+/* Tablet / phone: wordmark + menu pill. Settings live in the side menu.
    Full desktop actions (For Creators, coins, online) start at 1024px. */
 @media (max-width: 1023px) {
   .mm-landing--v4 .lv4-header .mm-landing-header__actions.mm-hide-mobile {
