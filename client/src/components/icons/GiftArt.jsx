@@ -324,12 +324,14 @@ Object.assign(ART, {
     ['M15 16.6h2v3h-2z', C.sky],
   ],
   legend_crown: [
-    ['M4 25.4h24v3.4H4z', C.deepGold],
-    ['M2.6 8.4 7.4 14 12 5l4 5.6L20 5l4.6 9 4.8-5.6-2 15.4H4.6z', C.amber],
-    ['M7.4 14 12 5l4 5.6L20 5l4.6 9-4 4.4H11.4z', C.gold],
-    ['M16 12.6a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8Z', C.red],
-    ['M8.4 17.6a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6M23.6 17.6a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6', C.magenta],
-    ['M2.6 6.4a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4M29.4 6.4a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4M16 1.6a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8', C.cream],
+    ['M4.6 22.6h22.8v4.6c0 .8-.6 1.4-1.4 1.4H6c-.8 0-1.4-.6-1.4-1.4z', C.deepGold],
+    ['M4.6 22.6h22.8v1.6H4.6z', C.gold],
+    ['M5.2 22.8 8 9.6 12.2 16 16 5.4 19.8 16 24 9.6 26.8 22.8z', C.amber],
+    ['M8.6 22.6 10.4 13.8 12.4 17.8 16 9.2 19.6 17.8 21.6 13.8 23.4 22.6z', C.gold],
+    ['M16 11.2a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4Z', C.red],
+    ['M9.4 16.8a1.55 1.55 0 1 1 0 3.1 1.55 1.55 0 0 1 0-3.1M22.6 16.8a1.55 1.55 0 1 1 0 3.1 1.55 1.55 0 0 1 0-3.1', C.magenta],
+    ['M16 3.2a2.05 2.05 0 1 1 0 4.1 2.05 2.05 0 0 1 0-4.1M8 7.6a1.55 1.55 0 1 1 0 3.1 1.55 1.55 0 0 1 0-3.1M24 7.6a1.55 1.55 0 1 1 0 3.1 1.55 1.55 0 0 1 0-3.1', C.cream],
+    ['M10.2 24h2.2v1.8h-2.2zM14.9 24h2.2v1.8h-2.2zM19.6 24h2.2v1.8h-2.2z', C.magenta],
   ],
 });
 
@@ -383,15 +385,6 @@ function slug(v) {
   return String(v).replace(/[^a-zA-Z0-9]/g, '');
 }
 
-/* Rarity is expressed by the surround, never by changing the mark itself, so a
-   Charm Bell is the same Charm Bell wherever it appears. */
-const GLOW = {
-  rare: 'rgba(56,189,248,0.30)',
-  epic: 'rgba(192,132,252,0.34)',
-  legendary: 'rgba(251,191,36,0.42)',
-  mega: 'rgba(251,113,133,0.42)',
-};
-
 /** Neutral mark for an id with no art yet — never an emoji fallback. */
 const FALLBACK = [
   ['M6 12.6h20v13a1.8 1.8 0 0 1-1.8 1.8H7.8A1.8 1.8 0 0 1 6 25.6z', '#a855f7'],
@@ -414,11 +407,11 @@ export const GiftArt = memo(function GiftArt({
   flat = false, className = '', title = null,
 }) {
   const paths = ART[id] || FALLBACK;
-  const glow = GLOW[tier];
   const s = Number(size) || 32;
   const key = slug(id || 'x');
   // Below ~22px the shading has nowhere to resolve and only lowers contrast.
   const shade = !flat && s >= 22;
+  const sparkle = shade && ['epic', 'legendary', 'mega', 'ultra'].includes(String(tier));
 
   const cls = ['mm-gift', motion && !still ? `mm-gift--${motion}` : '', className]
     .filter(Boolean).join(' ');
@@ -444,11 +437,13 @@ export const GiftArt = memo(function GiftArt({
             <radialGradient
               key={c}
               id={`gg-${key}-${slug(c)}`}
-              cx="34%" cy="26%" r="86%"
+              cx="32%" cy="24%" r="88%"
             >
-              <stop offset="0%" stopColor={lighten(c, 0.32)} />
-              <stop offset="46%" stopColor={c} />
-              <stop offset="100%" stopColor={darken(c, 0.30)} />
+              <stop offset="0%" stopColor={lighten(c, 0.48)} />
+              <stop offset="22%" stopColor={lighten(c, 0.22)} />
+              <stop offset="48%" stopColor={c} />
+              <stop offset="78%" stopColor={darken(c, 0.18)} />
+              <stop offset="100%" stopColor={darken(c, 0.38)} />
             </radialGradient>
           ))}
 
@@ -470,11 +465,21 @@ export const GiftArt = memo(function GiftArt({
 
           {/* A hotspot, not a wash. A broad sheen flattens light-coloured
               marks by lifting their whole silhouette toward white. */}
-          <radialGradient id={`gs-${key}`} cx="31%" cy="21%" r="44%">
-            <stop offset="0%" stopColor="#fff" stopOpacity="0.40" />
-            <stop offset="45%" stopColor="#fff" stopOpacity="0.08" />
+          <radialGradient id={`gs-${key}`} cx="30%" cy="18%" r="42%">
+            <stop offset="0%" stopColor="#fff" stopOpacity="0.62" />
+            <stop offset="28%" stopColor="#fff" stopOpacity="0.22" />
+            <stop offset="58%" stopColor="#fff" stopOpacity="0.05" />
             <stop offset="100%" stopColor="#fff" stopOpacity="0" />
           </radialGradient>
+          <radialGradient id={`gh-${key}`} cx="28%" cy="16%" r="18%">
+            <stop offset="0%" stopColor="#fff" stopOpacity="0.85" />
+            <stop offset="100%" stopColor="#fff" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient id={`gr-${key}`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#fff" stopOpacity="0.55" />
+            <stop offset="42%" stopColor="#fff" stopOpacity="0" />
+            <stop offset="100%" stopColor="#93c5fd" stopOpacity="0.28" />
+          </linearGradient>
 
           <radialGradient id={`go-${key}`} cx="76%" cy="86%" r="62%">
             <stop offset="0%" stopColor={toHex(SHADE)} stopOpacity="0.30" />
@@ -490,9 +495,7 @@ export const GiftArt = memo(function GiftArt({
         </defs>
       )}
 
-      {glow && <circle cx="16" cy="16" r="15" fill={glow} />}
-
-      {/* Contact shadow — the thing that stops a mark floating on the card. */}
+      {/* No rarity disc — the mark itself is the art. Soft contact shadow only. */}
       {shade && <ellipse cx="16.4" cy="28.6" rx="9.5" ry="2.4" fill={`url(#gc-${key})`} />}
 
       {paths.map(([d, color, strokeWidth], i) => (
@@ -521,6 +524,30 @@ export const GiftArt = memo(function GiftArt({
         <g mask={`url(#gm-${key})`}>
           <rect x="0" y="0" width="32" height="32" fill={`url(#go-${key})`} />
           <rect x="0" y="0" width="32" height="32" fill={`url(#gs-${key})`} />
+          <rect x="0" y="0" width="32" height="32" fill={`url(#gh-${key})`} />
+        </g>
+      )}
+
+      {shade && (
+        <g opacity="0.7">
+          {paths.filter(([, , w]) => !w).map(([d], i) => (
+            <path
+              key={`rim-${i}`}
+              d={d}
+              fill="none"
+              stroke={`url(#gr-${key})`}
+              strokeWidth="0.7"
+              strokeLinejoin="round"
+            />
+          ))}
+        </g>
+      )}
+
+      {sparkle && (
+        <g opacity="0.92">
+          <path d="M27.2 5.4 28 7.4l2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" fill="#fff7d6" />
+          <path d="M5.6 7 6.1 8.3 7.4 8.8 6.1 9.3 5.6 10.6 5.1 9.3 3.8 8.8 5.1 8.3z" fill="#fff" />
+          <path d="M26.6 22.2 27 23.2l1 .4-1 .4-.4 1-.4-1-1-.4 1-.4z" fill="#ffe8a3" />
         </g>
       )}
     </svg>

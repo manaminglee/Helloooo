@@ -431,6 +431,8 @@ function StageAvatar({ member, speaking, size = 'lg', onUserTap, isPa = false, f
         : '';
   const showMuted = member?.role !== 'listener' && member?.role !== 'cohost' && !!member?.micMuted;
   const live = member?.role !== 'listener' && member?.role !== 'cohost' && !member?.micMuted;
+  const photo = member?.avatarUrl || member?.avatar_url || member?.photoUrl || member?.photo || '';
+  const initial = String(member?.nickname || '?').trim().slice(0, 1).toUpperCase() || '?';
 
   return (
     <button
@@ -446,7 +448,11 @@ function StageAvatar({ member, speaking, size = 'lg', onUserTap, isPa = false, f
       }`}
       title={onUserTap ? `Tap ${member?.nickname}` : member?.nickname}
     >
-      {(member?.nickname || '?').slice(0, 1).toUpperCase()}
+      {photo ? (
+        <img src={photo} alt="" className="mm-audio-avatar__img" />
+      ) : (
+        <span className="mm-audio-avatar__face">{initial}</span>
+      )}
       {showMuted && (
         <span className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-[#0d1016] grid place-items-center text-[9px] ring-1 ring-white/15" aria-label="Muted">🔇</span>
       )}

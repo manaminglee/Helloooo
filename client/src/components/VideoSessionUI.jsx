@@ -492,6 +492,68 @@ export function VideoSearchingOverlay({
   );
 }
 
+/** Full matching canvas: self-preview or placeholder, tags, cancel, compact notice. */
+export function VideoMatchmakingStage({
+  bindVideo,
+  hasPreview = false,
+  mirror = false,
+  cameraOff = false,
+  videoFilter = 'none',
+  nickname = '',
+  tags = [],
+  cameraNotice = '',
+  onRetryCamera,
+  onCancel,
+}) {
+  const initial = String(nickname || 'You').trim().slice(0, 1).toUpperCase() || 'Y';
+  return (
+    <div className="mm-search-stage" aria-live="polite" aria-label="Searching for a match">
+      {cameraNotice ? (
+        <div className="mm-search-stage__toast" role="status">
+          <span>{cameraNotice}</span>
+          {onRetryCamera ? (
+            <button type="button" onClick={onRetryCamera}>Retry</button>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="mm-search-stage__orb">
+        <span className="mm-search-stage__ring" aria-hidden />
+        <span className="mm-search-stage__ring mm-search-stage__ring--2" aria-hidden />
+        <div className="mm-search-stage__preview">
+          {hasPreview ? (
+            <video
+              ref={bindVideo}
+              autoPlay
+              muted
+              playsInline
+              className={`${mirror ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
+              style={{ filter: videoFilter && videoFilter !== 'none' ? videoFilter : 'none' }}
+            />
+          ) : (
+            <div className="mm-search-stage__placeholder" aria-hidden>
+              {initial}
+            </div>
+          )}
+        </div>
+      </div>
+      <p className="mm-search-stage__title">Looking for a match<span className="mm-search-stage__dots" /></p>
+      <p className="mm-search-stage__sub">Matching you with someone new</p>
+      {tags.length > 0 ? (
+        <div className="mm-search-stage__tags">
+          {tags.slice(0, 6).map((tag) => (
+            <span key={tag} className="mm-search-stage__tag">#{tag}</span>
+          ))}
+        </div>
+      ) : null}
+      {onCancel ? (
+        <button type="button" className="mm-search-stage__cancel" onClick={onCancel}>
+          Cancel search
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 
 export function CreatorVerifiedMark({ show, handle, className = '' }) {
   if (!show) return null;

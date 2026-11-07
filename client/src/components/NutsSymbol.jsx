@@ -1,8 +1,8 @@
 import { useId } from 'react';
 
 /**
- * Polished Nuts currency mark — original acorn-like seed with gold/pink sheen.
- * Unique gradient ids so multiple badges on one screen stay crisp.
+ * Premium Nuts currency mark. Designed to read clearly at 16–24px:
+ * chunky gold seed, contrasting pink cap, one highlight, no hairlines.
  */
 export function NutsSymbol({ size = 16, className = '', title = 'Nuts' }) {
   const s = Number(size) || 16;
@@ -22,35 +22,55 @@ export function NutsSymbol({ size = 16, className = '', title = 'Nuts' }) {
       aria-label={title}
     >
       <defs>
-        <linearGradient id={g} x1="6" y1="8" x2="26" y2="30" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#FFE7A3" />
-          <stop offset="0.42" stopColor="#E0A93A" />
-          <stop offset="1" stopColor="#8A4B12" />
+        <linearGradient id={g} x1="8" y1="10" x2="24" y2="30" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FFF3C4" />
+          <stop offset="0.38" stopColor="#F0BE4A" />
+          <stop offset="0.72" stopColor="#C4841C" />
+          <stop offset="1" stopColor="#7A3E0C" />
         </linearGradient>
-        <linearGradient id={cap} x1="8" y1="2" x2="24" y2="16" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#FF8AAB" />
-          <stop offset="0.55" stopColor="#FF2D6F" />
+        <linearGradient id={cap} x1="8" y1="2" x2="24" y2="15" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FFB1C8" />
+          <stop offset="0.45" stopColor="#FF2D6F" />
           <stop offset="1" stopColor="#9F1239" />
         </linearGradient>
-        <radialGradient id={shine} cx="38%" cy="32%" r="50%">
-          <stop offset="0%" stopColor="#fff" stopOpacity="0.7" />
+        <radialGradient id={shine} cx="34%" cy="38%" r="42%">
+          <stop offset="0%" stopColor="#fff" stopOpacity="0.85" />
           <stop offset="100%" stopColor="#fff" stopOpacity="0" />
         </radialGradient>
       </defs>
-      <ellipse cx="16" cy="29" rx="7.2" ry="1.6" fill="#000" opacity="0.22" />
+      <ellipse cx="16" cy="29.2" rx="7.4" ry="1.5" fill="#000" opacity="0.28" />
       <path
-        d="M16 8.2c6.4 0 11 4.6 11 11.2 0 6.2-4.4 11-11 11s-11-4.8-11-11C5 12.8 9.6 8.2 16 8.2Z"
+        d="M16 10.2c6.5 0 11.2 4.2 11.2 10.4 0 6.2-4.5 10.6-11.2 10.6S4.8 26.8 4.8 20.6C4.8 14.4 9.5 10.2 16 10.2Z"
         fill={`url(#${g})`}
       />
-      <path d="M16 10.4c0 0-3.2 3.8-3.2 9.6S16 28.6 16 28.6" stroke="#6B3A10" strokeWidth="1.05" strokeLinecap="round" opacity="0.45" />
-      <path d="M16 10.4c0 0 3.2 3.8 3.2 9.6S16 28.6 16 28.6" stroke="#6B3A10" strokeWidth="1.05" strokeLinecap="round" opacity="0.28" />
       <path
-        d="M9.2 10.2C10.4 6.4 13 4 16 4c3 0 5.6 2.4 6.8 6.2-2 .8-4.4 1.2-6.8 1.2s-4.8-.4-6.8-1.2Z"
+        d="M16 10.2c6.5 0 11.2 4.2 11.2 10.4 0 6.2-4.5 10.6-11.2 10.6S4.8 26.8 4.8 20.6C4.8 14.4 9.5 10.2 16 10.2Z"
+        fill="none"
+        stroke="#5A2E0C"
+        strokeWidth="1.15"
+        opacity="0.35"
+      />
+      <ellipse cx="12.4" cy="17.6" rx="3.5" ry="4.6" fill={`url(#${shine})`} />
+      <path
+        d="M6.6 12.4C8.6 6.2 12.1 3.2 16 3.2c3.9 0 7.4 3 9.4 9.2-2.7 1.25-5.8 1.9-9.4 1.9s-6.7-.65-9.4-1.9Z"
         fill={`url(#${cap})`}
       />
-      <path d="M16 3.2c0 0-.2 2.4 0 3.6" stroke="#7F1D1D" strokeWidth="1.3" strokeLinecap="round" />
-      <circle cx="16" cy="3.1" r="1.15" fill="#FF2D6F" />
-      <ellipse cx="12.4" cy="16.5" rx="3.2" ry="4.4" fill={`url(#${shine})`} />
+      <path
+        d="M6.6 12.4C8.6 6.2 12.1 3.2 16 3.2c3.9 0 7.4 3 9.4 9.2-2.7 1.25-5.8 1.9-9.4 1.9s-6.7-.65-9.4-1.9Z"
+        fill="none"
+        stroke="#7F1D1D"
+        strokeWidth="1.05"
+        opacity="0.35"
+      />
+      <path
+        d="M8.4 10.6c1.6-3.4 4.1-5.2 7.6-5.2"
+        stroke="#FFD0DE"
+        strokeWidth="1.15"
+        strokeLinecap="round"
+        opacity="0.7"
+      />
+      <path d="M16 2.4v3.4" stroke="#7F1D1D" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="16" cy="2.5" r="1.55" fill="#FF2D6F" stroke="#FFD0DE" strokeWidth="0.5" />
     </svg>
   );
 }

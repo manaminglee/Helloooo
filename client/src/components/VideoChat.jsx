@@ -65,6 +65,7 @@ import {
   VideoReactionBar,
   VideoSessionBanners,
   VideoSearchingOverlay,
+  VideoMatchmakingStage,
   VideoSessionPausedOverlay,
   VideoTimeBadge,
 } from './VideoSessionUI';
@@ -2936,7 +2937,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   <span className="mm-desk-dot mm-desk-dot--green" aria-hidden /> You
                 </div>
                 <VideoWatermark />
-                {cameraError && !localStream && <AudioOnlyFallback nickname={nickname} micBlocked={micBlocked} onRetryCamera={retryMediaLocal} onAudioOnly={continueAudioOnly} />}
+                {status === 'idle' && cameraError && !localStream && <AudioOnlyFallback nickname={nickname} micBlocked={micBlocked} onRetryCamera={retryMediaLocal} onAudioOnly={continueAudioOnly} />}
                 <video
                   ref={bindLocalVideo}
                   autoPlay
@@ -2945,6 +2946,12 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   className={`${mirrorLocalVideo ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
                   style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }}
                 />
+                {(status === 'searching' || status === 'idle') && (audioOnly || cameraError || !localStream) && (
+                  <div className="mm-desk-preview-fallback" aria-hidden>
+                    <span>{String(nickname || 'You').trim().slice(0, 1).toUpperCase() || 'Y'}</span>
+                    <p>You</p>
+                  </div>
+                )}
                 {status === 'idle' && (
                   <div className="mm-desk-pane__placeholder">
                     <p className="text-sm font-semibold text-white/80 mb-3">Ready to chat?</p>
@@ -2962,9 +2969,13 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 </div>
                 <VideoWatermark />
                 {status === 'searching' && (
-                  <div className="mm-desk-pane__placeholder">
-                    <VideoSearchingOverlay label="Searching…" sublabel="Finding someone for you" />
-                  </div>
+                  <VideoMatchmakingStage
+                    hasPreview={false}
+                    nickname={nickname}
+                    tags={(selectedInterests.length ? selectedInterests : interestTags).slice(0, 6)}
+                    cameraNotice=""
+                    onCancel={handleStop}
+                  />
                 )}
                 {status === 'idle' && (
                   <div className="mm-desk-pane__placeholder">
@@ -3059,7 +3070,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                 </button>
               </div>
             )}
-            {(status === 'idle' || status === 'searching') && (
+            {status === 'idle' && (
               <>
                 {cameraError && !localStream && <AudioOnlyFallback nickname={nickname} micBlocked={micBlocked} onRetryCamera={retryMediaLocal} onAudioOnly={continueAudioOnly} />}
                 <video
@@ -3071,6 +3082,20 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
                   style={{ filter: isCreator && activeFilter !== 'none' ? activeFilter : 'none' }}
                 />
               </>
+            )}
+            {status === 'searching' && (
+              <VideoMatchmakingStage
+                bindVideo={bindLocalVideo}
+                hasPreview={!!localStream && !cameraError && !audioOnly}
+                mirror={mirrorLocalVideo}
+                cameraOff={cameraOff}
+                videoFilter={isCreator && activeFilter !== 'none' ? activeFilter : 'none'}
+                nickname={nickname}
+                tags={(selectedInterests.length ? selectedInterests : interestTags).slice(0, 6)}
+                cameraNotice={(cameraError || audioOnly || !localStream) ? (cameraError || 'Camera unavailable — matching in audio-only mode') : ''}
+                onRetryCamera={retryMediaLocal}
+                onCancel={handleStop}
+              />
             )}
             {status === 'connected' && (
               <div className={`mm-mobile-video-stage ${!chatCollapsed ? 'mm-mobile-video-stage--split' : ''} ${!isSidebarDesk && !chatCollapsed ? 'mm-mobile-video-stage--horizontal' : ''}`}>
@@ -3155,13 +3180,6 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             )}
           </div>
 
-          {status === 'searching' && (
-            <VideoSearchingOverlay
-              panel
-              label="Searching…"
-              sublabel="Finding someone for you"
-            />
-          )}
 
           {status === 'connected' && (
             <div ref={chatPanelRef} className={`mm-mobile-chat ${chatCollapsed ? 'mm-mobile-chat--collapsed' : ''}`} id="video-chat-messages-wrap">
@@ -3285,8 +3303,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         title="Report (anonymous)"
       />
 
-      {toast && (
-        <div className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] sm:bottom-20 left-1/2 -translate-x-1/2 z-[200] max-w-[min(92vw,24rem)] px-4 py-2 rounded-lg bg-realm-surface/95 border border-violet-500/20 text-sm text-white shadow-xl shadow-violet-950/40 animate-fade-in text-center">
+      {toast && !(status === 'searching' && /camera unavailable/i.test(String(toast))) && (
+        <div className="mm-video-toast" role="status">
           {toast}
         </div>
       )}

@@ -63,8 +63,14 @@ export function GiftCelebrationOverlay({ gift: payload, onDone }) {
       aria-hidden
     >
       <div className="pg-celeb__dim" />
+      <div className="pg-celeb__bloom" />
       {quality !== 'low' && (
         <GiftParticles kind={particleKind(gift)} quality={quality} active={phase >= 2} />
+      )}
+      {quality !== 'low' && ['epic', 'legendary', 'ultra', 'mega'].includes(gift.rarity) && (
+        <div className="pg-celeb__burst" aria-hidden>
+          <i /><i /><i /><i /><i /><i />
+        </div>
       )}
       <div className="pg-celeb__stage">
         <GiftRenderer gift={gift} mode="celebration" quality={quality} size={150} />
