@@ -36,12 +36,16 @@ function displayLevel(record) {
 
 function levelBadgeLabel(level) {
   if (level <= 0) return null;
-  if (level >= 40) return '👑';
-  if (level >= 25) return '💎';
-  if (level >= 15) return '⭐';
-  if (level >= 10) return '🔥';
-  if (level >= 5) return '✨';
-  return null;
+  if (level >= 45) return 'Standing O';
+  if (level >= 40) return 'Encore';
+  if (level >= 35) return 'Crescendo';
+  if (level >= 30) return 'Overture';
+  if (level >= 25) return 'Anthem';
+  if (level >= 20) return 'Harmony';
+  if (level >= 15) return 'Melody';
+  if (level >= 10) return 'Chorus';
+  if (level >= 5) return 'Hum';
+  return 'Whisper';
 }
 
 function levelPerks(level) {

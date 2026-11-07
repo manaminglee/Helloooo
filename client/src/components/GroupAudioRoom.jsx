@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AudioRoleBadge, AudioLevelBadge, AudioLevelUpBurst, useLevelUpFlash } from './AudioBadges';
 import { createPortal } from 'react-dom';
 import { useAudioChannel } from '../hooks/useAudioChannel';
 import { useIceServers } from '../hooks/useIceServers';
@@ -420,6 +421,7 @@ function EntryAnimation({ event, onDone }) {
 }
 
 function StageAvatar({ member, speaking, size = 'lg', onUserTap, isPa = false, frameClass = '' }) {
+  const flash = useLevelUpFlash(member?.displayLevel);
   const dim = size === 'lg' ? 'mm-audio-avatar mm-audio-avatar--lg' : 'mm-audio-avatar mm-audio-avatar--sm';
   const royal =
     member?.role === 'host'
@@ -451,8 +453,9 @@ function StageAvatar({ member, speaking, size = 'lg', onUserTap, isPa = false, f
       {live && (
         <span className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-emerald-500 grid place-items-center text-[8px] font-black text-black ring-1 ring-emerald-300/80" aria-label="Live">●</span>
       )}
-      {member?.role === 'host' && <span className="mm-audio-badge mm-audio-badge--host" aria-label="Admin">👑</span>}
-      {member?.role === 'moderator' && <span className="mm-audio-badge mm-audio-badge--mod" aria-label="Co-taker">🛡️</span>}
+      <AudioRoleBadge role={member?.role} />
+      <AudioLevelBadge level={member?.displayLevel} label={member?.levelBadge} />
+      <AudioLevelUpBurst active={flash} />
     </button>
   );
 }
