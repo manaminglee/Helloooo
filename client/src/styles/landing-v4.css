@@ -822,17 +822,41 @@ body:has(.mm-landing--v4),
 .mm-mobile-header__brand { overflow: visible; }
 .mm-mobile-header .helloooo-logo { flex-shrink: 0; }
 
+/* Sit inside the floating pill (vertically centered, in the middle gap)
+   so the badge never covers the wordmark, actions, or the headline —
+   phones, tablets, and desktops alike. */
 body:has(.lv4-header) .mm-conn-toast {
-  top: calc(env(safe-area-inset-top, 0px) + 4.2rem);
-  right: auto;
+  top: calc(max(0.65rem, env(safe-area-inset-top, 0px)) + 1.425rem);
   left: 50%;
-  transform: translateX(-50%);
+  right: auto;
+  transform: translate(-50%, -50%);
+  z-index: 160;
 }
-@media (max-width: 767px) {
-  body:has(.lv4-header) .mm-conn-toast {
-    left: max(0.85rem, env(safe-area-inset-left));
-    right: auto;
-    transform: none;
+body:has(.lv4-header) .mm-conn-toast__pill {
+  min-height: 1.35rem;
+  padding: 0.16rem 0.5rem 0.16rem 0.38rem;
+  font-size: 9px;
+  box-shadow: none;
+}
+
+/* Tablet: keep the slim wordmark + settings + menu pill.
+   Full desktop actions (For Creators, coins, online) start at 1024px. */
+@media (max-width: 1023px) {
+  .mm-landing--v4 .lv4-header .mm-landing-header__actions.mm-hide-mobile {
+    display: none !important;
+  }
+  .mm-landing--v4 .lv4-header .lv4-header__right.mm-hide-desktop {
+    display: flex !important;
+  }
+}
+@media (min-width: 1024px) {
+  .mm-landing--v4 .lv4-header .mm-landing-header__actions.mm-hide-mobile {
+    display: flex !important;
+    max-width: none;
+    gap: 0.45rem;
+  }
+  .mm-landing--v4 .lv4-header .lv4-header__right.mm-hide-desktop {
+    display: none !important;
   }
 }
 
