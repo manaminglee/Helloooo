@@ -1,9 +1,6 @@
-import { motion } from 'framer-motion';
 import { LANDING_MODE_CARDS } from '../constants/landingModes';
 import { MmIcon } from './icons/MmIcon';
-import { fadeUp, stagger, springSnappy } from '../utils/landingMotion';
 
-/** Warm chat chunks so the first join feels instant. */
 function prefetchModeChunk(modeId) {
   try {
     if (modeId === 'video') import('./VideoChat');
@@ -16,14 +13,6 @@ function prefetchModeChunk(modeId) {
   }
 }
 
-const CARD_GLOW = {
-  video: 'lv2-mode-card--violet',
-  text: 'lv2-mode-card--cyan',
-  group_video: 'lv2-mode-card--indigo',
-  group_text: 'lv2-mode-card--amber',
-  lives: 'lv2-mode-card--rose',
-};
-
 const CARD_ICON = {
   video: 'camera',
   text: 'chat',
@@ -32,43 +21,46 @@ const CARD_ICON = {
   lives: 'broadcast',
 };
 
-export function LandingModeCards({ onStart, connected, isJoining, className = '' }) {
+const CARD_TITLE = {
+  video: '1:1 Video',
+  text: 'Text Chat',
+  group_video: 'Group Video',
+  group_text: 'Audio Rooms',
+  lives: 'Go Live',
+};
+
+export function LandingModeCards({ onStart, connected, isJoining, counts = {}, className = '' }) {
   return (
-    <motion.div
-      className={`lv2-mode-grid ${className}`.trim()}
-      initial="hidden"
-      whileInView="visible"
-      viewport={{ once: true, margin: '-40px' }}
-      variants={stagger(0.07, 0.02)}
-    >
-      {LANDING_MODE_CARDS.map((m) => (
-        <motion.button
-          key={m.id}
-          type="button"
-          disabled={!connected || isJoining}
-          onClick={() => onStart(m.id)}
-          onPointerEnter={() => prefetchModeChunk(m.id)}
-          onFocus={() => prefetchModeChunk(m.id)}
-          aria-label={`${m.name}: ${m.hint}`}
-          className={`lv2-mode-card ${CARD_GLOW[m.id] || ''} disabled:opacity-40 disabled:cursor-not-allowed`}
-          variants={fadeUp}
-          whileHover={connected && !isJoining ? { y: -6, scale: 1.02 } : undefined}
-          whileTap={connected && !isJoining ? { scale: 0.98 } : undefined}
-          transition={springSnappy}
-        >
-          <span className="lv2-mode-card__shine" aria-hidden />
-          <span className="lv2-mode-card__glow" aria-hidden />
-          <div className="lv2-mode-card__top">
-            <span className="lv2-mode-card__icon" aria-hidden><MmIcon name={CARD_ICON[m.id] || 'sparkle'} size={22} /></span>
-            <span className="lv2-mode-card__tag">{m.tag}</span>
-          </div>
-          <div className="lv2-mode-card__body">
-            <h3 className="lv2-mode-card__title">{m.name}</h3>
-            <p className="lv2-mode-card__hint">{m.hint}</p>
-          </div>
-          <span className="lv2-mode-card__arrow" aria-hidden>→</span>
-        </motion.button>
-      ))}
-    </motion.div>
+    <div id="lv3-modes" className={`lv3-modes ${className}`.trim()}>
+      {LANDING_MODE_CARDS.map((m) => {
+        const count = Number(counts[m.id]);
+        const showCount = Number.isFinite(count) && count > 0;
+        return (
+          <button
+            key={m.id}
+            type="button"
+            disabled={!connected || isJoining}
+            onClick={() => onStart(m.id)}
+            onPointerEnter={() => prefetchModeChunk(m.id)}
+            onFocus={() => prefetchModeChunk(m.id)}
+            aria-label={`${m.name}: ${m.hint}`}
+            className={`lv3-mode lv3-mode--${m.id}`}
+          >
+            <span className="lv3-mode__icon" aria-hidden>
+              <MmIcon name={CARD_ICON[m.id] || 'sparkle'} size={26} />
+            </span>
+            <span className="lv3-mode__meta">
+              <h3 className="lv3-mode__title">{CARD_TITLE[m.id] || m.name}</h3>
+              {showCount ? (
+                <span className="lv3-mode__count">
+                  <span className="lv3-mode__dot" aria-hidden />
+                  {count.toLocaleString()} online
+                </span>
+              ) : null}
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }

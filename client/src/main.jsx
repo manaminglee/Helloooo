@@ -8,6 +8,7 @@ import { armIosMediaUnlock } from './utils/iosMediaUnlock';
 import { bootIosNativeShell } from './utils/iosNativeBoot';
 import './index.css';
 import './styles/ui-redesign.css';
+import './styles/landing-v3.css';
 import './styles/ios-native.css';
 
 markIosPlatformClasses();
