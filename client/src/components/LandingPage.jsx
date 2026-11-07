@@ -14,7 +14,6 @@ import { loadSessionPrefs, saveSessionPrefs } from '../constants/conversationMod
 import { PHASE_4_UNIQUE } from '../constants/features';
 import { SettingsGearButton } from './SettingsGear';
 import LandingHero from './LandingHero';
-import { LandingModeCards } from './LandingModeCards';
 import { LandingLiveNow, LandingSafetyCard } from './LandingLiveNow';
 import { useLandingPresence } from '../hooks/useLandingPresence';
 import LandingBackground from './LandingBackground';
@@ -186,7 +185,7 @@ const INSIGHTS = [
   'Report unsafe behavior from any chat screen.',
 ];
 
-// Mode cards are defined in LandingHero.jsx (single source of truth).
+// Mode cards live in the scroll-morph stage inside LandingHero.
 // `group_text` now routes to live Voice Rooms.
 
 export function LandingPage({ onJoin, connected: appConnected, coinState, isJoining = false, registered = false, currentActiveSeconds = 0, joinMeta = {}, setJoinMeta, country: userCountry = null }) {
@@ -760,7 +759,7 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
   const scrollToStart = () => startRef.current?.scrollIntoView({ behavior: 'smooth' });
 
   return (
-    <div className="mm-landing mm-landing--v2 text-white relative">
+    <div className="mm-landing mm-landing--v4 text-white relative">
 
       <LandingBackground lowPower={lowPower} />
 
@@ -822,7 +821,7 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
       {/* HEADER */}
       {!showDashboardModal && (
         <motion.header
-          className="mm-landing-header lv3-header"
+          className="mm-landing-header lv4-header"
           initial="hidden"
           animate="visible"
           variants={slideDown}
@@ -830,12 +829,7 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
           <div className="mm-landing-header__bar">
             <div className="mm-landing-header__brand">
               <button type="button" onClick={scrollToStart} className="flex items-center gap-3 min-w-0 text-left rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500/40 mm-compact-btn" aria-label="Helloooo">
-                <span className="lv3-wordmark">
-                  Helloooo
-                  <svg className="lv3-wordmark__spark" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-                    <path d="M8 0.6 8.95 6.05 14.4 7 8.95 7.95 8 13.4 7.05 7.95 1.6 7 7.05 6.05z" />
-                  </svg>
-                </span>
+                <span className="lv4-wordmark">helloooo</span>
               </button>
             </div>
             <OnlineViewersBadge
@@ -894,10 +888,10 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
                 </div>
               )}
             </div>
-            <div className="lv3-header__right mm-hide-desktop">
+            <div className="lv4-header__right mm-hide-desktop">
             <SettingsGearButton
               onClick={() => setShowSettings(true)}
-              className="lv3-header__gear"
+              className="lv4-header__gear"
             />
             <button
               type="button"
@@ -922,28 +916,21 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
           <AdSlot slotKey="hero" script={adScripts?.hero} adsEnabled={adsEnabled} className="w-full max-w-4xl" />
 
           {/* Redesigned 3D hero — mobile-first, replaces the old static header */}
-          <div className="lv3-home">
+          <div className="lv4-home">
           <LandingHero
             connected={connected}
             isJoining={isJoining}
             onStartChat={() => handleStartInteraction('video')}
-            onBrowseLive={() => {
-              const el = document.getElementById('lv3-live-now');
-              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              else handleStartInteraction('lives');
-            }}
-          />
-          <LandingModeCards
             onStart={handleStartInteraction}
-            connected={connected}
-            isJoining={isJoining}
             counts={landingPresence.counts}
           />
+          <div className="lv4-after">
           <LandingLiveNow
             lives={landingPresence.lives}
             onSeeAll={() => handleStartInteraction('lives')}
           />
           <LandingSafetyCard />
+          </div>
           </div>
 
           <motion.section

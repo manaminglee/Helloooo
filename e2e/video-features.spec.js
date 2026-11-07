@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { VIDEO_MODE_NAME } = require('./landingHelpers');
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -10,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 
 test('video preview keeps playing through layouts and mobile resize', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Video Chat: 1-on-1 live video' }).click();
+  await page.getByRole('button', { name: VIDEO_MODE_NAME }).click();
   await expect(page.getByRole('button', { name: 'Vertical layout', exact: true })).toBeVisible({ timeout: 20000 });
   const playing = () => page.locator('video').evaluateAll(videos => videos.some(v => v.videoWidth > 0 && !v.paused && v.srcObject?.active));
   await expect.poll(playing).toBe(true);
@@ -54,7 +55,7 @@ test('two independent browsers exchange video and messages', async ({ page, brow
   try {
     for (const p of [page, other]) {
       await p.goto('http://127.0.0.1:5173/');
-      await p.getByRole('button', { name: 'Video Chat: 1-on-1 live video' }).click();
+      await p.getByRole('button', { name: VIDEO_MODE_NAME }).click();
     }
     for (const p of [page, other]) {
       await expect.poll(() => p.locator('video').evaluateAll(v => v.filter(el => el.videoWidth > 0 && !el.paused && el.srcObject?.active).length), { timeout: 35000 }).toBeGreaterThanOrEqual(2);

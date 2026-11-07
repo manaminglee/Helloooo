@@ -6,26 +6,26 @@ export function LandingLiveNow({ lives = [], onSeeAll }) {
   const extra = Math.max(0, lives.length - shown.length);
 
   return (
-    <section className="lv3-livenow" id="lv3-live-now">
-      <div className="lv3-livenow__head">
+    <section className="lv4-livenow" id="landing-live-now">
+      <div className="lv4-livenow__head">
         <h2>Live now</h2>
-        <button type="button" className="lv3-livenow__all" onClick={onSeeAll}>
+        <button type="button" className="lv4-livenow__all" onClick={onSeeAll}>
           See all <span aria-hidden>›</span>
         </button>
       </div>
       {shown.length === 0 ? (
-        <p className="lv3-livenow__empty">No one is live right now. Be the first to go live.</p>
+        <p className="lv4-livenow__empty">No one is live right now. Be the first to go live.</p>
       ) : (
-        <div className="lv3-livenow__row">
+        <div className="lv4-livenow__row">
           {shown.map((live) => (
             <button
               key={live.id}
               type="button"
-              className="lv3-livenow__item"
+              className="lv4-livenow__item"
               onClick={onSeeAll}
               aria-label={`${live.displayName || live.handle || 'Creator'} is live`}
             >
-              <span className="lv3-livenow__avatar">
+              <span className="lv4-livenow__avatar">
                 <CreatorAvatar
                   src={live.avatarUrl}
                   name={live.displayName || live.handle || 'Live'}
@@ -33,11 +33,11 @@ export function LandingLiveNow({ lives = [], onSeeAll }) {
                   live
                 />
               </span>
-              <span className="lv3-livenow__badge">LIVE</span>
+              <span className="lv4-livenow__badge">LIVE</span>
             </button>
           ))}
           {extra > 0 ? (
-            <button type="button" className="lv3-livenow__more" onClick={onSeeAll}>
+            <button type="button" className="lv4-livenow__more" onClick={onSeeAll}>
               + more
             </button>
           ) : null}
@@ -49,8 +49,8 @@ export function LandingLiveNow({ lives = [], onSeeAll }) {
 
 export function LandingSafetyCard() {
   return (
-    <section className="lv3-safety" aria-label="Safety and trust">
-      <span className="lv3-safety__icon" aria-hidden>
+    <section className="lv4-safety" aria-label="Safety and trust">
+      <span className="lv4-safety__icon" aria-hidden>
         <MmIcon name="shield" size={22} />
       </span>
       <div>
