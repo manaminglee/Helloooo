@@ -30,8 +30,8 @@ export function LandingSideMenu({
   open,
   onClose,
   creatorStatus,
-  connected,
   balance,
+  walletReady,
   streak,
   canClaim,
   nextClaim,
@@ -116,20 +116,19 @@ export function LandingSideMenu({
           </div>
         )}
 
-        {connected && balance !== undefined && (
-          <div className="mm-side-menu__coins">
-            <CoinBadge
-              balance={balance}
-              streak={streak}
-              canClaim={canClaim}
-              nextClaim={nextClaim ?? 0}
-              claimCoins={claimCoins}
-              registered={registered}
-              currentActiveSeconds={currentActiveSeconds}
-              isCreator={!!creatorStatus || socketIsCreator}
-            />
-          </div>
-        )}
+        <div className="mm-side-menu__coins">
+          <CoinBadge
+            balance={balance}
+            loading={!walletReady && balance == null}
+            streak={streak}
+            canClaim={canClaim}
+            nextClaim={nextClaim ?? 0}
+            claimCoins={claimCoins}
+            registered={registered}
+            currentActiveSeconds={currentActiveSeconds}
+            isCreator={!!creatorStatus || socketIsCreator}
+          />
+        </div>
 
         <div className="mm-side-menu__online">
           <OnlineViewersBadge count={onlineCount} country={country} showLabel />

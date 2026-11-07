@@ -30,6 +30,7 @@ import { lazyRetry, clearChunkReloadFlag } from './utils/lazyRetry';
 import { applyPageSeo, applyPrivateSessionSeo } from './utils/seo';
 import { useAudioIdentity } from './hooks/useAudioIdentity';
 import { useVisualViewport } from './hooks/useVisualViewport';
+import { selectDisplayBalance } from './utils/walletDisplay';
 import { HellooooLoader } from './components/HellooooBrand';
 // Lazy load off-screen and secondary modules for extreme performance
 const AdminDashboard = lazyRetry(() => import('./components/AdminDashboard'));
@@ -108,13 +109,22 @@ function AppShell() {
   const { socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds, isPro, subscription } = useSocket();
   const coinState = useCoins();
   const audioIdentityHook = useAudioIdentity(socket);
+  const walletView = selectDisplayBalance({
+    audioUsername: audioIdentityHook.identity?.username,
+    audioCoins: audioIdentityHook.identity?.coins,
+    guestBalance: coinState.hasSynced ? coinState.balance : undefined,
+  });
+  const walletCoinState = useMemo(() => ({
+    ...coinState,
+    balance: walletView.ready ? walletView.balance : null,
+    walletReady: walletView.ready,
+    walletSource: walletView.source,
+  }), [coinState, walletView]);
   const coinStateWithAds = useMemo(
-    () => ({ ...coinState, adsEnabled, adScripts }),
-    [coinState, adsEnabled, adScripts]
+    () => ({ ...walletCoinState, adsEnabled, adScripts }),
+    [walletCoinState, adsEnabled, adScripts]
   );
   const [swUpdateReg, setSwUpdateReg] = useState(null);
-
-  const displayCoinBalance = audioIdentityHook.identity?.coins ?? coinState.balance;
 
   useEffect(() => {
     return watchServiceWorkerUpdates((_phase, reg) => {
@@ -347,14 +357,18 @@ function AppShell() {
     if (socket) {
     const onCoinsUpdated = ({ coins: next, audio }) => {
       if (next === undefined) return;
+      const n = Number(next);
+      if (!Number.isFinite(n) || n < 0) return;
       if (audioIdentityHook.identity?.username) {
-        if (audio) setBalance(next);
-      } else if (!audio) {
-        setBalance(next);
+        if (audio) audioIdentityHook.applyCoins?.(n);
+        return;
       }
+      if (!audio) setBalance(n);
     };
       const onConnected = (data) => {
-        if (data?.coins !== undefined) setBalance(data.coins);
+        if (data?.coins === undefined || audioIdentityHook.identity?.username) return;
+        const n = Number(data.coins);
+        if (Number.isFinite(n) && n >= 0) setBalance(n);
       };
       socket.on('coins-updated', onCoinsUpdated);
       socket.on('connected', onConnected);
@@ -372,7 +386,7 @@ function AppShell() {
         clearInterval(activityInterval);
       };
     }
-  }, [socket, connected, setBalance, audioIdentityHook.identity?.username]);
+  }, [socket, connected, setBalance, audioIdentityHook.identity?.username, audioIdentityHook.applyCoins]);
 
   // Manage browser back button
   useEffect(() => {
@@ -616,7 +630,7 @@ function AppShell() {
             onBack={handleBack}
             onJoined={handleJoined}
             onFindNewPartner={handleFindNewPartner}
-            coinState={coinState}
+            coinState={walletCoinState}
             registered={registered}
             currentActiveSeconds={activeSeconds}
             conversationMode={joinMeta.conversationMode}
@@ -646,7 +660,7 @@ function AppShell() {
             onBack={handleBack}
             onJoined={handleJoined}
             onFindNewPartner={handleFindNewPartner}
-            coinState={coinState}
+            coinState={walletCoinState}
             registered={registered}
             currentActiveSeconds={activeSeconds}
             conversationMode={joinMeta.conversationMode}
@@ -695,7 +709,7 @@ function AppShell() {
             onLeave={roomId ? handleLeaveRoom : handleCancelQueue}
             onFindNewPod={roomId ? handleFindNewPod : undefined}
             onJoined={handleJoined}
-            coinState={coinState}
+            coinState={walletCoinState}
             adsEnabled={adsEnabled}
             adScripts={adScripts}
             registered={registered}
@@ -720,7 +734,7 @@ function AppShell() {
             onLeave={roomId ? handleLeaveRoom : handleCancelQueue}
             onFindNewPod={roomId ? handleFindNewPod : undefined}
             onJoined={handleJoined}
-            coinState={coinState}
+            coinState={walletCoinState}
             adsEnabled={adsEnabled}
             adScripts={adScripts}
             registered={registered}

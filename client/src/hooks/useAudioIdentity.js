@@ -404,6 +404,15 @@ export function useAudioIdentity(socket) {
     }
   }, [token]);
 
+  const applyCoins = useCallback((next) => {
+    const n = Number(next);
+    if (!Number.isFinite(n) || n < 0) return;
+    setIdentity((prev) => {
+      if (!prev?.username || prev.coins === n) return prev;
+      return { ...prev, coins: n };
+    });
+  }, []);
+
   const refresh = useCallback(async () => {
     if (!token) return;
     try {
@@ -443,5 +452,6 @@ export function useAudioIdentity(socket) {
     trustDevice,
     forgetDevice,
     listDevices,
+    applyCoins,
   };
 }
