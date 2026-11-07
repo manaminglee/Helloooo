@@ -78,6 +78,7 @@ function AudioIdentityRegisterModal({ open, onClose, identityHook, onSignedIn })
       setStep(1);
       return;
     }
+    if (loading) return;
     const ok = await register({ username: username.trim(), pin, nameColor, remember });
     if (ok) {
       onClose();
@@ -255,17 +256,27 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
   const { login, loading, error, setError, savedUsername, clearLocalIdentity, hydrating } = identityHook;
   const [pin, setPin] = useState('');
   const [showRegister, setShowRegister] = useState(false);
+  const [loginUsername, setLoginUsername] = useState(savedUsername || '');
+  const [askUsername, setAskUsername] = useState(!savedUsername);
+
+  useEffect(() => {
+    if (savedUsername && !askUsername) setLoginUsername(savedUsername);
+  }, [savedUsername, askUsername]);
 
   const submitLogin = async (e) => {
     e.preventDefault();
     setError('');
-    if (!savedUsername) {
-      setError('No account on this device — create a new user below.');
+    const user = (askUsername ? loginUsername : savedUsername).trim();
+    if (!user) {
+      setError('Enter your username, or create a new identity below.');
+      setAskUsername(true);
       return;
     }
+    const userErr = validateAudioUsername(user);
+    if (userErr) { setError(userErr); setAskUsername(true); return; }
     const pinErr = validateAudioPin(pin);
     if (pinErr) { setError(pinErr); return; }
-    const ok = await login({ username: savedUsername, pin, remember });
+    const ok = await login({ username: user, pin, remember });
     if (ok) onSignedIn?.();
   };
 
@@ -284,12 +295,27 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
       <p className="mm-audio-id-card__sub">
         {hydrating
           ? 'Checking your session…'
-          : savedUsername
+          : savedUsername && !askUsername
             ? <>Welcome back, <strong style={{ color: '#c4b5fd' }}>@{savedUsername}</strong></>
-            : 'Sign in with your 4-digit PIN, or create a new voice identity.'}
+            : 'Sign in with your username and 4-digit PIN, or create a new voice identity.'}
       </p>
 
       <form onSubmit={submitLogin} className="space-y-3 mt-5">
+        {(askUsername || !savedUsername) && (
+          <label className="mm-audio-id-label">
+            Username
+            <input
+              className="mm-audio-id-input"
+              value={loginUsername}
+              onChange={(e) => setLoginUsername(sanitizeAudioUsernameInput(e.target.value))}
+              placeholder="Your voice username"
+              maxLength={20}
+              autoComplete="username"
+              autoFocus={!hydrating}
+              required
+            />
+          </label>
+        )}
         <label className="mm-audio-id-label">
           4-digit PIN
           <input
@@ -300,7 +326,7 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
             inputMode="numeric"
             maxLength={4}
             autoComplete="current-password"
-            autoFocus={!hydrating}
+            autoFocus={!hydrating && !askUsername && !!savedUsername}
             required
           />
         </label>
@@ -315,16 +341,16 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
             <em>Stay signed in. Your PIN still guards gifts and recharges.</em>
           </span>
         </label>
-        {error && <p className="mm-audio-id-error">{error}</p>}
+        {error && !showRegister && <p className="mm-audio-id-error">{error}</p>}
         <button
           type="submit"
           className="mm-btn mm-btn--primary w-full"
-          disabled={loading || hydrating || pin.length !== 4 || !savedUsername}
+          disabled={loading || hydrating || pin.length !== 4 || !(askUsername ? loginUsername.trim() : savedUsername)}
         >
-          {loading ? 'Signing in…' : 'Enter voice rooms'}
+          {loading ? 'Signing in…' : hydrating ? 'Checking session…' : 'Enter voice rooms'}
         </button>
-        {savedUsername && (
-          <button type="button" className="mm-audio-id-link w-full" onClick={() => { clearLocalIdentity?.(); setPin(''); setError(''); }}>
+        {savedUsername && !askUsername && (
+          <button type="button" className="mm-audio-id-link w-full" onClick={() => { clearLocalIdentity?.(); setPin(''); setError(''); setLoginUsername(''); setAskUsername(true); }}>
             Switch account
           </button>
         )}
