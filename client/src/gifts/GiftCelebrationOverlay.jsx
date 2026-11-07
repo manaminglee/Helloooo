@@ -4,6 +4,21 @@ import { GiftParticles } from './GiftParticles';
 import { celebrationDuration, detectGiftQuality } from './giftQuality';
 import { playGiftSound, stopGiftSound, unlockGiftAudio } from './GiftSoundManager';
 import { NutsSymbol } from '../components/NutsSymbol';
+import './giftStage.css';
+
+
+const GIFT_MOVE = {
+  giggle_ears: 'wiggle', shady_specs: 'specs-fly', boom_star: 'pop', wink_wave: 'wiggle',
+  petal_mask: 'bloom', cowboy_bear: 'pop', bloom_crown: 'crown-drop', hug_heart: 'bloom',
+  charm_donut: 'spin-in', charm_blush: 'pop', charm_clap: 'wiggle', charm_thumb: 'pop',
+  charm_fold: 'pop', charm_duck: 'rise', charm_cheer: 'pop', charm_bell: 'wiggle',
+  charm_crystal: 'spin-in', glam_charm: 'spin-in', wish_lamp: 'rise', hex_charm: 'spin-in',
+  wish_bottle: 'rise', fortune_tusk: 'pop', pearl_shell: 'bloom', cupid_bolt: 'bolt',
+  rose_bear: 'bloom', heart_wings: 'bloom', gold_watch: 'orbit', neon_rider: 'fly-across',
+  true_bloom: 'bloom', gold_rain: 'rain', hyper_car: 'fly-across', skyline_glow: 'rise',
+  royal_lion: 'pop', private_jet: 'fly-across', dream_castle: 'rise', cloud_garden: 'rise',
+  tide_muse: 'rise', aeon_diamond: 'orbit', eternal_spire: 'rise', legend_crown: 'crown-drop',
+};
 
 function particleKind(gift) {
   const id = gift?.id || gift?.scene;
@@ -43,6 +58,8 @@ export function GiftCelebrationOverlay({ gift: payload, onDone }) {
   return (
     <div
       className={`pg-celeb pg-celeb--p${phase} pg-celeb--${gift.rarity || 'common'} pg-celeb--${gift.scene || gift.id}`}
+      data-gift-id={gift.id}
+      data-gift-move={GIFT_MOVE[gift.id] || 'pop'}
       aria-hidden
     >
       <div className="pg-celeb__dim" />

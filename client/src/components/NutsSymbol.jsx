@@ -1,9 +1,15 @@
+import { useId } from 'react';
+
 /**
- * Unique Nuts currency mark — not a generic coin emoji.
- * Use inline (badge) or with amount text.
+ * Polished Nuts currency mark — original acorn-like seed with gold/pink sheen.
+ * Unique gradient ids so multiple badges on one screen stay crisp.
  */
 export function NutsSymbol({ size = 16, className = '', title = 'Nuts' }) {
   const s = Number(size) || 16;
+  const uid = useId().replace(/:/g, '');
+  const g = `nutsBody-${uid}`;
+  const cap = `nutsCap-${uid}`;
+  const shine = `nutsShine-${uid}`;
   return (
     <svg
       className={`mm-nuts-symbol ${className}`.trim()}
@@ -16,21 +22,35 @@ export function NutsSymbol({ size = 16, className = '', title = 'Nuts' }) {
       aria-label={title}
     >
       <defs>
-        <linearGradient id="mmNutsGrad" x1="4" y1="2" x2="28" y2="30" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#F5D78E" />
-          <stop offset="0.45" stopColor="#D4A017" />
-          <stop offset="1" stopColor="#8B5A00" />
+        <linearGradient id={g} x1="6" y1="8" x2="26" y2="30" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FFE7A3" />
+          <stop offset="0.42" stopColor="#E0A93A" />
+          <stop offset="1" stopColor="#8A4B12" />
         </linearGradient>
-        <linearGradient id="mmNutsShine" x1="8" y1="4" x2="18" y2="16" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#fff" stopOpacity="0.55" />
-          <stop offset="1" stopColor="#fff" stopOpacity="0" />
+        <linearGradient id={cap} x1="8" y1="2" x2="24" y2="16" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FF8AAB" />
+          <stop offset="0.55" stopColor="#FF2D6F" />
+          <stop offset="1" stopColor="#9F1239" />
         </linearGradient>
+        <radialGradient id={shine} cx="38%" cy="32%" r="50%">
+          <stop offset="0%" stopColor="#fff" stopOpacity="0.7" />
+          <stop offset="100%" stopColor="#fff" stopOpacity="0" />
+        </radialGradient>
       </defs>
-      <ellipse cx="16" cy="17" rx="11" ry="12" fill="url(#mmNutsGrad)" stroke="#5C3A00" strokeWidth="1.2" />
-      <path d="M16 5.5c0 0-3.5 4-3.5 11.5S16 28.5 16 28.5" stroke="#5C3A00" strokeWidth="1.1" strokeLinecap="round" opacity="0.55" />
-      <path d="M16 5.5c0 0 3.5 4 3.5 11.5S16 28.5 16 28.5" stroke="#5C3A00" strokeWidth="1.1" strokeLinecap="round" opacity="0.35" />
-      <path d="M11 9c2.2-1.8 5.5-2.2 8.2-.6" stroke="url(#mmNutsShine)" strokeWidth="2" strokeLinecap="round" />
-      <circle cx="12.5" cy="13" r="1.2" fill="#fff" opacity="0.35" />
+      <ellipse cx="16" cy="29" rx="7.2" ry="1.6" fill="#000" opacity="0.22" />
+      <path
+        d="M16 8.2c6.4 0 11 4.6 11 11.2 0 6.2-4.4 11-11 11s-11-4.8-11-11C5 12.8 9.6 8.2 16 8.2Z"
+        fill={`url(#${g})`}
+      />
+      <path d="M16 10.4c0 0-3.2 3.8-3.2 9.6S16 28.6 16 28.6" stroke="#6B3A10" strokeWidth="1.05" strokeLinecap="round" opacity="0.45" />
+      <path d="M16 10.4c0 0 3.2 3.8 3.2 9.6S16 28.6 16 28.6" stroke="#6B3A10" strokeWidth="1.05" strokeLinecap="round" opacity="0.28" />
+      <path
+        d="M9.2 10.2C10.4 6.4 13 4 16 4c3 0 5.6 2.4 6.8 6.2-2 .8-4.4 1.2-6.8 1.2s-4.8-.4-6.8-1.2Z"
+        fill={`url(#${cap})`}
+      />
+      <path d="M16 3.2c0 0-.2 2.4 0 3.6" stroke="#7F1D1D" strokeWidth="1.3" strokeLinecap="round" />
+      <circle cx="16" cy="3.1" r="1.15" fill="#FF2D6F" />
+      <ellipse cx="12.4" cy="16.5" rx="3.2" ry="4.4" fill={`url(#${shine})`} />
     </svg>
   );
 }

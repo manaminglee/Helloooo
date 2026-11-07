@@ -33,6 +33,7 @@ export function useLiveRoom(socket, liveId, { asHost = false, onReaction, handle
   const [viewerCount, setViewerCount] = useState(0);
   const [likes, setLikes] = useState(0);
   const [banners, setBanners] = useState([]);
+  const [specsEffect, setSpecsEffect] = useState(null);
   const { current: fullscreenGift, enqueue: enqueueCelebration, done: dismissFullscreen, reset: resetCelebrations } = useGiftQueue();
   const [battle, setBattle] = useState(null);
   const [topGifter, setTopGifter] = useState(null);
@@ -116,6 +117,10 @@ export function useLiveRoom(socket, liveId, { asHost = false, onReaction, handle
     });
 
     enqueueCelebration({ ...payload, key: `${payload.txId || payload.at || Date.now()}` });
+    const gid = payload?.gift?.id || payload?.giftId;
+    if (gid === 'shady_specs' || payload?.gift?.overlay === 'face_specs') {
+      setSpecsEffect({ key: `${payload.txId || Date.now()}`, from: payload.from || payload.fromNickname });
+    }
   }, [enqueueCelebration]);
 
   // --- socket wiring --------------------------------------------------------
@@ -368,6 +373,8 @@ export function useLiveRoom(socket, liveId, { asHost = false, onReaction, handle
     likes,
     banners,
     fullscreenGift,
+    specsEffect,
+    clearSpecsEffect: () => setSpecsEffect(null),
     battle,
     topGifter,
     stats,

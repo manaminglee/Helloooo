@@ -71,6 +71,7 @@ function g(id, name, cost, opts = {}) {
     enabled = true,
     sortOrder,
     description = '',
+    overlay = null,
   } = opts;
   const rarity = opts.rarity || RARITY_FOR[tier] || 'common';
   const hero = HERO_DIRECTION[id] || null;
@@ -106,6 +107,7 @@ function g(id, name, cost, opts = {}) {
     enabled,
     sortOrder: sortOrder ?? cost,
     description: description || hero?.description || '',
+    overlay: overlay || null,
   };
 }
 
@@ -121,7 +123,7 @@ const DEFAULT_SHARE_FOR = {
 const GIFTS = [
   /* ---------------------------------------------------------------- funny */
   g('giggle_ears', 'Giggle Ears', 999, { category: 'funny', tier: 'basic', motion: 'bob', hot: true }),
-  g('shady_specs', 'Shady Specs', 999, { category: 'funny', tier: 'basic', motion: 'shimmer' }),
+  g('shady_specs', 'Shady Specs', 999, { category: 'funny', tier: 'basic', motion: 'shimmer', overlay: 'face_specs', description: 'Sunglasses fly in and rest on the creator for five seconds.' }),
   g('boom_star', 'Boom Star', 1999, { category: 'funny', tier: 'basic', motion: 'pulse', hot: true }),
   g('wink_wave', 'Wink Wave', 3999, { category: 'funny', tier: 'basic', motion: 'bob' }),
   g('petal_mask', 'Petal Mask', 5999, { category: 'funny', tier: 'rare', motion: 'float' }),
@@ -308,6 +310,7 @@ function visualGiftFields(gift) {
     durationMs: gift.durationMs || DURATION_FOR[gift.rarity] || 1800,
     description: gift.description || '',
     minLevel: gift.minLevel || 0,
+    overlay: gift.overlay || null,
   };
 }
 

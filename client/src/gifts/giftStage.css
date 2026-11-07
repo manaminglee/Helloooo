@@ -1,0 +1,78 @@
+/* Unique full-screen send choreography per gift.
+   Transform + opacity only. pointer-events stay off (inherited). */
+
+.pg-celeb { pointer-events: none; }
+
+.pg-celeb[data-gift-move] .pg-celeb__stage {
+  transform-origin: 50% 70%;
+  will-change: transform, opacity;
+}
+
+@keyframes gs-pop { from { transform: scale(.2); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes gs-wiggle {
+  0% { transform: scale(.4) rotate(-12deg); opacity: 0; }
+  40% { transform: scale(1.08) rotate(8deg); opacity: 1; }
+  70% { transform: rotate(-5deg); }
+  100% { transform: none; }
+}
+@keyframes gs-crown-drop {
+  0% { transform: translateY(-120%) rotate(-18deg) scale(.7); opacity: 0; }
+  55% { transform: translateY(8%) rotate(6deg) scale(1.05); opacity: 1; }
+  75% { transform: translateY(-4%) rotate(-3deg); }
+  100% { transform: none; }
+}
+@keyframes gs-bloom {
+  0% { transform: scale(.15) rotate(-8deg); opacity: 0; filter: blur(6px); }
+  50% { transform: scale(1.12); opacity: 1; filter: blur(0); }
+  100% { transform: none; }
+}
+@keyframes gs-fly-across {
+  0% { transform: translate(-130%, 18%) rotate(-18deg) scale(.6); opacity: 0; }
+  45% { transform: translate(8%, -6%) rotate(6deg) scale(1.08); opacity: 1; }
+  100% { transform: none; }
+}
+@keyframes gs-rain {
+  0% { transform: translateY(-80%) scale(.5); opacity: 0; }
+  70% { transform: translateY(6%) scale(1.04); opacity: 1; }
+  100% { transform: none; }
+}
+@keyframes gs-orbit {
+  0% { transform: scale(.4) rotate(-160deg); opacity: 0; }
+  100% { transform: none; }
+}
+@keyframes gs-bolt {
+  0% { transform: translate(-40%, -80%) rotate(-35deg) scale(.4); opacity: 0; }
+  55% { transform: translate(6%, 8%) rotate(8deg) scale(1.1); opacity: 1; }
+  100% { transform: none; }
+}
+@keyframes gs-rise {
+  0% { transform: translateY(80%) scale(.5); opacity: 0; }
+  100% { transform: none; }
+}
+@keyframes gs-specs-fly {
+  0% { transform: translate(40%, -90%) rotate(24deg) scale(.4); opacity: 0; }
+  60% { transform: translate(-4%, 6%) rotate(-6deg) scale(1.08); opacity: 1; }
+  100% { transform: none; }
+}
+@keyframes gs-spin-in {
+  0% { transform: scale(.2) rotate(-220deg); opacity: 0; }
+  100% { transform: none; }
+}
+
+.pg-celeb[data-gift-move="pop"] .pg-celeb__stage { animation: gs-pop .7s cubic-bezier(.16,1,.3,1) both; }
+.pg-celeb[data-gift-move="wiggle"] .pg-celeb__stage { animation: gs-wiggle .9s cubic-bezier(.16,1,.3,1) both; }
+.pg-celeb[data-gift-move="crown-drop"] .pg-celeb__stage { animation: gs-crown-drop 1.15s cubic-bezier(.16,1,.3,1) both; }
+.pg-celeb[data-gift-move="bloom"] .pg-celeb__stage { animation: gs-bloom 1.05s cubic-bezier(.16,1,.3,1) both; }
+.pg-celeb[data-gift-move="fly-across"] .pg-celeb__stage { animation: gs-fly-across 1.05s cubic-bezier(.16,1,.3,1) both; }
+.pg-celeb[data-gift-move="rain"] .pg-celeb__stage { animation: gs-rain 1s cubic-bezier(.16,1,.3,1) both; }
+.pg-celeb[data-gift-move="orbit"] .pg-celeb__stage { animation: gs-orbit 1s cubic-bezier(.16,1,.3,1) both; }
+.pg-celeb[data-gift-move="bolt"] .pg-celeb__stage { animation: gs-bolt .85s cubic-bezier(.16,1,.3,1) both; }
+.pg-celeb[data-gift-move="rise"] .pg-celeb__stage { animation: gs-rise 1s cubic-bezier(.16,1,.3,1) both; }
+.pg-celeb[data-gift-move="specs-fly"] .pg-celeb__stage { animation: gs-specs-fly 1s cubic-bezier(.16,1,.3,1) both; }
+.pg-celeb[data-gift-move="spin-in"] .pg-celeb__stage { animation: gs-spin-in .85s cubic-bezier(.16,1,.3,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pg-celeb[data-gift-move] .pg-celeb__stage {
+    animation: gs-pop .01s linear both !important;
+  }
+}
