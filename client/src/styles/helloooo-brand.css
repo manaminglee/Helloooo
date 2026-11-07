@@ -12,7 +12,7 @@
 
 .helloooo-brand {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   font-family: var(--font-display, 'Segoe UI', system-ui, sans-serif);
   font-weight: 800;
   letter-spacing: -0.02em;
@@ -24,6 +24,31 @@
 .helloooo-brand { font-size: 1.35rem; }
 .helloooo-brand--lg { font-size: clamp(1.75rem, 4vw, 2.75rem); }
 .helloooo-brand--xl { font-size: clamp(2.25rem, 6vw, 3.5rem); }
+
+.helloooo-brand--mark {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+}
+
+.helloooo-wordmark {
+  display: block;
+  height: 1.45rem;
+  width: auto;
+  max-width: min(220px, 58vw);
+  object-fit: contain;
+  object-position: left center;
+}
+
+.helloooo-brand--sm .helloooo-wordmark { height: 1.15rem; max-width: min(168px, 52vw); }
+.helloooo-brand--lg .helloooo-wordmark { height: 2.15rem; max-width: min(320px, 72vw); }
+.helloooo-brand--xl .helloooo-wordmark { height: 2.85rem; max-width: min(420px, 80vw); }
+
+.mm-mobile-header .helloooo-wordmark,
+.mm-group-mobile-header .helloooo-wordmark {
+  height: 1.18rem;
+  max-width: 148px;
+}
 
 .helloooo-brand__hell {
   color: #ffffff;

@@ -829,7 +829,7 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
           <div className="mm-landing-header__bar">
             <div className="mm-landing-header__brand">
               <button type="button" onClick={scrollToStart} className="flex items-center gap-3 min-w-0 text-left rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500/40 mm-compact-btn" aria-label="Helloooo">
-                <span className="lv4-wordmark">helloooo</span>
+                <img src="/helloooo-wordmark-dark.svg" alt="Helloooo" className="lv4-wordmark" />
               </button>
             </div>
             <OnlineViewersBadge

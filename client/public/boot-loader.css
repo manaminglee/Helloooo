@@ -93,10 +93,16 @@
 
 .boot-screen__brand {
   margin: 0;
-  font-size: 1.05rem;
-  font-weight: 800;
-  letter-spacing: 0.02em;
   z-index: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.boot-screen__wordmark {
+  display: block;
+  height: 1.35rem;
+  width: auto;
+  max-width: 200px;
 }
 
 .boot-screen__brand-hell {

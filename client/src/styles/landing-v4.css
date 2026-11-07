@@ -56,13 +56,18 @@
   -webkit-backdrop-filter: blur(18px);
 }
 .lv4-wordmark {
-  font-family: Outfit, var(--font-sans), system-ui, sans-serif;
-  font-size: 1.05rem;
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  line-height: 1;
-  color: #f3f3f5;
-  text-transform: lowercase;
+  display: block;
+  height: 1.28rem;
+  width: auto;
+  max-width: min(168px, 46vw);
+  object-fit: contain;
+  object-position: left center;
+}
+@media (min-width: 768px) {
+  .lv4-wordmark {
+    height: 1.48rem;
+    max-width: 210px;
+  }
 }
 .lv4-header__right {
   display: flex;

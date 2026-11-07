@@ -2163,7 +2163,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
             </button>
             <div className="mm-group-mobile-header__brand">
-              <img src="/helloooo-logo.png" alt="" className="mm-group-mobile-header__logo" />
+              <img src="/favicon.svg" alt="Helloooo" className="mm-group-mobile-header__logo" />
               <div className="mm-group-mobile-header__titles">
                 <HellooooBrand size="sm" className="mm-group-mobile-header__name" />
                 <span className="mm-group-mobile-header__sub">2×2 Group Video Chat</span>

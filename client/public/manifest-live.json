@@ -11,15 +11,58 @@
   "background_color": "#07060f",
   "theme_color": "#ff2d6f",
   "orientation": "portrait",
-  "categories": ["social", "entertainment"],
+  "categories": [
+    "social",
+    "entertainment"
+  ],
   "icons": [
-    { "src": "/favicon.png", "sizes": "32x32", "type": "image/png" },
-    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
-    { "src": "/helloooo-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/helloooo-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "/favicon-16.png",
+      "sizes": "16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ],
   "shortcuts": [
-    { "name": "Live now", "short_name": "Live", "url": "/?src=shortcut-live", "description": "Creators streaming right now" },
-    { "name": "Voice rooms", "short_name": "Audio", "url": "/?src=shortcut-audio", "description": "Join a voice room" }
+    {
+      "name": "Live now",
+      "short_name": "Live",
+      "url": "/?src=shortcut-live",
+      "description": "Creators streaming right now"
+    },
+    {
+      "name": "Voice rooms",
+      "short_name": "Audio",
+      "url": "/?src=shortcut-audio",
+      "description": "Join a voice room"
+    }
   ]
 }
