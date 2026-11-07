@@ -563,6 +563,8 @@ function AppShell() {
               make it easy to walk out of a session by accident. */}
           <MobileNav
             active="home"
+            connected={connected}
+            isJoining={isJoining}
             onTab={(tab) => {
               void unlockIosMedia();
               if (tab === 'home') return;

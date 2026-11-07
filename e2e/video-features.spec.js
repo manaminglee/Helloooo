@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { VIDEO_MODE_NAME } = require('./landingHelpers');
+const { VIDEO_MODE_NAME, enterVideoFromLanding } = require('./landingHelpers');
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 
 test('video preview keeps playing through layouts and mobile resize', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: VIDEO_MODE_NAME }).click();
+  await enterVideoFromLanding(page);
   await expect(page.getByRole('button', { name: 'Vertical layout', exact: true })).toBeVisible({ timeout: 20000 });
   const playing = () => page.locator('video').evaluateAll(videos => videos.some(v => v.videoWidth > 0 && !v.paused && v.srcObject?.active));
   await expect.poll(playing).toBe(true);
@@ -46,16 +46,18 @@ test('sponsor HTML cannot execute inside the application', async ({ page }) => {
 });
 
 test('two independent browsers exchange video and messages', async ({ page, browser }) => {
-  test.setTimeout(90000);
+  test.setTimeout(120000);
   const otherContext = await browser.newContext({ permissions: ['camera', 'microphone'] });
-  const other = await otherContext.newPage();
-  await other.addInitScript(() => {
-    sessionStorage.setItem('wc_age', '1'); sessionStorage.setItem('wc_bot', '1'); sessionStorage.setItem('mm_community_policy_video', '1');
+  await otherContext.addInitScript(() => {
+    sessionStorage.setItem('wc_age', '1');
+    sessionStorage.setItem('wc_bot', '1');
+    sessionStorage.setItem('mm_community_policy_video', '1');
   });
+  const other = await otherContext.newPage();
   try {
     for (const p of [page, other]) {
-      await p.goto('http://127.0.0.1:5173/');
-      await p.getByRole('button', { name: VIDEO_MODE_NAME }).click();
+      await p.goto('/');
+      await enterVideoFromLanding(p);
     }
     for (const p of [page, other]) {
       await expect.poll(() => p.locator('video').evaluateAll(v => v.filter(el => el.videoWidth > 0 && !el.paused && el.srcObject?.active).length), { timeout: 35000 }).toBeGreaterThanOrEqual(2);
@@ -64,8 +66,8 @@ test('two independent browsers exchange video and messages', async ({ page, brow
       await ready.click();
     }
     for (const p of [page, other]) await expect(p.locator('.mm-neural-gate')).toHaveCount(0);
-    await page.locator('.mm-desk-chat__input').fill('Hello from a real peer');
-    await page.locator('.mm-desk-chat__send').click();
+    await page.getByRole('textbox', { name: 'Type a message...' }).fill('Hello from a real peer');
+    await page.getByRole('button', { name: 'Send message' }).click();
     await expect(other.getByText('Hello from a real peer', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Vertical layout', exact: true }).click();
     await expect(page.locator('.mm-desk-sidebar .mm-desk-chat__input')).toBeVisible();

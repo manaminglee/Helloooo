@@ -1,4 +1,7 @@
 const { test, expect, devices } = require('@playwright/test');
+const { openLives } = require('./landingHelpers');
+
+test.describe.configure({ timeout: 60000 });
 
 /**
  * The layout contract, checked on real device metrics.
@@ -15,19 +18,6 @@ const PHONES = [
   ['Galaxy Fold (very narrow)', { width: 280, height: 653 }],
   ['iPad mini (portrait)', { width: 744, height: 1133 }],
 ];
-
-async function openLives(page) {
-  await page.addInitScript(() => {
-    sessionStorage.setItem('wc_age', '1');
-    sessionStorage.setItem('wc_bot', '1');
-    sessionStorage.setItem('mm_community_policy_video', '1');
-  });
-  await page.goto('/');
-  const btn = page.getByRole('button', { name: /^Lives:/ });
-  await expect(btn).toBeEnabled({ timeout: 20000 });
-  await btn.click();
-  await page.waitForTimeout(600);   // let the lazy chunk mount
-}
 
 for (const [name, viewport] of PHONES) {
   test.describe(`lives on ${name}`, () => {

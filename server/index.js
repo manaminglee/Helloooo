@@ -1118,7 +1118,10 @@ app.use((err, req, res, next) => {
 
 app.use(rateLimit({
   windowMs: 60 * 1000,
-  max: 120,
+  // Production stays at 120/min. Playwright drives many landing pages from one
+  // IP and would otherwise 429 /api/nav/grant mid-suite, leaving users on
+  // the landing page after a silent failed join.
+  max: NODE_ENV === 'test' ? 10000 : 120,
   message: { error: 'Too many requests' },
   standardHeaders: true,
 }));

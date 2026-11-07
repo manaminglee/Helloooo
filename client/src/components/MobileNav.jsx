@@ -22,6 +22,8 @@ export const MobileNav = memo(function MobileNav({
   hidden = false,
   active = 'home',
   onTab,
+  connected = true,
+  isJoining = false,
 }) {
   const reduce = useReducedMotion();
   const [away, setAway] = useState(false);
@@ -70,6 +72,7 @@ export const MobileNav = memo(function MobileNav({
         {TABS.map((tab) => {
           const on = active === tab.id;
           const Icon = tab.icon;
+          const blocked = tab.id !== 'home' && (!connected || isJoining);
           return (
             <motion.button
               key={tab.id}
@@ -77,9 +80,11 @@ export const MobileNav = memo(function MobileNav({
               className={`mmnav__tab${on ? ' is-on' : ''}${tab.featured ? ' mmnav__tab--live' : ''}`}
               aria-current={on ? 'page' : undefined}
               aria-label={tab.label}
-              whileTap={reduce ? undefined : { scale: 0.88 }}
+              disabled={blocked}
+              whileTap={blocked || reduce ? undefined : { scale: 0.88 }}
               transition={tapSpring}
               onClick={() => {
+                if (blocked) return;
                 void unlockIosMedia();
                 void iosHaptic('light');
                 onTab?.(tab.id);
