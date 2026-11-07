@@ -32,6 +32,7 @@ import { useNetworkRecovery } from '../hooks/useNetworkRecovery';
 import { MatchSuspendedNotice } from './MatchSuspendedNotice';
 import { useVideoPricing, priceLabel } from '../hooks/useVideoPricing';
 import { CreatorVerifiedMark } from './VideoSessionUI';
+import { MmIcon } from './icons/MmIcon';
 import '../styles/video-overhaul.css';
 import { CountryFlag } from './CountryFlag';
 import { countryName } from '../utils/countryFlag';
@@ -2091,9 +2092,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                   className="mm-group-desk-chat__input"
                   placeholder="Type a message..."
                 />
-                <button type="button" className="mm-group-desk-chat__emoji" onClick={() => setShowEmojiPicker((v) => !v)} aria-label="Emoji">😊</button>
+                <button type="button" className="mm-group-desk-chat__emoji" onClick={() => setShowEmojiPicker((v) => !v)} aria-label="Emoji"><MmIcon name="smile" size={18} /></button>
                 <button type="button" onClick={sendMessage} className="mm-group-desk-chat__send" aria-label="Send">
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
+                  <MmIcon name="send" size={16} />
                 </button>
               </div>
             </aside>
@@ -2260,9 +2261,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                       className="mm-group-mobile-chat__input"
                       placeholder="Type a message..."
                     />
-                    <button type="button" className="mm-group-mobile-chat__emoji" onClick={() => setShowEmojiPicker((v) => !v)} aria-label="Emoji">😊</button>
+                    <button type="button" className="mm-group-mobile-chat__emoji" onClick={() => setShowEmojiPicker((v) => !v)} aria-label="Emoji"><MmIcon name="smile" size={18} /></button>
                     <button type="button" onClick={sendMessage} className="mm-group-mobile-chat__send" aria-label="Send">
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
+                      <MmIcon name="send" size={16} />
                     </button>
                   </div>
                 </>

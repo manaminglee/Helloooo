@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { EmojiPicker } from './EmojiPicker';
+import { MmIcon } from './icons/MmIcon';
 
 export function ChatInputWithEmoji({
   value,
@@ -85,10 +86,10 @@ export function ChatInputWithEmoji({
       <button
         type="button"
         onClick={() => setShowEmoji((v) => !v)}
-        className="shrink-0 min-h-[48px] min-w-[48px] rounded-xl border border-white/10 bg-white/5 text-xl hover:bg-white/10"
+        className="ui-icon-btn shrink-0 min-h-[48px] min-w-[48px] rounded-xl border border-white/10 bg-white/5 hover:bg-white/10"
         aria-label="Insert emoji"
       >
-        😊
+        <MmIcon name="smile" size={20} />
       </button>
       {showVoice && (
         <button
@@ -97,17 +98,17 @@ export function ChatInputWithEmoji({
           className={`shrink-0 min-h-[48px] min-w-[48px] rounded-xl border text-lg ${recording ? 'border-rose-500/50 bg-rose-500/20' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
           aria-label="Record voice message"
         >
-          🎤
+          <MmIcon name="mic" size={20} />
         </button>
       )}
       <button
         type="button"
         onClick={onSend}
         disabled={disabled || !String(value || '').trim()}
-        className="shrink-0 min-h-[48px] min-w-[48px] rounded-xl bg-white text-black font-semibold disabled:opacity-40"
+        className="ui-icon-btn shrink-0 min-h-[48px] min-w-[48px] rounded-xl bg-[#ff2d6f] text-white font-semibold disabled:opacity-40"
         aria-label="Send message"
       >
-        ➤
+        <MmIcon name="send" size={18} />
       </button>
       <input ref={mediaRef} type="file" className="hidden" />
     </div>

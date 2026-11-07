@@ -29,6 +29,7 @@ import { API_BASE } from './config/apiBase';
 import { lazyRetry, clearChunkReloadFlag } from './utils/lazyRetry';
 import { applyPageSeo, applyPrivateSessionSeo } from './utils/seo';
 import { useAudioIdentity } from './hooks/useAudioIdentity';
+import { useVisualViewport } from './hooks/useVisualViewport';
 import { HellooooLoader } from './components/HellooooBrand';
 // Lazy load off-screen and secondary modules for extreme performance
 const AdminDashboard = lazyRetry(() => import('./components/AdminDashboard'));
@@ -103,6 +104,7 @@ function AppShell() {
   const [joinLinkOpts, setJoinLinkOpts] = useState({ paToken: null, asCohost: false });
   const [isJoining, setIsJoining] = useState(false);
   const [roomJoinNotice, setRoomJoinNotice] = useState('');
+  useVisualViewport();
   const { socket, connected, country, onlineCount, adsEnabled, adScripts, allowDevTools, nickname, isCreator, isBlocked, contentFlagged, registered, activeSeconds, isPro, subscription } = useSocket();
   const coinState = useCoins();
   const audioIdentityHook = useAudioIdentity(socket);

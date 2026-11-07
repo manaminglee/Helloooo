@@ -3,6 +3,7 @@
  * Coin prices only appear when the server says VIDEO_PAYMENTS_ENABLED.
  */
 import { useEffect, useState } from 'react';
+import { MmIcon } from './icons/MmIcon';
 import { loadProMatchPrefs, saveProMatchPrefs } from '../utils/proMatchPrefs';
 import { startPayment } from '../utils/paymentCheckout';
 import { API_BASE } from '../config/apiBase';
@@ -129,7 +130,7 @@ export function SkipProSheet({
       <div className="mm-skip-pro-sheet__inner">
         <div className="mm-skip-pro-sheet__head">
           <span className="mm-skip-pro-sheet__title">Find next match</span>
-          <button type="button" className="mm-skip-pro-sheet__close" onClick={onClose} aria-label="Close">×</button>
+          <button type="button" className="mm-skip-pro-sheet__close ui-icon-btn" onClick={onClose} aria-label="Close"><MmIcon name="close" size={16} /></button>
         </div>
 
         <button type="button" className="mm-skip-pro-sheet__action mm-skip-pro-sheet__action--primary" onClick={() => doSkip()}>

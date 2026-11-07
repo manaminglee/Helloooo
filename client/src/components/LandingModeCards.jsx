@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
 import { LANDING_MODE_CARDS } from '../constants/landingModes';
+import { MmIcon } from './icons/MmIcon';
 import { fadeUp, stagger, springSnappy } from '../utils/landingMotion';
 
 /** Warm chat chunks so the first join feels instant. */
@@ -21,6 +22,14 @@ const CARD_GLOW = {
   group_video: 'lv2-mode-card--indigo',
   group_text: 'lv2-mode-card--amber',
   lives: 'lv2-mode-card--rose',
+};
+
+const CARD_ICON = {
+  video: 'camera',
+  text: 'chat',
+  group_video: 'users',
+  group_text: 'mic',
+  lives: 'broadcast',
 };
 
 export function LandingModeCards({ onStart, connected, isJoining, className = '' }) {
@@ -50,7 +59,7 @@ export function LandingModeCards({ onStart, connected, isJoining, className = ''
           <span className="lv2-mode-card__shine" aria-hidden />
           <span className="lv2-mode-card__glow" aria-hidden />
           <div className="lv2-mode-card__top">
-            <span className="lv2-mode-card__icon" aria-hidden>{m.icon}</span>
+            <span className="lv2-mode-card__icon" aria-hidden><MmIcon name={CARD_ICON[m.id] || 'sparkle'} size={22} /></span>
             <span className="lv2-mode-card__tag">{m.tag}</span>
           </div>
           <div className="lv2-mode-card__body">

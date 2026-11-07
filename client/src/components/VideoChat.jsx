@@ -32,6 +32,7 @@ import {
   streamHasLiveTracks,
 } from '../utils/webrtcQuality';
 import { ChatInputWithEmoji } from './ChatInputWithEmoji';
+import { MmIcon } from './icons/MmIcon';
 import { PHASE_2, PHASE_3_PRO, PHASE_4_UNIQUE } from '../constants/features';
 import { useUniqueSession } from '../hooks/useUniqueSession';
 import { useAdminMonitorFrames } from '../hooks/useAdminMonitorFrames';
@@ -2795,20 +2796,15 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
         </div>
       )}
       <div className="mm-desk-chat__input-row">
-        <input
-          ref={inputRef}
-          type="text"
+        <ChatInputWithEmoji
           value={input}
-          onChange={(e) => handleInputChange(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (chatReady) sendMsg(); } }}
+          onChange={handleInputChange}
+          onSend={sendMsg}
           placeholder={chatPlaceholder}
-          className="mm-desk-chat__input"
           disabled={!chatReady}
-          aria-disabled={!chatReady}
+          className="w-full"
+          inputClassName="mm-desk-chat__input"
         />
-        <button type="button" onClick={sendMsg} className="mm-desk-chat__send" aria-label="Send" disabled={!chatReady || !input.trim()}>
-          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
-        </button>
       </div>
     </div>
     );
@@ -3232,19 +3228,19 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
       <footer className="mm-mobile-bar">
         <button type="button" onClick={toggleMute} className={`mm-mobile-bar__item ${muted ? 'mm-mobile-bar__item--off' : ''}`}>
           <span className="mm-mobile-bar__icon mm-mobile-bar__icon--green">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+            <MmIcon name={muted ? 'micOff' : 'mic'} size={18} />
           </span>
           <span className="mm-mobile-bar__label">Mic</span>
         </button>
         <button type="button" onClick={toggleCamera} className={`mm-mobile-bar__item ${cameraOff ? 'mm-mobile-bar__item--off' : ''}`}>
           <span className="mm-mobile-bar__icon mm-mobile-bar__icon--green">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+            <MmIcon name="camera" size={18} />
           </span>
           <span className="mm-mobile-bar__label">Camera</span>
         </button>
         <button type="button" onClick={toggleFlip} className="mm-mobile-bar__item" title="Flip camera">
           <span className="mm-mobile-bar__icon mm-mobile-bar__icon--green">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>
+            <MmIcon name="cameraFlip" size={18} />
           </span>
           <span className="mm-mobile-bar__label">Flip</span>
         </button>
@@ -3255,7 +3251,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           disabled={status !== 'connected'}
         >
           <span className="mm-mobile-bar__icon mm-mobile-bar__icon--blue relative">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+            <MmIcon name="chat" size={18} />
             {chatUnread > 0 && status === 'connected' && (
               <span className="mm-mobile-bar__badge">{chatUnread > 9 ? '9+' : chatUnread}</span>
             )}
@@ -3269,7 +3265,7 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
           className="mm-mobile-bar__item mm-mobile-bar__item--next"
         >
           <span className="mm-mobile-bar__icon mm-mobile-bar__icon--green">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
+            <MmIcon name="skip" size={18} />
           </span>
           <span className="mm-mobile-bar__label">{status === 'idle' ? 'Start' : status === 'searching' ? 'Cancel' : 'Next'}</span>
         </button>
