@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AudioRoleBadge, AudioLevelBadge, AudioLevelUpBurst, useLevelUpFlash } from './AudioBadges';
 import { createPortal } from 'react-dom';
 import { useAudioChannel } from '../hooks/useAudioChannel';
 import { useIceServers } from '../hooks/useIceServers';
@@ -420,6 +421,7 @@ function EntryAnimation({ event, onDone }) {
 }
 
 function StageAvatar({ member, speaking, size = 'lg', onUserTap, isPa = false, frameClass = '' }) {
+  const flash = useLevelUpFlash(member?.displayLevel);
   const dim = size === 'lg' ? 'mm-audio-avatar mm-audio-avatar--lg' : 'mm-audio-avatar mm-audio-avatar--sm';
   const royal =
     member?.role === 'host'
@@ -429,6 +431,8 @@ function StageAvatar({ member, speaking, size = 'lg', onUserTap, isPa = false, f
         : '';
   const showMuted = member?.role !== 'listener' && member?.role !== 'cohost' && !!member?.micMuted;
   const live = member?.role !== 'listener' && member?.role !== 'cohost' && !member?.micMuted;
+  const photo = member?.avatarUrl || member?.avatar_url || member?.photoUrl || member?.photo || '';
+  const initial = String(member?.nickname || '?').trim().slice(0, 1).toUpperCase() || '?';
 
   return (
     <button
@@ -444,15 +448,20 @@ function StageAvatar({ member, speaking, size = 'lg', onUserTap, isPa = false, f
       }`}
       title={onUserTap ? `Tap ${member?.nickname}` : member?.nickname}
     >
-      {(member?.nickname || '?').slice(0, 1).toUpperCase()}
+      {photo ? (
+        <img src={photo} alt="" className="mm-audio-avatar__img" />
+      ) : (
+        <span className="mm-audio-avatar__face">{initial}</span>
+      )}
       {showMuted && (
         <span className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-[#0d1016] grid place-items-center text-[9px] ring-1 ring-white/15" aria-label="Muted">🔇</span>
       )}
       {live && (
         <span className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-emerald-500 grid place-items-center text-[8px] font-black text-black ring-1 ring-emerald-300/80" aria-label="Live">●</span>
       )}
-      {member?.role === 'host' && <span className="mm-audio-badge mm-audio-badge--host" aria-label="Admin">👑</span>}
-      {member?.role === 'moderator' && <span className="mm-audio-badge mm-audio-badge--mod" aria-label="Co-taker">🛡️</span>}
+      <AudioRoleBadge role={member?.role} />
+      <AudioLevelBadge level={member?.displayLevel} label={member?.levelBadge} />
+      <AudioLevelUpBurst active={flash} />
     </button>
   );
 }

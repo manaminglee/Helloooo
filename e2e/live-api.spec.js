@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 
-const API = process.env.PLAYWRIGHT_API_URL || 'http://127.0.0.1:3000';
+const API = process.env.PLAYWRIGHT_API_URL || `http://127.0.0.1:${process.env.HELLOOOO_API_PORT || '3000'}`;
 
 /**
  * Server contract for the live layer. These lock the boundaries that cost

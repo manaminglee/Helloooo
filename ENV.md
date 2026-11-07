@@ -73,3 +73,14 @@ Probe: `GET /api/livekit/status` → `{ enabled, url, provider }` (no secrets).
 
 **Production will not start** with no TURN configured and the demo relay
 credentials still in place. See the TURN section in `docs/LIVE.md`.
+
+
+## Video and group video payments (optional)
+
+`VIDEO_PAYMENTS_ENABLED` defaults to **false**. While it is off, 1:1 video and
+group video stay fully free: filters, session length, larger rooms and private
+rooms do not charge, and the client hides paywall UI. Set it to `true` to
+charge premium extras through the existing coin wallet (same ledger as audio
+rooms and lives). All price points are defined in `server/videoPricing.js` and
+can be overridden with the `VIDEO_*` variables listed in `.env.example`.
+The public catalog is `GET /api/pricing/video`.

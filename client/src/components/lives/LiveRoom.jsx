@@ -26,6 +26,8 @@ import GuestJoinBar from './GuestJoinBar';
 import UserProfileSheet from './UserProfileSheet';
 import DmChatSheet from './DmChatSheet';
 import VipEntry from './VipEntry';
+import { SpecsOnFaceOverlay } from './SpecsOnFaceOverlay';
+import './specsOnFace.css';
 
 const COMBO_MS = 4000;
 
@@ -67,7 +69,7 @@ export default function LiveRoom({
     handle: isHost ? null : live?.handle,   // hosts never see a Follow button
   });
   const {
-    comments, pinnedComment, viewerCount, likes, banners, fullscreenGift,
+    comments, pinnedComment, viewerCount, likes, banners, fullscreenGift, specsEffect, clearSpecsEffect,
     battle, topGifter, stats, settings, isModerator, muted,
     roomState, endSummary, notice, vipEntries, clearVipEntries, following, followKnown,
     sendComment, sendGift, react, follow, moderation, toast, dismissFullscreen,
@@ -330,6 +332,13 @@ export default function LiveRoom({
         wallpaperUrl={live?.wallpaperUrl}
         showWallpaper={!media.hasMedia}
         mirrored={isHost && media.facingMode === 'user'}
+      />
+      <SpecsOnFaceOverlay
+        videoRef={videoRef}
+        active={!!specsEffect}
+        effectKey={specsEffect?.key}
+        mirrored={isHost && media.facingMode === 'user'}
+        onDone={clearSpecsEffect}
       />
 
       {hpActive && (

@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { GROUP_MODE_NAME, revealLandingModeCards } = require('./landingHelpers');
 const creatorToken = 'cs_rooms_test_creator_session_only';
 test.skip(process.env.HELLOOOO_ROOM_TESTS !== '1', 'Requires disposable room fixtures and local LiveKit');
 
@@ -168,7 +169,8 @@ test('three group-video participants receive each others cameras', async ({ page
     for (const p of pages) {
       p.on('pageerror', e => console.log('group page error:', e.message));
       await boot(p);
-      await p.getByRole('button', { name: 'Group Video: Up to 4 on camera' }).click();
+      await revealLandingModeCards(p);
+      await p.getByRole('button', { name: GROUP_MODE_NAME }).click();
       const start = p.getByRole('button', { name: 'Start camera & microphone' });
       if (await start.isVisible()) await start.click();
       await expect.poll(() => p.locator('video').evaluateAll(v => v.filter(el => el.videoWidth > 0 && !el.paused).length), { timeout: 15000 }).toBeGreaterThanOrEqual(1);

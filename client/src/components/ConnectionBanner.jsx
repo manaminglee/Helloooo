@@ -1,11 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 
 /**
- * ConnectionBanner.jsx — Slim fixed banner that surfaces socket connectivity.
- *
- * - While disconnected: "Connection lost — reconnecting…" with a pulsing dot.
- * - On reconnect: brief "Reconnected" success state (2s), then hides.
- * - Hidden entirely while connected normally.
+ * ConnectionBanner — compact toast. Hidden while connected;
+ * a short "Reconnected" pill auto-hides so it never covers the header.
  */
 export function ConnectionBanner({ connected }) {
   const [showReconnected, setShowReconnected] = useState(false);
@@ -20,7 +17,7 @@ export function ConnectionBanner({ connected }) {
     if (wasDisconnectedRef.current) {
       wasDisconnectedRef.current = false;
       setShowReconnected(true);
-      const t = setTimeout(() => setShowReconnected(false), 2000);
+      const t = setTimeout(() => setShowReconnected(false), 1800);
       return () => clearTimeout(t);
     }
     return undefined;
@@ -32,29 +29,19 @@ export function ConnectionBanner({ connected }) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed inset-x-0 top-0 z-[9997] flex justify-center px-3 pt-[calc(0.5rem+env(safe-area-inset-top))] pointer-events-none"
+      className="mm-conn-toast"
     >
       <div
-        className={`flex items-center gap-2.5 rounded-full border px-4 py-1.5 backdrop-blur-xl shadow-[0_4px_24px_rgba(0,0,0,0.45)] mm-conn-banner ${
-          showReconnected
-            ? 'border-emerald-500/25 bg-emerald-500/10'
-            : 'border-amber-500/25 bg-black/80'
+        className={`mm-conn-toast__pill ${
+          showReconnected ? 'mm-conn-toast__pill--ok' : 'mm-conn-toast__pill--warn'
         }`}
       >
         <span
           aria-hidden
-          className={`h-1.5 w-1.5 rounded-full ${
-            showReconnected
-              ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
-              : 'bg-amber-400 shadow-[0_0_8px_#fbbf24] animate-pulse'
-          }`}
+          className={`mm-conn-toast__dot ${showReconnected ? 'mm-conn-toast__dot--ok' : 'mm-conn-toast__dot--warn'}`}
         />
-        <span
-          className={`text-[10px] font-black uppercase tracking-[0.25em] ${
-            showReconnected ? 'text-emerald-300' : 'text-amber-200/90'
-          }`}
-        >
-          {showReconnected ? 'Reconnected' : 'Connection lost — reconnecting…'}
+        <span className="mm-conn-toast__label">
+          {showReconnected ? 'Reconnected' : 'Reconnecting…'}
         </span>
       </div>
     </div>

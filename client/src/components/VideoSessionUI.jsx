@@ -491,3 +491,171 @@ export function VideoSearchingOverlay({
     </div>
   );
 }
+
+/** Full matching canvas: self-preview or placeholder, tags, cancel, compact notice. */
+export function VideoMatchmakingStage({
+  bindVideo,
+  hasPreview = false,
+  mirror = false,
+  cameraOff = false,
+  videoFilter = 'none',
+  nickname = '',
+  tags = [],
+  cameraNotice = '',
+  onRetryCamera,
+  onCancel,
+}) {
+  const initial = String(nickname || 'You').trim().slice(0, 1).toUpperCase() || 'Y';
+  return (
+    <div className="mm-search-stage" aria-live="polite" aria-label="Searching for a match">
+      {cameraNotice ? (
+        <div className="mm-search-stage__toast" role="status">
+          <span>{cameraNotice}</span>
+          {onRetryCamera ? (
+            <button type="button" onClick={onRetryCamera}>Retry</button>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="mm-search-stage__orb">
+        <span className="mm-search-stage__ring" aria-hidden />
+        <span className="mm-search-stage__ring mm-search-stage__ring--2" aria-hidden />
+        <div className="mm-search-stage__preview">
+          {hasPreview ? (
+            <video
+              ref={bindVideo}
+              autoPlay
+              muted
+              playsInline
+              className={`${mirror ? '-scale-x-100' : ''} ${cameraOff ? 'opacity-30' : ''}`}
+              style={{ filter: videoFilter && videoFilter !== 'none' ? videoFilter : 'none' }}
+            />
+          ) : (
+            <div className="mm-search-stage__placeholder" aria-hidden>
+              {initial}
+            </div>
+          )}
+        </div>
+      </div>
+      <p className="mm-search-stage__title">Looking for a match<span className="mm-search-stage__dots" /></p>
+      <p className="mm-search-stage__sub">Matching you with someone new</p>
+      {tags.length > 0 ? (
+        <div className="mm-search-stage__tags">
+          {tags.slice(0, 6).map((tag) => (
+            <span key={tag} className="mm-search-stage__tag">#{tag}</span>
+          ))}
+        </div>
+      ) : null}
+      {onCancel ? (
+        <button type="button" className="mm-search-stage__cancel" onClick={onCancel}>
+          Cancel search
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+
+export function CreatorVerifiedMark({ show, handle, className = '' }) {
+  if (!show) return null;
+  return (
+    <span className={`mm-creator-mark ${className}`.trim()}>
+      <span aria-hidden>★</span>
+      {handle ? handle : 'Creator'}
+    </span>
+  );
+}
+
+export function VideoTimeBadge({ session, paymentsEnabled }) {
+  if (!paymentsEnabled || !session || session.unlimited || session.remainingSeconds == null) return null;
+  const seconds = Math.max(0, Number(session.remainingSeconds) || 0);
+  const m = Math.floor(seconds / 60);
+  const s = String(seconds % 60).padStart(2, '0');
+  return (
+    <span className={`mm-video-time${seconds <= 60 ? ' mm-video-time--warn' : ''}`} aria-live="polite">
+      {m}:{s} left
+    </span>
+  );
+}
+
+export function VideoSessionPausedOverlay({
+  open,
+  pricing,
+  onExtend,
+  onUnlimited,
+  onKeepText,
+}) {
+  if (!open) return null;
+  const coins = pricing?.video || {};
+  return (
+    <div className="mm-video-paused" role="dialog" aria-label="Video time is up">
+      <div className="mm-video-paused__card">
+        <h3>Free video time is up</h3>
+        <p>You can keep typing, or spend coins to turn the cameras back on.</p>
+        <div className="mm-video-paused__actions">
+          <button type="button" className="mm-btn mm-btn--primary" onClick={onExtend}>
+            +{Math.round((coins.extendSessionSeconds || 600) / 60)} min · {coins.extendSessionCoins || 15} coins
+          </button>
+          <button type="button" className="mm-btn mm-btn--ghost" onClick={onUnlimited}>
+            Unlimited this match · {coins.unlimitedSessionCoins || 50} coins
+          </button>
+          <button type="button" className="mm-video-paused__text" onClick={onKeepText}>
+            Keep chatting in text
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function MatchConnectBar({
+  visible,
+  isCreator,
+  peerIsCreator,
+  peerHandle,
+  incoming,
+  status,
+  onInviteFriend,
+  onInviteFollow,
+  onAccept,
+  onDecline,
+  onReveal,
+}) {
+  if (!visible) return null;
+  return (
+    <div className="mm-match-connect" aria-live="polite">
+      {incoming ? (
+        <>
+          <span>
+            {incoming.kind === 'follow-creator'
+              ? `${incoming.creatorHandle || 'A creator'} invited you to follow`
+              : 'They want to stay connected'}
+          </span>
+          <button type="button" onClick={onAccept}>Accept</button>
+          <button type="button" onClick={onDecline}>Not now</button>
+        </>
+      ) : status === 'sent' ? (
+        <span>Invite sent</span>
+      ) : status === 'accepted' ? (
+        <span>You&apos;re connected{peerHandle ? ` · ${peerHandle}` : ''}</span>
+      ) : (
+        <>
+          <button type="button" onClick={onInviteFriend}>Stay connected</button>
+          {isCreator && <button type="button" onClick={onInviteFollow}>Invite to follow</button>}
+          {isCreator && <button type="button" onClick={onReveal}>Show creator profile</button>}
+          {peerIsCreator && peerHandle && <span className="mm-creator-mark">★ {peerHandle}</span>}
+        </>
+      )}
+    </div>
+  );
+}
+
+export function CreatorVideoStats({ stats }) {
+  if (!stats) return null;
+  return (
+    <div className="mm-creator-stats" aria-label="Your video session stats">
+      <span>{stats.matches || 0} matches</span>
+      <span>{stats.followInvites || 0} follow invites</span>
+      <span>{stats.followsGained || 0} new follows</span>
+    </div>
+  );
+}

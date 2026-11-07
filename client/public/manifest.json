@@ -1,7 +1,7 @@
 {
   "name": "Helloooo Live & Audio",
   "short_name": "Helloooo",
-  "description": "Watch creators live, join voice rooms, and send gifts — one app for Live and Audio.",
+  "description": "Watch creators live, join voice rooms, and send gifts \u2014 one app for Live and Audio.",
   "lang": "en",
   "dir": "ltr",
   "id": "/",
@@ -11,13 +11,46 @@
   "background_color": "#07060f",
   "theme_color": "#ff2d6f",
   "orientation": "portrait-primary",
-  "categories": ["social", "entertainment", "communication"],
+  "categories": [
+    "social",
+    "entertainment",
+    "communication"
+  ],
   "icons": [
-    { "src": "/favicon-16.png", "sizes": "16x16", "type": "image/png" },
-    { "src": "/favicon.png", "sizes": "32x32", "type": "image/png" },
-    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
-    { "src": "/helloooo-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/helloooo-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "/favicon-16.png",
+      "sizes": "16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ],
   "shortcuts": [
     {

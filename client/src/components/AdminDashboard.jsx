@@ -807,7 +807,7 @@ export function AdminDashboard({ onJoinRoom }) {
           <div className="flex items-center gap-4 px-2">
             <img src="/helloooo-logo.png" alt="Helloooo" className="w-10 h-10 object-contain drop-shadow-[0_0_10px_#06b6d4] rounded-lg" />
             <div className="flex flex-col">
-              <span className="font-black text-sm tracking-[0.2em] italic uppercase leading-none"><span className="helloooo-brand helloooo-brand--sm"><span className="helloooo-brand__hell">Hell</span><span className="helloooo-brand__o helloooo-brand__o1">o</span><span className="helloooo-brand__o helloooo-brand__o2">o</span><span className="helloooo-brand__o helloooo-brand__o3">o</span><span className="helloooo-brand__o helloooo-brand__o4">o</span></span> <span className="text-cyan-400">Admin</span></span>
+              <span className="flex items-center gap-2 leading-none"><img src="/helloooo-wordmark-dark.svg" alt="Helloooo" className="h-5 w-auto" /><span className="text-cyan-400 font-black text-sm">Admin</span></span>
               <span className="text-[8px] font-black text-white/20 uppercase tracking-widest mt-1">System Online</span>
             </div>
           </div>

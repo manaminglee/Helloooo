@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const apiProxy = process.env.HELLOOOO_API_PROXY || 'http://127.0.0.1:3000';
+
 export default defineConfig({
   // Custom domain (helloooo.site) serves from root — not /RepoName/
   base: process.env.VITE_BASE_PATH || '/',
@@ -9,8 +11,8 @@ export default defineConfig({
     port: 5173,
     host: true,
     proxy: {
-      '/api': { target: 'http://localhost:3000', changeOrigin: true },
-      '/socket.io': { target: 'http://localhost:3000', ws: true },
+      '/api': { target: apiProxy, changeOrigin: true },
+      '/socket.io': { target: apiProxy, ws: true },
     },
   },
   build: {

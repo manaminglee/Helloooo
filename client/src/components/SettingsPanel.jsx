@@ -98,7 +98,7 @@ export function SettingsPanel({ onClose }) {
       />
 
       {/* Panel */}
-      <aside className="absolute right-0 top-0 flex h-full w-full max-w-sm flex-col border-l border-white/10 bg-[#0a0a10] shadow-[-24px_0_80px_rgba(0,0,0,0.6)] animate-drawer-in mm-mobile-safe">
+      <aside className="ui-sheet absolute right-0 top-0 flex h-full w-full max-w-sm flex-col border-l border-white/10 bg-[#0a0a10] shadow-[-24px_0_80px_rgba(0,0,0,0.6)] animate-drawer-in mm-mobile-safe">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/[0.06] px-6 py-5">
           <div>

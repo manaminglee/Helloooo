@@ -113,13 +113,17 @@ function registerEnhancements(app, io, deps) {
 
   app.get('/api/rooms/public', (req, res) => {
     const list = Array.from(rooms.values())
-      .filter((r) => (r.mode === 'group_text' || r.mode === 'group_video') && r.users.size > 0 && r.users.size < r.maxSize)
+      .filter((r) => (r.mode === 'group_text' || r.mode === 'group_video') && r.users.size > 0 && r.users.size < r.maxSize && !r.isPrivate)
       .map((r) => ({
         id: r.id,
         interest: r.interest,
         mode: r.mode,
         participantCount: r.users.size,
         maxSize: r.maxSize,
+        branded: !!r.branded,
+        roomTitle: r.roomTitle || null,
+        creatorHost: r.creatorHost || null,
+        entryFee: r.entryFee || 0,
       }))
       .slice(0, 30);
     res.json({ rooms: list });

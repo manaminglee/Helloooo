@@ -14,7 +14,8 @@ import { loadSessionPrefs, saveSessionPrefs } from '../constants/conversationMod
 import { PHASE_4_UNIQUE } from '../constants/features';
 import { SettingsGearButton } from './SettingsGear';
 import LandingHero from './LandingHero';
-import { LandingModeCards } from './LandingModeCards';
+import { LandingLiveNow, LandingSafetyCard } from './LandingLiveNow';
+import { useLandingPresence } from '../hooks/useLandingPresence';
 import LandingBackground from './LandingBackground';
 import { fadeUp, slideDown, stagger } from '../utils/landingMotion';
 import '../styles/landing-motion.css';
@@ -184,7 +185,7 @@ const INSIGHTS = [
   'Report unsafe behavior from any chat screen.',
 ];
 
-// Mode cards are defined in LandingHero.jsx (single source of truth).
+// Mode cards live in the scroll-morph stage inside LandingHero.
 // `group_text` now routes to live Voice Rooms.
 
 export function LandingPage({ onJoin, connected: appConnected, coinState, isJoining = false, registered = false, currentActiveSeconds = 0, joinMeta = {}, setJoinMeta, country: userCountry = null }) {
@@ -280,6 +281,7 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
   const [featuredCreators, setFeaturedCreators] = useState([]);
   const [showSettings, setShowSettings] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const landingPresence = useLandingPresence();
 
   useEffect(() => {
     try {
@@ -530,7 +532,10 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
   };
 
   const beginModeJoin = (mode, nickOverride, policyBypass = false) => {
-    const nick = (nickOverride || joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous';
+    const anonymousMode = mode === 'video' || mode === 'group_video' || mode === 'text';
+    const nick = anonymousMode
+      ? 'Anonymous'
+      : ((nickOverride || joinMeta.displayNickname || 'Anonymous').trim().slice(0, 30) || 'Anonymous');
     const meta = {
       language: languageFilter,
       region: userCountry || country,
@@ -567,7 +572,8 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
     if (!connected || isJoining || scanning) return;
     // Always confirm name for voice + lives; for other modes open when still default.
     const current = (joinMeta.displayNickname || '').trim();
-    const needsNameGate = mode === 'group_text' || mode === 'lives' || !current || current === 'Anonymous';
+    const anonymousMode = mode === 'video' || mode === 'group_video' || mode === 'text';
+    const needsNameGate = !anonymousMode && (mode === 'group_text' || mode === 'lives' || !current || current === 'Anonymous');
     if (!policyBypass && needsNameGate) {
       setPendingJoinMode(mode);
       return;
@@ -753,7 +759,7 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
   const scrollToStart = () => startRef.current?.scrollIntoView({ behavior: 'smooth' });
 
   return (
-    <div className="mm-landing mm-landing--v2 text-white relative">
+    <div className="mm-landing mm-landing--v4 text-white relative">
 
       <LandingBackground lowPower={lowPower} />
 
@@ -815,19 +821,15 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
       {/* HEADER */}
       {!showDashboardModal && (
         <motion.header
-          className="mm-landing-header"
+          className="mm-landing-header lv4-header"
           initial="hidden"
           animate="visible"
           variants={slideDown}
         >
           <div className="mm-landing-header__bar">
             <div className="mm-landing-header__brand">
-              <button type="button" onClick={scrollToStart} className="flex items-center gap-3 min-w-0 text-left rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/40 mm-compact-btn">
-                <HellooooLogo size={28} className="shrink-0" />
-                <div className="flex flex-col min-w-0">
-                  <HellooooBrand size="sm" />
-                  <span className="hidden sm:block text-[10px] text-white/45 tracking-widest uppercase">{HELLOOOO_EMOJI} {HELLOOOO_TAGLINE}</span>
-                </div>
+              <button type="button" onClick={scrollToStart} className="flex items-center gap-3 min-w-0 text-left rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500/40 mm-compact-btn" aria-label="Helloooo">
+                <img src="/helloooo-wordmark-dark.svg" alt="Helloooo" className="lv4-wordmark" />
               </button>
             </div>
             <OnlineViewersBadge
@@ -835,7 +837,7 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
               country={country}
               compact
               showLabel={false}
-              className="mm-landing-header__viewers mm-hide-desktop"
+              className="mm-landing-header__viewers hidden"
             />
             <div className="mm-landing-header__actions mm-hide-mobile">
               <button
@@ -886,9 +888,10 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
                 </div>
               )}
             </div>
+            <div className="lv4-header__right mm-hide-desktop">
             <button
               type="button"
-              className="mm-hide-desktop mm-landing-menu-btn"
+              className="mm-landing-menu-btn"
               onClick={() => setShowMobileMenu(true)}
               aria-label="Open menu"
             >
@@ -897,6 +900,7 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
               </svg>
               {(creatorUnreadCount > 0) && <span className="mm-landing-menu-btn__dot" aria-hidden />}
             </button>
+            </div>
           </div>
         </motion.header>
       )}
@@ -908,15 +912,22 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
           <AdSlot slotKey="hero" script={adScripts?.hero} adsEnabled={adsEnabled} className="w-full max-w-4xl" />
 
           {/* Redesigned 3D hero — mobile-first, replaces the old static header */}
+          <div className="lv4-home">
           <LandingHero
             connected={connected}
             isJoining={isJoining}
-            onlineCount={onlineCount ?? 0}
-            lowPower={lowPower}
-            onGoLive={() => handleStartInteraction('lives')}
-            onVoice={() => handleStartInteraction('group_text')}
-            onScrollToStart={scrollToStart}
+            onStartChat={() => handleStartInteraction('video')}
+            onStart={handleStartInteraction}
+            counts={landingPresence.counts}
           />
+          <div className="lv4-after">
+          <LandingLiveNow
+            lives={landingPresence.lives}
+            onSeeAll={() => handleStartInteraction('lives')}
+          />
+          <LandingSafetyCard />
+          </div>
+          </div>
 
           <motion.section
             className="mm-landing-section mm-landing-setup lv2-section"
@@ -952,19 +963,6 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
           >
             <div className="mm-landing-glass mm-landing-step-panel p-5 sm:p-8">
               <div className="flex flex-col items-center text-center relative z-[1] w-full">
-                <span className="mm-landing-section-label">Choose a mode</span>
-                <span className="mm-landing-section-title mb-2">Start chatting</span>
-                <p className="text-xs text-white/45 mb-5 max-w-md">
-                  Pick video, voice, text, or lives. Add interests below for better matches.
-                </p>
-
-                <LandingModeCards
-                  onStart={handleStartInteraction}
-                  connected={connected}
-                  isJoining={isJoining}
-                  className="mb-8 w-full"
-                />
-
                 <span className="mm-landing-section-label">Optional</span>
                 <span className="mm-landing-section-title mb-5">Add interests</span>
 

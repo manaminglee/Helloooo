@@ -3,13 +3,18 @@
  */
 
 export const HELLOOOO_LOGO = '/helloooo-logo.png';
+export const HELLOOOO_ICON = '/helloooo-icon.svg';
+export const HELLOOOO_ICON_SIMPLE = '/favicon.svg';
+export const HELLOOOO_WORDMARK = '/helloooo-wordmark.svg';
+export const HELLOOOO_WORDMARK_DARK = '/helloooo-wordmark-dark.svg';
 export const HELLOOOO_TAGLINE = 'Random people • Real conversations';
 export const HELLOOOO_EMOJI = '👋';
 
 export function HellooooLogo({ size = 40, className = '', alt = 'Helloooo' }) {
+  const src = size <= 32 ? HELLOOOO_ICON_SIMPLE : HELLOOOO_ICON;
   return (
     <img
-      src={HELLOOOO_LOGO}
+      src={src}
       alt={alt}
       width={size}
       height={size}
@@ -20,16 +25,13 @@ export function HellooooLogo({ size = 40, className = '', alt = 'Helloooo' }) {
   );
 }
 
-/** Styled wordmark: Hell (white) + oooo (gradient circles) */
-export function HellooooBrand({ size = 'md', className = '', as: Tag = 'span' }) {
+/** Concept E wordmark: capital H + ell + four icon o-circles. */
+export function HellooooBrand({ size = 'md', className = '', as: Tag = 'span', variant = 'dark' }) {
   const sizeClass = size === 'sm' ? 'helloooo-brand--sm' : size === 'lg' ? 'helloooo-brand--lg' : size === 'xl' ? 'helloooo-brand--xl' : '';
+  const src = variant === 'light' ? HELLOOOO_WORDMARK : HELLOOOO_WORDMARK_DARK;
   return (
-    <Tag className={`helloooo-brand ${sizeClass} ${className}`.trim()} aria-label="Helloooo">
-      <span className="helloooo-brand__hell">Hell</span>
-      <span className="helloooo-brand__o helloooo-brand__o1">o</span>
-      <span className="helloooo-brand__o helloooo-brand__o2">o</span>
-      <span className="helloooo-brand__o helloooo-brand__o3">o</span>
-      <span className="helloooo-brand__o helloooo-brand__o4">o</span>
+    <Tag className={`helloooo-brand helloooo-brand--mark ${sizeClass} ${className}`.trim()} aria-label="Helloooo">
+      <img src={src} alt="Helloooo" className="helloooo-wordmark" decoding="async" />
     </Tag>
   );
 }

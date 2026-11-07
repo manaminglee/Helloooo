@@ -1,128 +1,163 @@
-import { Suspense } from 'react';
-import { motion } from 'framer-motion';
-import { HellooooLockup } from './HellooooBrand';
-import { lazyRetry } from '../utils/lazyRetry';
-import { fadeUp, stagger, springSnappy } from '../utils/landingMotion';
+import { useEffect, useRef, useState } from 'react';
+import { motion, useMotionValueEvent, useReducedMotion, useScroll, useTransform } from 'framer-motion';
+import { useLowPower } from '../context/LowPowerContext';
+import { stagger } from '../utils/landingMotion';
+import { LandingMorphStage } from './LandingModeCards';
 
-const HeroScene3D = lazyRetry(() => import('./three/HeroScene3D'));
+const easeOut = [0.22, 1, 0.36, 1];
 
-const TRUST = [
-  { label: 'No account needed' },
-  { label: 'Instant matching' },
-  { label: 'AI safety' },
-  { label: 'Gifts & Nuts' },
-];
+const wordUp = {
+  hidden: { opacity: 0, y: 32 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.72, ease: easeOut },
+  },
+};
+
+const wordFade = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0.3 } },
+};
 
 export function LandingHero({
   connected,
   isJoining,
-  onlineCount = 0,
-  lowPower = false,
-  onGoLive,
-  onVoice,
-  onScrollToStart,
+  onStart,
+  onStartChat,
+  counts = {},
 }) {
+  const reduce = useReducedMotion();
+  const { lowPower } = useLowPower();
+  const pinRef = useRef(null);
+  const stickyRef = useRef(null);
+  const { scrollYProgress } = useScroll({
+    target: pinRef,
+    offset: ['start start', 'end end'],
+  });
+  const morph = useTransform(scrollYProgress, [0.1, 0.82], [0, 1]);
+  const [cardsOn, setCardsOn] = useState(!!reduce);
+
+  useMotionValueEvent(morph, 'change', (value) => {
+    setCardsOn(value >= 0.48);
+  });
+
+  useEffect(() => {
+    if (reduce) setCardsOn(true);
+  }, [reduce]);
+
+  useEffect(() => {
+    const pin = pinRef.current;
+    const sticky = stickyRef.current;
+    if (!pin || !sticky || reduce) return undefined;
+
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const rect = pin.getBoundingClientRect();
+      const vh = window.innerHeight;
+      sticky.classList.remove('is-fixed', 'is-end');
+      if (rect.top <= 0 && rect.bottom > vh) {
+        sticky.classList.add('is-fixed');
+      } else if (rect.top < 0 && rect.bottom <= vh) {
+        sticky.classList.add('is-end');
+      }
+    };
+    const onScroll = () => {
+      if (!frame) frame = window.requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [reduce]);
+
+
+  const startVideo = () => {
+    if (onStartChat) onStartChat();
+    else onStart?.('video');
+  };
+
+  const morphStyle = reduce ? { '--lv4-morph': 1 } : { '--lv4-morph': morph };
+  const words = reduce ? wordFade : wordUp;
+  const stillOrb = reduce || lowPower;
+
   return (
-    <section className="lv2-hero relative overflow-hidden w-full">
-      {!lowPower && (
-        <div className="absolute inset-0 pointer-events-none opacity-[0.18]" aria-hidden>
-          <Suspense fallback={null}>
-            <HeroScene3D className="opacity-40" intensity={0.32} />
-          </Suspense>
-        </div>
-      )}
-
-      <div className="mm-shell mm-shell--wide relative z-10 w-full">
-        <motion.div
-          className="lv2-hero__inner"
-          initial="hidden"
-          animate="visible"
-          variants={stagger(0.09, 0.04)}
-        >
-          <motion.div variants={fadeUp} className="lv2-hero__brand">
-            <HellooooLockup logoSize={88} brandSize="xl" showTagline className="helloooo-lockup--hero" />
-          </motion.div>
-
-          <motion.div variants={fadeUp} className="lv2-hero__eyebrow-wrap">
-            <span className="lv2-hero__eyebrow">
-              <motion.span
-                className="lv2-hero__live-dot"
-                animate={{ scale: [1, 1.3, 1], opacity: [0.7, 1, 0.7] }}
-                transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
-                aria-hidden
+    <section
+      ref={pinRef}
+      className={`lv4-pin${reduce ? ' lv4-pin--static' : ''}`}
+      data-landing-pin=""
+    >
+      <div className="lv4-pin__sticky" ref={stickyRef}>
+        <div className="lv4-hero">
+          <div className="lv4-orb-wrap" aria-hidden>
+            {stillOrb ? (
+              <div className="lv4-orb lv4-orb--static" />
+            ) : (
+              <motion.div
+                className="lv4-orb"
+                animate={{ x: [0, 16, -12, 0], y: [0, -12, 10, 0] }}
+                transition={{ duration: 18, repeat: Infinity, ease: 'easeInOut' }}
               />
-              {onlineCount > 0
-                ? `${onlineCount.toLocaleString()} online now`
-                : 'Anonymous connections worldwide'}
-            </span>
-          </motion.div>
+            )}
+          </div>
 
-          <motion.p variants={fadeUp} className="lv2-hero__sub">
-            Video, voice, text, and creator lives — match in seconds. No sign-up.
-          </motion.p>
-
-          <motion.div variants={fadeUp} className="lv2-hero__cta-row">
-            <motion.button
-              type="button"
-              className="lv2-hero__cta lv2-hero__cta--live"
-              disabled={!connected || isJoining}
-              onClick={() => onGoLive?.()}
-              whileHover={{ scale: 1.03, y: -2 }}
-              whileTap={{ scale: 0.97 }}
-              transition={springSnappy}
+          <div className="lv4-hero__copy">
+            <motion.h1
+              className="lv4-hero__title"
+              initial="hidden"
+              animate="visible"
+              variants={stagger(0.12, 0.06)}
             >
-              <span className="lv2-hero__cta-glow" aria-hidden />
-              <span className="lv2-hero__cta-dot" aria-hidden />
-              Go Live
-            </motion.button>
-            <motion.button
-              type="button"
-              className="lv2-hero__cta lv2-hero__cta--voice"
-              disabled={!connected || isJoining}
-              onClick={() => onVoice?.()}
-              whileHover={{ scale: 1.02, y: -1 }}
-              whileTap={{ scale: 0.98 }}
-              transition={springSnappy}
+              <motion.span className="lv4-hero__strangers" variants={words}>
+                Strangers,
+              </motion.span>
+              <motion.span className="lv4-hero__meet" variants={words}>
+                meet.
+              </motion.span>
+            </motion.h1>
+            <motion.p
+              className="lv4-hero__sub"
+              initial={reduce ? { opacity: 0 } : { opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.55, delay: 0.28, ease: easeOut }}
             >
-              Voice rooms
-            </motion.button>
-            <motion.button
-              type="button"
-              className="lv2-hero__cta lv2-hero__cta--ghost"
-              onClick={() => onScrollToStart?.()}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              transition={springSnappy}
-            >
-              All modes
-            </motion.button>
-          </motion.div>
-
-          <motion.ul variants={fadeUp} className="lv2-hero__trust" aria-label="Why Helloooo">
-            {TRUST.map((t, i) => (
-              <motion.li
-                key={t.label}
-                className="lv2-hero__trust-chip"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.28 + i * 0.06, duration: 0.4 }}
+              Anonymous video, text, group and voice. No sign-up, no nickname.
+            </motion.p>
+            <div className="lv4-hero__actions">
+              <button
+                type="button"
+                className="lv4-cta"
+                disabled={!connected || isJoining}
+                onClick={startVideo}
               >
-                {t.label}
-              </motion.li>
-            ))}
-          </motion.ul>
+                Start chatting
+                <span aria-hidden>→</span>
+              </button>
+            </div>
+            {!connected && (
+              <p className="lv4-hero__status">Connecting to servers…</p>
+            )}
+            {connected && isJoining && (
+              <p className="lv4-hero__status">Joining…</p>
+            )}
+          </div>
 
-          {!connected && (
-            <motion.p variants={fadeUp} className="lv2-hero__status lv2-hero__status--warn">
-              Connecting to servers…
-            </motion.p>
-          )}
-          {connected && isJoining && (
-            <motion.p variants={fadeUp} className="lv2-hero__status lv2-hero__status--join">
-              Joining…
-            </motion.p>
-          )}
-        </motion.div>
+          <LandingMorphStage
+            morphStyle={morphStyle}
+            cardsOn={cardsOn || !!reduce}
+            onStart={onStart}
+            connected={connected}
+            isJoining={isJoining}
+            counts={counts}
+          />
+
+          <p className="lv4-moderation">Moderated 24/7 · 18+</p>
+        </div>
       </div>
     </section>
   );

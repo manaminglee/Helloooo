@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { VIDEO_MODE_NAME, TEXT_MODE_NAME, GROUP_MODE_NAME, revealLandingModeCards } = require('./landingHelpers');
 
 test.describe('Helloooo smoke (anonymous)', () => {
   test.beforeEach(async ({ page }) => {
@@ -13,11 +14,11 @@ test.describe('Helloooo smoke (anonymous)', () => {
     await page.goto('/');
     await expect(page).toHaveTitle(/Helloooo/i);
 
-    // Use exact aria-labels from LandingHero mode cards (avoids matching "Start video chat")
-    const videoBtn = page.getByRole('button', { name: 'Video Chat: 1-on-1 live video' });
-    const groupBtn = page.getByRole('button', { name: 'Group Video: Up to 4 on camera' });
-
+    // Video preview is visible at the top; named group card appears after the scroll morph.
+    const videoBtn = page.getByRole('button', { name: VIDEO_MODE_NAME });
     await expect(videoBtn).toBeVisible();
+    await revealLandingModeCards(page);
+    const groupBtn = page.getByRole('button', { name: GROUP_MODE_NAME });
     await expect(groupBtn).toBeVisible();
     await expect(videoBtn).toBeEnabled({ timeout: 20000 });
   });
@@ -30,7 +31,7 @@ test.describe('Helloooo smoke (anonymous)', () => {
   test('interest entry and text mode navigation', async ({ page }) => {
     await page.goto('/');
 
-    const textBtn = page.getByRole('button', { name: 'Text Chat: Anonymous messaging' });
+    const textBtn = page.getByRole('button', { name: TEXT_MODE_NAME });
     await expect(textBtn).toBeEnabled({ timeout: 20000 });
     await textBtn.click();
 

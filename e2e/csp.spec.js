@@ -21,11 +21,26 @@ test.beforeAll(async () => {
   const built = path.join(ROOT, 'client', 'dist', 'index.html');
   if (!fs.existsSync(built)) test.skip(true, 'run `npm run build` first');
 
+  // Production refuses to listen when only the public demo TURN credentials
+  // are present. This file only checks CSP headers on the built client, so
+  // opt into the documented demo-relay escape hatch instead of skipping the
+  // security assertions.
   server = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), NODE_ENV: 'production' },
-    stdio: 'ignore',
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      NODE_ENV: 'production',
+      TURN_ALLOW_DEMO_RELAY: '1',
+      EMAIL_TEST_MODE: 'true',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+
+  let bootLog = '';
+  const collect = (buf) => { bootLog += buf.toString(); };
+  server.stdout.on('data', collect);
+  server.stderr.on('data', collect);
 
   const deadline = Date.now() + 30000;
   for (;;) {
@@ -33,10 +48,12 @@ test.beforeAll(async () => {
       const res = await fetch(`${ORIGIN}/health`);
       if (res.ok) break;
     } catch { /* not listening yet */ }
-    if (Date.now() > deadline) throw new Error('server did not start');
+    if (Date.now() > deadline) {
+      throw new Error(`server did not start on ${ORIGIN}/health.${bootLog ? `\n${bootLog.trim()}` : ''}`);
+    }
     await new Promise((r) => setTimeout(r, 300));
   }
-});
+}, 60000);
 
 test.afterAll(() => { server?.kill(); });
 

@@ -12,7 +12,7 @@
     "dev": "node server/index.js",
     "dev:client": "cd client && npm run dev",
     "build": "cd client && npm run build",
-    "test": "node server/__livetest.js && node server/__agencytest.js && node server/__agencyhttp.js && node server/__sectest.js && node server/__paytest.js && playwright test",
+    "test": "node server/__livetest.js && node server/__agencytest.js && node server/__agencyhttp.js && node server/__sectest.js && node server/__paytest.js && node server/__videopricetest.js && node server/__matchtest.js && playwright test",
     "test:e2e": "playwright test",
     "test:smoke": "playwright test e2e/smoke.spec.js",
     "test:live": "node server/__livetest.js",
@@ -22,6 +22,7 @@
     "test:video": "playwright test --config playwright.features.config.js",
     "test:rooms": "playwright test --config playwright.rooms.config.js",
     "test:pay": "node server/__paytest.js",
+    "test:video-pricing": "node server/__videopricetest.js",
     "test:e2e:live": "playwright test e2e/live-api.spec.js e2e/live-mobile.spec.js"
   },
   "dependencies": {

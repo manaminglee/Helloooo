@@ -23,6 +23,7 @@ function packEntry(entry) {
   const {
     socketId, userData, interest, interests, region, language, conversationMode, topicContract,
     matchCountryOnly, matchRegionOnly, reconnectToUserId, enqueuedAt,
+    gender, matchGender, filterCostSnapshot,
   } = entry;
   return {
     socketId,
@@ -36,6 +37,9 @@ function packEntry(entry) {
     matchCountryOnly: !!matchCountryOnly,
     matchRegionOnly: !!matchRegionOnly,
     reconnectToUserId: reconnectToUserId || null,
+    gender: gender || userData?.gender || '',
+    matchGender: matchGender || '',
+    filterCostSnapshot: filterCostSnapshot || null,
     userData: userData
       ? {
           id: userData.id,
@@ -46,6 +50,7 @@ function packEntry(entry) {
           // Carried so a candidate loaded from Redis can be keyed for blocks
           // and suspensions without a live socket lookup on this instance.
           deviceHandle: userData.deviceHandle || null,
+          gender: userData.gender || gender || '',
         }
       : null,
   };
@@ -65,6 +70,9 @@ function unpackEntry(raw) {
     matchCountryOnly: !!raw.matchCountryOnly,
     matchRegionOnly: !!raw.matchRegionOnly,
     reconnectToUserId: raw.reconnectToUserId || null,
+    gender: raw.gender || raw.userData?.gender || '',
+    matchGender: raw.matchGender || '',
+    filterCostSnapshot: raw.filterCostSnapshot || null,
     userData: raw.userData || {},
   };
 }

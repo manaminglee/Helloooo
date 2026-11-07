@@ -1,0 +1,890 @@
+/* Helloooo landing v4 — "Strangers, meet." scroll-morph, mobile-first. */
+
+@property --lv4-morph {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+.mm-landing--v4 {
+  --c-bg: #0c0c0e;
+  background: #0c0c0e;
+  color: #f4f4f6;
+}
+
+/* ---------- background ---------- */
+.lv4-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.lv4-bg__base {
+  position: absolute;
+  inset: 0;
+  background: #0c0c0e;
+}
+.lv4-bg__grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.22;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+}
+
+/* ---------- floating pill nav ---------- */
+.mm-landing--v4 .mm-landing-header.lv4-header {
+  background: transparent;
+  border-bottom: 0;
+  display: flex;
+  justify-content: center;
+  padding: max(0.65rem, env(safe-area-inset-top, 0px)) 0.75rem 0;
+  pointer-events: none;
+}
+.mm-landing--v4 .lv4-header .mm-landing-header__bar {
+  pointer-events: auto;
+  width: min(56rem, calc(100% - 1.25rem));
+  min-height: 2.85rem;
+  padding: 0.28rem 0.32rem 0.28rem 1.05rem;
+  border-radius: 999px;
+  background: rgba(18, 18, 22, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.lv4-wordmark {
+  display: block;
+  height: 1.28rem;
+  width: auto;
+  max-width: min(168px, 46vw);
+  object-fit: contain;
+  object-position: left center;
+}
+@media (min-width: 768px) {
+  .lv4-wordmark {
+    height: 1.48rem;
+    max-width: 210px;
+  }
+}
+.lv4-header__right {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+.lv4-header__gear {
+  width: 2.55rem;
+  height: 2.55rem;
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.82);
+}
+.mm-landing--v4 .lv4-header .mm-landing-menu-btn {
+  width: 2.45rem;
+  height: 2.45rem;
+  border-radius: 999px;
+}
+
+/* neutralize old main padding so the pin can own the first viewport */
+.mm-landing--v4 .mm-landing-main {
+  padding: 0;
+  padding-bottom: calc(8rem + env(safe-area-inset-bottom, 0px));
+  align-items: stretch;
+  width: 100%;
+  max-width: none;
+}
+
+.lv4-home {
+  position: relative;
+  width: 100%;
+  z-index: 1;
+}
+
+/* Prevent overflow-x:hidden on html/body/#root from turning into a scroll
+   container (which breaks position:sticky). clip avoids horizontal bleed. */
+html:has(.mm-landing--v4),
+body:has(.mm-landing--v4),
+#root:has(.mm-landing--v4) {
+  overflow-x: clip;
+}
+
+/* ---------- pinned morph section ---------- */
+.lv4-pin {
+  position: relative;
+  height: 220vh;
+}
+.lv4-pin--static {
+  height: auto;
+}
+.lv4-pin__sticky {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100svh;
+  width: 100%;
+  box-sizing: border-box;
+  padding:
+    calc(4.55rem + env(safe-area-inset-top, 0px))
+    max(1.15rem, env(safe-area-inset-left))
+    calc(5.85rem + env(safe-area-inset-bottom, 0px))
+    max(1.15rem, env(safe-area-inset-right));
+}
+.lv4-pin__sticky.is-fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+.lv4-pin__sticky.is-end {
+  position: absolute;
+  top: auto;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+.lv4-pin--static .lv4-pin__sticky {
+  position: relative;
+  min-height: 0;
+  padding-bottom: 1.75rem;
+}
+
+.lv4-hero {
+  position: relative;
+  width: 100%;
+  max-width: 26rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.lv4-orb-wrap {
+  position: absolute;
+  left: 50%;
+  top: -2.4rem;
+  width: min(34rem, 145%);
+  height: 16.5rem;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 0;
+}
+.lv4-orb {
+  position: absolute;
+  inset: 0;
+  filter: blur(36px);
+  opacity: 0.92;
+  background:
+    radial-gradient(ellipse 48% 55% at 34% 50%, rgba(124, 92, 255, 0.72), transparent 70%),
+    radial-gradient(ellipse 46% 52% at 72% 46%, rgba(255, 154, 118, 0.7), transparent 68%),
+    radial-gradient(ellipse 30% 40% at 52% 58%, rgba(186, 140, 255, 0.35), transparent 70%);
+  will-change: transform;
+}
+.lv4-orb--static { filter: blur(40px); opacity: 0.78; }
+
+.lv4-hero__copy {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.lv4-hero__title {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  column-gap: 0.28em;
+  row-gap: 0;
+  font-size: clamp(2.45rem, 12vw, 4.75rem);
+  font-weight: 650;
+  letter-spacing: -0.048em;
+  line-height: 0.96;
+  color: #fff;
+}
+.lv4-hero__strangers {
+  font-family: Outfit, var(--font-sans), system-ui, sans-serif;
+  font-weight: 650;
+}
+.lv4-hero__meet {
+  font-family: Fraunces, "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+  font-style: italic;
+  font-weight: 500;
+  font-optical-sizing: auto;
+  color: #f3c4b2;
+  letter-spacing: -0.03em;
+}
+.lv4-hero__sub {
+  margin: 1.05rem 0 0;
+  max-width: 20.5rem;
+  font-size: 0.98rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.62);
+}
+.lv4-hero__actions {
+  margin-top: 1.25rem;
+}
+.lv4-cta {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-height: 3.15rem;
+  padding: 0 1.45rem;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  color: #141416;
+  font-size: 1.02rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+  box-shadow:
+    0 0 0 7px rgba(124, 92, 255, 0.2),
+    0 14px 36px rgba(124, 92, 255, 0.28);
+  animation: lv4-cta-pulse 2.8s ease-in-out infinite;
+}
+.lv4-cta:disabled { opacity: 0.45; cursor: not-allowed; animation: none; box-shadow: none; }
+.lv4-cta:focus-visible {
+  outline: 2px solid #7c5cff;
+  outline-offset: 3px;
+}
+@keyframes lv4-cta-pulse {
+  0%, 100% { box-shadow: 0 0 0 6px rgba(124, 92, 255, 0.18), 0 14px 36px rgba(124, 92, 255, 0.24); }
+  50% { box-shadow: 0 0 0 11px rgba(124, 92, 255, 0.3), 0 16px 42px rgba(124, 92, 255, 0.34); }
+}
+.lv4-hero__status {
+  margin: 0.7rem 0 0;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* ---------- morph stage ---------- */
+.lv4-stage {
+  --lv4-morph: 0;
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: min(26.5rem, 50svh);
+  margin-top: 1.25rem;
+  isolation: isolate;
+}
+@media (max-height: 720px) {
+  .lv4-stage { height: min(22.5rem, 44svh); }
+  .lv4-hero__title { font-size: clamp(2.15rem, 10vw, 3.4rem); }
+}
+
+.lv4-card {
+  position: absolute;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1.15rem;
+  background: #16161a;
+  color: #f4f4f6;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  cursor: pointer;
+  transform-origin: center center;
+  will-change: transform, left, top, width, height, opacity;
+  -webkit-tap-highlight-color: transparent;
+}
+.lv4-card:disabled { cursor: not-allowed; }
+.lv4-card:focus-visible {
+  outline: 2px solid #7c5cff;
+  outline-offset: 3px;
+}
+.lv4-card__inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: block;
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lv4-card:not(:disabled):hover .lv4-card__inner {
+    transform: translate3d(0, -3px, 0);
+  }
+}
+.lv4-card:not(:disabled):active .lv4-card__inner {
+  transform: translate3d(0, -2px, 0) scale(0.985);
+}
+.lv4-card__face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  pointer-events: none;
+}
+.lv4-card__preview {
+  opacity: calc(1 - var(--lv4-morph));
+}
+.lv4-card__named {
+  opacity: var(--lv4-morph);
+}
+
+/* Video: cluster top → wide named card */
+.lv4-card--video {
+  left: calc((16% * (1 - var(--lv4-morph))) + (0% * var(--lv4-morph)));
+  top: calc((0% * (1 - var(--lv4-morph))) + (0% * var(--lv4-morph)));
+  width: calc((68% * (1 - var(--lv4-morph))) + (100% * var(--lv4-morph)));
+  height: calc((47% * (1 - var(--lv4-morph))) + (32.5% * var(--lv4-morph)));
+  transform: rotate(calc(-8deg * (1 - var(--lv4-morph))));
+  z-index: 3;
+}
+
+/* Text: bottom-left preview → grid slot */
+.lv4-card--text {
+  left: calc((0% * (1 - var(--lv4-morph))) + (0% * var(--lv4-morph)));
+  top: calc((50% * (1 - var(--lv4-morph))) + (35% * var(--lv4-morph)));
+  width: calc((47% * (1 - var(--lv4-morph))) + (48.5% * var(--lv4-morph)));
+  height: calc((47% * (1 - var(--lv4-morph))) + (30.5% * var(--lv4-morph)));
+  transform: rotate(calc(-6deg * (1 - var(--lv4-morph))));
+  z-index: 2;
+}
+
+/* Audio: bottom-right preview → grid slot */
+.lv4-card--audio {
+  left: calc((51% * (1 - var(--lv4-morph))) + (0% * var(--lv4-morph)));
+  top: calc((54% * (1 - var(--lv4-morph))) + (67.5% * var(--lv4-morph)));
+  width: calc((49% * (1 - var(--lv4-morph))) + (48.5% * var(--lv4-morph)));
+  height: calc((44% * (1 - var(--lv4-morph))) + (30.5% * var(--lv4-morph)));
+  transform: rotate(calc(7deg * (1 - var(--lv4-morph))));
+  z-index: 2;
+}
+
+/* Incoming named cards */
+.lv4-card--enter {
+  opacity: var(--lv4-morph);
+  pointer-events: none;
+  z-index: 1;
+}
+.lv4-card--enter .lv4-card__named {
+  opacity: 1;
+}
+.lv4-stage[data-cards="1"] .lv4-card--enter {
+  pointer-events: auto;
+}
+.lv4-card--group {
+  left: 51.5%;
+  top: 35%;
+  width: 48.5%;
+  height: 30.5%;
+  transform: translate3d(0, calc((1 - var(--lv4-morph)) * 1.4rem), 0);
+}
+.lv4-card--live {
+  left: 51.5%;
+  top: 67.5%;
+  width: 48.5%;
+  height: 30.5%;
+  transform: translate3d(0, calc((1 - var(--lv4-morph)) * 1.6rem), 0);
+}
+
+/* preview faces */
+.lv4-preview-video {
+  flex-direction: column;
+}
+.lv4-preview-video__scene {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: block;
+  width: 100%;
+  overflow: hidden;
+}
+.lv4-preview-video__scene img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.lv4-preview-video__bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  padding: 0.35rem 0.55rem 0.5rem;
+}
+.lv4-preview-video__rec {
+  position: absolute;
+  left: 0.65rem;
+  bottom: 0.55rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 99px;
+  background: #ff3b4e;
+  box-shadow: 0 0 8px rgba(255, 59, 78, 0.7);
+}
+.lv4-ctrl {
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.78);
+  display: grid;
+  place-items: center;
+}
+.lv4-ctrl svg { width: 0.85rem; height: 0.85rem; }
+
+.lv4-preview-text {
+  flex-direction: column;
+  justify-content: center;
+  padding: 0.85rem 0.9rem;
+  text-align: left;
+  gap: 0.55rem;
+}
+.lv4-preview-text p {
+  margin: 0;
+  font-size: clamp(0.78rem, 3.1vw, 0.95rem);
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.88);
+}
+.lv4-preview-text em {
+  font-style: normal;
+  color: #c4b0ff;
+  font-weight: 650;
+}
+.lv4-preview-text__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.4);
+}
+.lv4-preview-text__dot {
+  width: 0.38rem;
+  height: 0.38rem;
+  border-radius: 99px;
+  background: #8b6cff;
+}
+
+.lv4-preview-audio {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 0.8rem 0.85rem;
+  gap: 0.4rem;
+  text-align: left;
+}
+.lv4-preview-audio__title {
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+.lv4-preview-audio__count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+.lv4-preview-audio__count i {
+  width: 0.38rem;
+  height: 0.38rem;
+  border-radius: 99px;
+  background: #8b6cff;
+  font-style: normal;
+}
+.lv4-preview-audio__people {
+  display: flex;
+  align-items: center;
+  margin-top: 0.15rem;
+}
+.lv4-mini-face {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 99px;
+  border: 1.5px solid #16161a;
+  margin-left: -0.3rem;
+  overflow: hidden;
+  background: #2a2436;
+}
+.lv4-mini-face:first-child { margin-left: 0; }
+.lv4-mini-face svg,
+.lv4-mini-face img { width: 100%; height: 100%; display: block; object-fit: cover; }
+
+/* named faces */
+.lv4-named {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.85rem 0.9rem 0.8rem;
+  text-align: left;
+}
+.lv4-named__icon {
+  flex-shrink: 0;
+  width: 1.45rem;
+  height: 1.45rem;
+  color: #b9a6ff;
+  margin-top: 0.08rem;
+}
+.lv4-card--text .lv4-named__icon { color: #ffb094; }
+.lv4-card--audio .lv4-named__icon { color: #d4b8ff; }
+.lv4-card--live .lv4-named__icon { color: #c4b4ff; }
+.lv4-named__copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.18rem;
+  padding-right: 0.9rem;
+}
+.lv4-named__title {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+.lv4-named__hint {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.52);
+}
+.lv4-named__arrow {
+  position: absolute;
+  right: 0.8rem;
+  bottom: 0.75rem;
+  width: 0.85rem;
+  height: 0.85rem;
+  color: rgba(255, 255, 255, 0.38);
+}
+.lv4-named--video .lv4-named__arrow {
+  right: auto;
+  left: 3rem;
+}
+.lv4-named--video {
+  padding-right: 0.7rem;
+}
+.lv4-named__thumb {
+  flex: 0 0 auto;
+  width: 38%;
+  max-width: 8.4rem;
+  height: calc(100% - 0.2rem);
+  border-radius: 0.7rem;
+  overflow: hidden;
+  align-self: stretch;
+}
+.lv4-named__thumb svg,
+.lv4-named__thumb img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.lv4-live-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: 0.4rem;
+  color: #ff5a5a;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+.lv4-live-dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 99px;
+  background: #ff4d4d;
+  box-shadow: 0 0 0 0 rgba(255, 77, 77, 0.55);
+  animation: lv4-live 1.6s ease-out infinite;
+}
+@keyframes lv4-live {
+  0% { box-shadow: 0 0 0 0 rgba(255, 77, 77, 0.55); }
+  70% { box-shadow: 0 0 0 7px rgba(255, 77, 77, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 77, 77, 0); }
+}
+
+.lv4-wave {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 1.7rem;
+  width: 100%;
+}
+.lv4-wave__bar {
+  flex: 1;
+  max-width: 0.22rem;
+  height: calc(22% + var(--h) * 78%);
+  border-radius: 99px;
+  background: #9b86ff;
+  transform-origin: center;
+  animation: lv4-wave 1.15s ease-in-out infinite;
+  animation-delay: calc(var(--i) * -0.07s);
+}
+@keyframes lv4-wave {
+  0%, 100% { transform: scaleY(0.42); }
+  50% { transform: scaleY(1); }
+}
+.lv4-named .lv4-wave { margin-top: 0.2rem; height: 1.15rem; }
+
+.lv4-moderation {
+  position: relative;
+  z-index: 1;
+  margin: 1.15rem 0 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.38);
+}
+
+/* ---------- live now + safety (tab-bar clearance) ---------- */
+.lv4-after {
+  width: 100%;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 0.25rem max(1.15rem, env(safe-area-inset-left)) 0.5rem max(1.15rem, env(safe-area-inset-right));
+}
+.lv4-livenow {
+  margin-top: 0.35rem;
+  padding-bottom: 0.35rem;
+  scroll-margin-top: calc(5.5rem + env(safe-area-inset-top, 0px));
+  scroll-margin-bottom: calc(6.5rem + env(safe-area-inset-bottom, 0px));
+}
+.lv4-livenow__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.8rem;
+}
+.lv4-livenow__head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.lv4-livenow__all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  border: 0;
+  background: none;
+  color: #c4b0ff;
+  font-size: 0.92rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.lv4-livenow__row {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  scrollbar-width: none;
+}
+.lv4-livenow__row::-webkit-scrollbar { display: none; }
+.lv4-livenow__item {
+  position: relative;
+  flex: 0 0 auto;
+  width: 4.15rem;
+  border: 0;
+  background: none;
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
+}
+.lv4-livenow__avatar {
+  width: 4.15rem;
+  height: 4.15rem;
+  border-radius: 999px;
+  border: 2px solid rgba(124, 92, 255, 0.85);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+.lv4-livenow__badge {
+  position: absolute;
+  left: 50%;
+  bottom: -0.15rem;
+  transform: translateX(-50%);
+  padding: 0.08rem 0.38rem;
+  border-radius: 0.3rem;
+  background: #ff3b4e;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+.lv4-livenow__more {
+  flex: 0 0 auto;
+  width: 4.15rem;
+  height: 4.15rem;
+  border-radius: 999px;
+  border: 1.5px dashed rgba(124, 92, 255, 0.45);
+  background: rgba(124, 92, 255, 0.06);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.lv4-livenow__empty {
+  margin: 0;
+  padding: 0.85rem 0.2rem 1.5rem;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.lv4-safety {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  padding: 0.95rem 1rem;
+  border-radius: 1.15rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(16, 16, 20, 0.65);
+  color: rgba(255, 255, 255, 0.78);
+}
+.lv4-safety__icon { color: #b9a6ff; flex-shrink: 0; margin-top: 0.1rem; }
+.lv4-safety p { margin: 0; font-size: 0.88rem; line-height: 1.4; }
+.lv4-safety p + p { margin-top: 0.2rem; color: rgba(255, 255, 255, 0.5); font-size: 0.82rem; }
+
+/* ---------- tablet ---------- */
+@media (min-width: 768px) {
+  .lv4-hero { max-width: 36rem; }
+  .lv4-stage { height: 28rem; }
+  .lv4-hero__sub { max-width: 24rem; font-size: 1.05rem; }
+  .lv4-pin__sticky {
+    padding-left: max(1.75rem, env(safe-area-inset-left));
+    padding-right: max(1.75rem, env(safe-area-inset-right));
+  }
+}
+
+/* ---------- desktop / wide: hero + stage side by side, wider card grid ---------- */
+@media (min-width: 1100px) {
+  .lv4-pin { height: 200vh; }
+  .lv4-pin__sticky {
+    padding-bottom: 2.4rem;
+    padding-top: calc(5.1rem + env(safe-area-inset-top, 0px));
+  }
+  .lv4-hero {
+    max-width: 72rem;
+    display: grid;
+    grid-template-columns: minmax(20rem, 1fr) minmax(30rem, 1.15fr);
+    align-items: center;
+    gap: 2.5rem 3.25rem;
+    text-align: left;
+  }
+  .lv4-hero__copy { align-items: flex-start; }
+  .lv4-hero__title { justify-content: flex-start; }
+  .lv4-orb-wrap {
+    left: 18%;
+    top: -3rem;
+    width: 38rem;
+    height: 20rem;
+    transform: none;
+  }
+  .lv4-stage {
+    height: 30rem;
+    margin-top: 0;
+  }
+  /* On a wide stage the named cards sit in a roomier 2×2 under a wide video row */
+  .lv4-card--video {
+    height: calc((52% * (1 - var(--lv4-morph))) + (34% * var(--lv4-morph)));
+  }
+  .lv4-card--text {
+    top: calc((54% * (1 - var(--lv4-morph))) + (37.5% * var(--lv4-morph)));
+    width: calc((44% * (1 - var(--lv4-morph))) + (48.5% * var(--lv4-morph)));
+    height: calc((42% * (1 - var(--lv4-morph))) + (29% * var(--lv4-morph)));
+  }
+  .lv4-card--audio {
+    left: calc((54% * (1 - var(--lv4-morph))) + (0% * var(--lv4-morph)));
+    top: calc((58% * (1 - var(--lv4-morph))) + (69% * var(--lv4-morph)));
+    width: calc((46% * (1 - var(--lv4-morph))) + (48.5% * var(--lv4-morph)));
+    height: calc((40% * (1 - var(--lv4-morph))) + (29% * var(--lv4-morph)));
+  }
+  .lv4-card--group {
+    top: 37.5%;
+    height: 29%;
+  }
+  .lv4-card--live {
+    top: 69%;
+    height: 29%;
+  }
+  .lv4-moderation {
+    grid-column: 1 / -1;
+    margin-top: 0.35rem;
+    justify-self: start;
+  }
+  .lv4-named { padding: 1rem 1.1rem; }
+  .lv4-named__title { font-size: 1.08rem; }
+  .lv4-named__hint { font-size: 0.86rem; }
+  .mm-landing--v4 .mm-landing-main {
+    padding-bottom: 4.5rem;
+  }
+}
+
+@media (min-width: 901px) and (pointer: fine) {
+  .lv4-pin__sticky {
+    padding-bottom: 2.25rem;
+  }
+}
+
+/* Video + landing headers: never clip the logo against the top edge */
+.mm-mobile-header {
+  padding-top: max(0.75rem, env(safe-area-inset-top, 0px)) !important;
+  overflow: visible;
+}
+.mm-mobile-header__brand { overflow: visible; }
+.mm-mobile-header .helloooo-logo { flex-shrink: 0; }
+
+/* Sit inside the floating pill (vertically centered, in the middle gap)
+   so the badge never covers the wordmark, actions, or the headline —
+   phones, tablets, and desktops alike. */
+body:has(.lv4-header) .mm-conn-toast {
+  top: calc(max(0.65rem, env(safe-area-inset-top, 0px)) + 1.425rem);
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, -50%);
+  z-index: 160;
+}
+body:has(.lv4-header) .mm-conn-toast__pill {
+  min-height: 1.35rem;
+  padding: 0.16rem 0.5rem 0.16rem 0.38rem;
+  font-size: 9px;
+  box-shadow: none;
+}
+
+/* Tablet / phone: wordmark + menu pill. Settings live in the side menu.
+   Full desktop actions (For Creators, coins, online) start at 1024px. */
+@media (max-width: 1023px) {
+  .mm-landing--v4 .lv4-header .mm-landing-header__actions.mm-hide-mobile {
+    display: none !important;
+  }
+  .mm-landing--v4 .lv4-header .lv4-header__right.mm-hide-desktop {
+    display: flex !important;
+  }
+}
+@media (min-width: 1024px) {
+  .mm-landing--v4 .lv4-header .mm-landing-header__actions.mm-hide-mobile {
+    display: flex !important;
+    max-width: none;
+    gap: 0.45rem;
+  }
+  .mm-landing--v4 .lv4-header .lv4-header__right.mm-hide-desktop {
+    display: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv4-cta,
+  .lv4-orb,
+  .lv4-wave__bar,
+  .lv4-live-dot { animation: none !important; }
+  .lv4-pin { height: auto; }
+  .lv4-pin__sticky {
+    position: relative;
+    min-height: 0;
+    padding-bottom: calc(6.25rem + env(safe-area-inset-bottom, 0px));
+  }
+  .lv4-card,
+  .lv4-card__inner { transition: none !important; }
+}

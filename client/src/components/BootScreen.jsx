@@ -19,8 +19,7 @@ export function BootScreen({ hint = 'Loading' }) {
         </div>
       </div>
       <p className="boot-screen__brand">
-        <span className="boot-screen__brand-hell">Hell</span>
-        <span className="boot-screen__brand-o">oooo</span>
+        <img src="/helloooo-wordmark-dark.svg" alt="Helloooo" className="boot-screen__wordmark" />
       </p>
       <div className="boot-screen__progress" aria-hidden>
         <span className="boot-screen__progress-bar" />

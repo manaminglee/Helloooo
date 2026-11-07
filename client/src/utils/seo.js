@@ -1,7 +1,7 @@
 /** Site SEO helpers — update document title + meta for SPA routes. */
 export const SITE_URL = 'https://helloooo.site';
 export const SITE_NAME = 'Helloooo';
-export const DEFAULT_OG_IMAGE = `${SITE_URL}/helloooo-logo.png`;
+export const DEFAULT_OG_IMAGE = `${SITE_URL}/helloooo-og.png`;
 
 export const DEFAULT_TITLE = 'Helloooo 👋 – Random Video Chat & Voice Rooms | Omegle Alternative';
 export const DEFAULT_DESCRIPTION =

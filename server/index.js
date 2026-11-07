@@ -40,6 +40,7 @@ const { registerLiveStreams } = require('./liveStreams');
 const { createLivePersistence } = require('./livePersistence');
 const { registerCreatorProfile } = require('./creatorProfile');
 const { registerSocialFollow } = require('./socialFollow');
+const videoPricing = require('./videoPricing');
 const { registerDmChat } = require('./dmChat');
 const { registerMarketEngine } = require('./marketEngine');
 const { registerCreatorKyc } = require('./creatorKyc');
@@ -617,6 +618,19 @@ function publicAnonPeer(socketId, country = '') {
   };
 }
 
+/** Anonymous by default; verified creators may show a badge (and a handle if they reveal). */
+function publicVideoPeer(socketId, userData) {
+  const peer = publicAnonPeer(socketId, userData?.country);
+  if (userData?.isCreator) {
+    peer.isCreator = true;
+    peer.creatorBadge = true;
+    if (userData.revealCreator) {
+      peer.creatorHandle = sanitize(String(userData.creatorData?.handle_name || userData.nickname || 'Creator'), 30);
+    }
+  }
+  return peer;
+}
+
 function mapRoomPeersPublic(room, selfSocketId) {
   return room.participants
     .filter((p) => p.socketId !== selfSocketId)
@@ -624,7 +638,7 @@ function mapRoomPeersPublic(room, selfSocketId) {
       if (isAnonVideoMode(room.mode)) {
         const pu = users.get(p.socketId);
         return {
-          ...publicAnonPeer(p.socketId, pu?.country || p.country),
+          ...publicVideoPeer(p.socketId, pu),
           interests: pu?.interests || [],
         };
       }
@@ -861,6 +875,7 @@ function getRoomByInterestKey(key, returnEvenIfFull = false) {
     interestToRoom.delete(key);
     return null;
   }
+  if (room.isPrivate) return null;
   if (!returnEvenIfFull && room.users.size >= room.maxSize) {
     return null;
   }
@@ -869,14 +884,14 @@ function getRoomByInterestKey(key, returnEvenIfFull = false) {
 
 function getAnyRoomByMode(mode) {
   // FILL STRATEGY: Prioritize rooms with 3/4 members, then 2/4, then 1/4.
-  const eligible = Array.from(rooms.values()).filter(r => r.mode === mode && r.users.size < r.maxSize);
+  const eligible = Array.from(rooms.values()).filter(r => r.mode === mode && !r.isPrivate && r.users.size < r.maxSize);
   eligible.sort((a, b) => b.users.size - a.users.size);
   return eligible[0] || null;
 }
 
 const MESSAGE_HISTORY = 50;
 
-function createRoom(interest, mode, socketId, userData, maxSize = GROUP_MAX) {
+function createRoom(interest, mode, socketId, userData, maxSize = GROUP_MAX, extras = {}) {
   const roomId = generateId('room');
   const key = interestKey(interest, mode);
   const u = users.get(socketId);
@@ -891,9 +906,14 @@ function createRoom(interest, mode, socketId, userData, maxSize = GROUP_MAX) {
     messages: [],
     createdAt: Date.now(),
     hostId: socketId,
+    isPrivate: !!extras.isPrivate,
+    entryFee: videoPricing.assertEntryFee(extras.entryFee),
+    branded: !!extras.branded,
+    roomTitle: extras.roomTitle || null,
+    creatorHost: extras.creatorHost || null,
   };
   rooms.set(roomId, room);
-  if (room.interestKey) interestToRoom.set(key, roomId);
+  if (room.interestKey && !room.isPrivate) interestToRoom.set(key, roomId);
   return room;
 }
 
@@ -1098,7 +1118,10 @@ app.use((err, req, res, next) => {
 
 app.use(rateLimit({
   windowMs: 60 * 1000,
-  max: 120,
+  // Production stays at 120/min. Playwright drives many landing pages from one
+  // IP and would otherwise 429 /api/nav/grant mid-suite, leaving users on
+  // the landing page after a silent failed join.
+  max: NODE_ENV === 'test' ? 10000 : 120,
   message: { error: 'Too many requests' },
   standardHeaders: true,
 }));
@@ -3549,6 +3572,8 @@ const socialFollow = registerSocialFollow(app, {
   getCreatorForRequest,
 });
 
+videoPricing.registerVideoPricing(app);
+
 const liveStreams = registerLiveStreams(app, io, {
   users,
   persistence: livePersistence,
@@ -3815,6 +3840,15 @@ io.on('connection', (socket) => {
   raceGame.attachSocketHandlers(socket, ip);
   liveStreams.attachSocketHandlers(socket);
   dmChat.attachSocketHandlers(socket);
+  videoPricing.attachSocketHandlers(socket, {
+    io,
+    rooms,
+    users,
+    economy,
+    socialFollow,
+    sanitize,
+    ip,
+  });
   virtualMarket.attachSocketHandlers(socket);
 
   // Uniform handler registration: wraps every handler in try/catch so a failing
@@ -3899,7 +3933,7 @@ io.on('connection', (socket) => {
     const { mode } = data || {}; // 'group_video' or 'group_text'
     const available = [];
     for (const [rid, room] of rooms.entries()) {
-      if ((!mode || room.mode === mode) && (room.mode === 'group_video' || room.mode === 'group_text')) {
+      if ((!mode || room.mode === mode) && (room.mode === 'group_video' || room.mode === 'group_text') && !room.isPrivate) {
         available.push({
           id: room.id,
           interest: room.interest,
@@ -3907,7 +3941,11 @@ io.on('connection', (socket) => {
           participantCount: room.users.size,
           maxSize: room.maxSize,
           isFull: room.users.size >= room.maxSize,
-          queueLength: (groupQueues.get(room.interestKey) || []).length
+          queueLength: (groupQueues.get(room.interestKey) || []).length,
+          branded: !!room.branded,
+          roomTitle: room.roomTitle || null,
+          creatorHost: room.creatorHost || null,
+          entryFee: videoPricing.effectiveEntryFee(room),
         });
       }
     }
@@ -4039,17 +4077,39 @@ io.on('connection', (socket) => {
     userData.nickname = nickname;
     userData.region = region;
     userData.language = language;
+    videoPricing.ensureAnonHandle(userData);
+
+    const gender = videoPricing.normalizeGender(data?.gender);
+    const matchGender = videoPricing.normalizeGender(data?.matchGender);
+    if (gender) userData.gender = gender;
 
     const proStatus = await persistence.getProStatus(ip);
-    const wantsPro = !!(data?.matchCountryOnly || data?.matchRegionOnly || data?.reconnectToUserId);
-    if (wantsPro && !proStatus.isPro) {
-      socket.emit('pro-required', { message: 'Pro required for reconnect and region matching.' });
-    }
-    const matchCountryOnly = !!(proStatus.isPro && data?.matchCountryOnly);
-    const matchRegionOnly = !!(proStatus.isPro && data?.matchRegionOnly);
-    const reconnectToUserId = proStatus.isPro && data?.reconnectToUserId
+    const reconnectToUserId = data?.reconnectToUserId
       ? sanitize(String(data.reconnectToUserId), 64)
       : null;
+    const matchCountryOnly = !!data?.matchCountryOnly;
+    const matchRegionOnly = !!data?.matchRegionOnly;
+    const filterQuote = videoPricing.filterCost({
+      matchGender,
+      matchCountryOnly,
+      matchRegionOnly,
+      reconnectToUserId,
+      isPro: !!proStatus.isPro,
+    });
+    if (filterQuote.coins > 0) {
+      const ctx = economy.wallet.ctxFromSocket(socket.id, ip);
+      const bal = await economy.wallet.getBalance(ctx);
+      if (bal < filterQuote.coins) {
+        socket.emit('video:need-coins', {
+          message: `Those match options cost ${filterQuote.coins} coins.`,
+          needCoins: filterQuote.coins,
+          balance: bal,
+          items: filterQuote.items,
+          canContinueFree: true,
+        });
+        return;
+      }
+    }
 
     if (userData.rooms && userData.rooms.size > 0) {
       for (const rid of [...userData.rooms]) {
@@ -4092,6 +4152,11 @@ io.on('connection', (socket) => {
       const otherRegion = otherUser?.region || e.region || e.userData?.country;
       if (matchCountryOnly && otherCountry !== userData.country) return false;
       if (matchRegionOnly && otherRegion !== region) return false;
+      const otherGender = otherUser?.gender || e.userData?.gender || e.gender;
+      const otherWantGender = e.matchGender || e.userData?.matchGender;
+      if (!videoPricing.gendersCompatible(userData.gender, matchGender, otherGender, otherWantGender)) {
+        return false;
+      }
 
       const otherId = e.userData?.id || otherUser?.id;
       if (reconnectToUserId) return otherId === reconnectToUserId;
@@ -4131,6 +4196,9 @@ io.on('connection', (socket) => {
       matchCountryOnly,
       matchRegionOnly,
       reconnectToUserId,
+      gender: userData.gender || gender,
+      matchGender,
+      filterCostSnapshot: filterQuote,
     };
 
     const result = await matchQueue.findOrEnqueue({
@@ -4175,11 +4243,63 @@ io.on('connection', (socket) => {
       socket.join(room.id);
       otherSocket.join(room.id);
 
+      if (filterQuote.coins > 0) {
+        const spend = await videoPricing.chargeIfNeeded(
+          economy.wallet,
+          economy.wallet.ctxFromSocket(socket.id, ip),
+          filterQuote,
+          'video_match_filters',
+          { roomId: room.id },
+        );
+        if (!spend.ok) {
+          socket.emit('video:need-coins', {
+            message: spend.error || 'Not enough coins for those filters.',
+            needCoins: spend.needCoins,
+            balance: spend.balance,
+            items: spend.items,
+            canContinueFree: true,
+          });
+        }
+      }
+      const otherQuote = match.filterCostSnapshot || videoPricing.filterCost({
+        matchGender: match.matchGender,
+        matchCountryOnly: match.matchCountryOnly,
+        matchRegionOnly: match.matchRegionOnly,
+        reconnectToUserId: match.reconnectToUserId,
+        isPro: (await persistence.getProStatus(otherData.ip)).isPro,
+      });
+      if (otherQuote.coins > 0) {
+        await videoPricing.chargeIfNeeded(
+          economy.wallet,
+          economy.wallet.ctxFromSocket(match.socketId, otherData.ip),
+          otherQuote,
+          'video_match_filters',
+          { roomId: room.id },
+        );
+      }
+
+      videoPricing.bumpCreatorStats(userData, 'matches');
+      videoPricing.bumpCreatorStats(otherData, 'matches');
+
+      const myLimit = videoPricing.sessionLimitSeconds({ isPro: !!proStatus.isPro });
+      const otherLimit = videoPricing.sessionLimitSeconds({
+        isPro: (await persistence.getProStatus(otherData.ip)).isPro,
+      });
+      const videoSession = mode === 'video'
+        ? videoPricing.startVideoSession(room, {
+          unlimited: myLimit == null || otherLimit == null,
+          freeSeconds: myLimit == null || otherLimit == null
+            ? null
+            : Math.max(myLimit, otherLimit),
+          io,
+        })
+        : { unlimited: true, remainingSeconds: null, paused: false, endsAt: null };
+
       const myPeer = isAnonVideoMode(mode)
-        ? publicAnonPeer(socket.id, userData.country)
+        ? publicVideoPeer(socket.id, userData)
         : { socketId: socket.id, userId: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator };
       const otherPeer = isAnonVideoMode(mode)
-        ? publicAnonPeer(match.socketId, otherData.country)
+        ? publicVideoPeer(match.socketId, otherData)
         : { socketId: match.socketId, userId: otherData.id, nickname: otherData.nickname, country: otherData.country, isCreator: otherData.isCreator };
 
       userData.lastPartnerUserId = otherData.id;
@@ -4196,8 +4316,9 @@ io.on('connection', (socket) => {
         && Date.now() < (userData.skipWindow?.until || 0)
         && Date.now() < (otherData.skipWindow?.until || 0)
       );
-      socket.emit('partner-found', { roomId: room.id, peer: otherPeer, country: userData.country, sessionConfig, sharedInterests, mutualSkipReconnect });
-      otherSocket.emit('partner-found', { roomId: room.id, peer: myPeer, country: otherData.country, sessionConfig, sharedInterests, mutualSkipReconnect });
+      const foundPayload = { roomId: room.id, sessionConfig, sharedInterests, mutualSkipReconnect, videoSession };
+      socket.emit('partner-found', { ...foundPayload, peer: otherPeer, country: userData.country });
+      otherSocket.emit('partner-found', { ...foundPayload, peer: myPeer, country: otherData.country });
 
       const reconnectToken = enhancements.issueReconnectToken(socket.id, { roomId: room.id, nickname: userData.nickname, mode });
       socket.emit('reconnect-token', { token: reconnectToken });
@@ -4224,7 +4345,7 @@ io.on('connection', (socket) => {
   });
 
   // Join group by interest (find or create room, max 4)
-  on('join-group-by-topics', (data) => {
+  on('join-group-by-topics', async (data) => {
     const userData = users.get(socket.id);
     if (!userData) return;
 
@@ -4282,11 +4403,80 @@ io.on('connection', (socket) => {
       room = getAnyRoomByMode(mode);
       if (room && !canJoinRoom(room)) room = null;
     }
+    videoPricing.ensureAnonHandle(userData);
+
     if (!room) {
       const trending = ['movies', 'music', 'gaming', 'coding', 'anime', 'travel', 'food', 'art', 'fitness', 'tech'];
       const finalInterest = (interest || 'general').trim().toLowerCase() === 'general' ? trending[Math.floor(Math.random() * trending.length)] : interest;
-      room = createRoom(finalInterest, mode, socket.id, { id: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator });
+      const wantPrivate = mode === 'group_video' && !!data?.isPrivate;
+      const wantBranded = mode === 'group_video' && !!userData.isCreator && !!data?.branded;
+      const requestedSize = data?.maxSize != null ? data.maxSize : videoPricing.freeGroupMaxSize(!!userData.isCreator);
+      const maxSize = mode === 'group_video'
+        ? videoPricing.clampGroupMaxSize(requestedSize, !!userData.isCreator)
+        : GROUP_MAX;
+      const createCost = mode === 'group_video'
+        ? videoPricing.groupCreateCost({ maxSize, isPrivate: wantPrivate, isCreator: !!userData.isCreator })
+        : { coins: 0 };
+      if (createCost.coins > 0) {
+        const spend = await videoPricing.chargeIfNeeded(
+          economy.wallet,
+          economy.wallet.ctxFromSocket(socket.id, ip),
+          createCost,
+          'group_video_create',
+          { interest: finalInterest },
+        );
+        if (!spend.ok) {
+          socket.emit('video:need-coins', {
+            message: spend.error || 'Not enough coins to open that room.',
+            needCoins: spend.needCoins,
+            balance: spend.balance,
+            items: spend.items,
+          });
+          return;
+        }
+      }
+      room = createRoom(finalInterest, mode, socket.id, { id: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator }, maxSize, {
+        isPrivate: wantPrivate,
+        entryFee: videoPricing.assertEntryFee(data?.entryFee),
+        branded: wantBranded,
+        roomTitle: wantBranded ? sanitize(String(data?.roomTitle || finalInterest), 40) : null,
+        creatorHost: wantBranded ? {
+          handle: sanitize(String(userData.creatorData?.handle_name || userData.nickname || 'Creator'), 30),
+          id: userData.creatorData?.id || null,
+        } : null,
+      });
+      videoPricing.bumpCreatorStats(userData, 'matches');
     } else {
+      const fee = mode === 'group_video' ? videoPricing.effectiveEntryFee(room) : 0;
+      if (fee > 0) {
+        const spend = await videoPricing.chargeIfNeeded(
+          economy.wallet,
+          economy.wallet.ctxFromSocket(socket.id, ip),
+          { coins: fee, items: [{ id: 'entry', coins: fee }] },
+          'group_video_entry',
+          { roomId: room.id },
+        );
+        if (!spend.ok) {
+          socket.emit('video:need-coins', {
+            message: `This room costs ${fee} coins to enter.`,
+            needCoins: spend.needCoins || fee,
+            balance: spend.balance,
+          });
+          return;
+        }
+        const hostShare = Math.floor(fee * videoPricing.getVideoPricing().groupVideo.hostEntryShare);
+        if (hostShare > 0 && room.hostId && room.hostId !== socket.id) {
+          const host = users.get(room.hostId);
+          if (host) {
+            await economy.wallet.credit(
+              economy.wallet.ctxFromSocket(room.hostId, host.ip),
+              hostShare,
+              'group_video_entry_host',
+              { roomId: room.id },
+            );
+          }
+        }
+      }
       const added = addUserToRoom(room, socket.id, { id: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator });
       if (!added) {
         socket.emit('room-full', { message: 'Room is full. Try again.' });
@@ -4305,6 +4495,12 @@ io.on('connection', (socket) => {
       interest: room.interest,
       participantCount: room.users.size,
       country: userData.country,
+      isPrivate: !!room.isPrivate,
+      maxSize: room.maxSize,
+      branded: !!room.branded,
+      roomTitle: room.roomTitle || null,
+      creatorHost: room.creatorHost || null,
+      entryFee: videoPricing.effectiveEntryFee(room),
       sfu: livekitRooms.isConfigured() && mode === 'group_video' && !room.sfuFallback
         ? { enabled: true, provider: 'livekit', url: livekitRooms.publicUrl() }
         : { enabled: false },
@@ -4321,12 +4517,16 @@ io.on('connection', (socket) => {
       nickname: isAnonVideoMode(mode) ? 'Anonymous' : userData.nickname,
       country: userData.country,
       interests: userData.interests || [],
-      isCreator: isAnonVideoMode(mode) ? false : !!userData.isCreator,
+      isCreator: !!userData.isCreator,
+      creatorBadge: !!userData.isCreator,
+      creatorHandle: userData.revealCreator
+        ? sanitize(String(userData.creatorData?.handle_name || userData.nickname || 'Creator'), 30)
+        : undefined,
       participantCount: room.users.size,
     });
   });
 
-  on('join-specific-group', (data) => {
+  on('join-specific-group', async (data) => {
     const userData = users.get(socket.id);
     if (!userData) return;
     const { roomId, nickname } = data || {};
@@ -4337,12 +4537,34 @@ io.on('connection', (socket) => {
     if (!room) return socket.emit('room-full', { message: 'Room not found or expired.' });
     if (room.mode !== 'group_video' && room.mode !== 'group_text') return socket.emit('room-full', { message: 'Invalid room mode.' });
 
-    const myBlocks = userBlocks.get(ip);
+    videoPricing.ensureAnonHandle(userData);
+    const joinKey = identityKeyFor(userData) || `ip:${ip}`;
+    const myBlocks = userBlocks.get(joinKey);
     for (const p of room.participants) {
-      const otherIp = users.get(p.socketId)?.ip;
+      const other = users.get(p.socketId);
+      const otherIp = other?.ip;
       if (!otherIp || blockedIps.has(otherIp)) return socket.emit('error', { message: 'Cannot join this room.' });
-      if (myBlocks && myBlocks.has(otherIp)) return socket.emit('error', { message: 'Cannot join this room.' });
-      if (userBlocks.get(otherIp)?.has(ip)) return socket.emit('error', { message: 'Cannot join this room.' });
+      const otherKey = identityKeyFor(other) || `ip:${otherIp}`;
+      if (myBlocks && myBlocks.has(otherKey)) return socket.emit('error', { message: 'Cannot join this room.' });
+      if (userBlocks.get(otherKey)?.has(joinKey)) return socket.emit('error', { message: 'Cannot join this room.' });
+    }
+
+    const fee = room.mode === 'group_video' ? videoPricing.effectiveEntryFee(room) : 0;
+    if (fee > 0) {
+      const spend = await videoPricing.chargeIfNeeded(
+        economy.wallet,
+        economy.wallet.ctxFromSocket(socket.id, ip),
+        { coins: fee, items: [{ id: 'entry', coins: fee }] },
+        'group_video_entry',
+        { roomId: room.id },
+      );
+      if (!spend.ok) {
+        return socket.emit('video:need-coins', {
+          message: `This room costs ${fee} coins to enter.`,
+          needCoins: spend.needCoins || fee,
+          balance: spend.balance,
+        });
+      }
     }
 
     const added = addUserToRoom(room, socket.id, { id: userData.id, nickname: userData.nickname, country: userData.country, isCreator: userData.isCreator });
@@ -4369,6 +4591,12 @@ io.on('connection', (socket) => {
       interest: room.interest,
       participantCount: room.users.size,
       country: userData.country,
+      isPrivate: !!room.isPrivate,
+      maxSize: room.maxSize,
+      branded: !!room.branded,
+      roomTitle: room.roomTitle || null,
+      creatorHost: room.creatorHost || null,
+      entryFee: videoPricing.effectiveEntryFee(room),
       sfu: livekitRooms.isConfigured() && room.mode === 'group_video' && !room.sfuFallback
         ? { enabled: true, provider: 'livekit', url: livekitRooms.publicUrl() }
         : { enabled: false },
@@ -4385,7 +4613,11 @@ io.on('connection', (socket) => {
       nickname: isAnonVideoMode(room.mode) ? 'Anonymous' : userData.nickname,
       country: userData.country,
       interests: userData.interests || [],
-      isCreator: isAnonVideoMode(room.mode) ? false : !!userData.isCreator,
+      isCreator: !!userData.isCreator,
+      creatorBadge: !!userData.isCreator,
+      creatorHandle: userData.revealCreator
+        ? sanitize(String(userData.creatorData?.handle_name || userData.nickname || 'Creator'), 30)
+        : undefined,
       participantCount: room.users.size,
     });
   });
