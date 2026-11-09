@@ -9429,6 +9429,25 @@ textarea {
   background: radial-gradient(ellipse at 50% 0%, rgba(167, 139, 250, 0.15), #08090f 60%);
 }
 
+.mm-audio-id-gate--fullscreen {
+  min-height: 100dvh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background-color: #08090f;
+  box-sizing: border-box;
+}
+
+@media (min-height: 720px) {
+  .mm-audio-id-gate--fullscreen {
+    align-items: center;
+  }
+}
+
 .mm-audio-id-card {
   position: relative;
   z-index: 1;
@@ -9440,6 +9459,13 @@ textarea {
   background-image: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(244, 114, 182, 0.05));
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
   isolation: isolate;
+}
+
+@media (max-width: 320px) {
+  .mm-audio-id-card {
+    padding: 1.1rem 0.85rem;
+    border-radius: 1rem;
+  }
 }
 
 .mm-audio-id-card__glow {
@@ -9634,9 +9660,17 @@ textarea {
   font-size: 0.75rem;
   color: rgba(255,255,255,0.4);
   width: 100%;
+  max-width: 100%;
   min-height: 44px;
   padding: 0.75rem 1rem;
   text-align: center;
+  box-sizing: border-box;
+}
+.mm-audio-id-back--top {
+  margin: 0 0 0.5rem;
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
+  min-height: 40px;
 }
 
 .mm-audio-id-register-overlay {

@@ -291,6 +291,11 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
       <div className="mm-audio-id-card__brand">
         <HellooooLogo size={36} />
       </div>
+      {onCancel && (
+        <button type="button" className="mm-audio-id-back mm-audio-id-back--top" onClick={onCancel}>
+          ← Back to home
+        </button>
+      )}
       <h1 className="mm-audio-id-card__title">Voice rooms</h1>
       <p className="mm-audio-id-card__sub">
         {hydrating
@@ -363,12 +368,6 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
         </button>
       </div>
 
-      {onCancel && (
-        <button type="button" className="mm-audio-id-back mt-4" onClick={onCancel}>
-          ← Back to home
-        </button>
-      )}
-
       <AudioIdentityRegisterModal
         open={showRegister}
         onClose={() => setShowRegister(false)}
@@ -387,7 +386,7 @@ export function AudioIdentityGate({ onSignedIn, onCancel, identityHook, variant 
   }
 
   return (
-    <div className="min-h-[100dvh] flex items-center justify-center p-4 bg-[#08090f] mm-audio-id-gate">
+    <div className="mm-audio-id-gate mm-audio-id-gate--fullscreen">
       {card}
     </div>
   );
