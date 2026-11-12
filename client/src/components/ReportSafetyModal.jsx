@@ -56,21 +56,22 @@ export function ReportSafetyModal({
 
             {prepend}
 
-            <label className="block text-[10px] font-black uppercase tracking-widest text-white/35 mb-2" htmlFor="mm-report-reason">
-              Reason
-            </label>
-            <select
-              id="mm-report-reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              className="w-full mb-5 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none focus:border-rose-500/40"
-            >
+            <p className="text-xs font-semibold text-white/50 mb-2" id="mm-report-reason-label">What happened?</p>
+            <ul className="studio-reasons" role="radiogroup" aria-labelledby="mm-report-reason-label">
               {REASONS.map((r) => (
-                <option key={r.id} value={r.id} className="bg-[#111]">
-                  {r.label}
-                </option>
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={reason === r.id}
+                    className={reason === r.id ? 'is-on' : ''}
+                    onClick={() => setReason(r.id)}
+                  >
+                    {r.label}
+                  </button>
+                </li>
               ))}
-            </select>
+            </ul>
 
             <label className="flex items-center gap-3 cursor-pointer mb-6">
               <input type="checkbox" checked={alsoBlock} onChange={(e) => setAlsoBlock(e.target.checked)} className="rounded border-white/20" />

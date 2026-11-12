@@ -5,7 +5,7 @@ import { useState, Suspense } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { lazyRetry } from '../utils/lazyRetry';
 import { API_BASE } from '../config/apiBase';
-import { HellooooBrand, HellooooLogo, HELLOOOO_EMOJI } from './HellooooBrand';
+import { HellooooBrand, HellooooLogo } from './HellooooBrand';
 import { unlockIosMedia } from '../utils/iosMediaUnlock';
 
 const Turnstile = lazyRetry(() =>
@@ -95,21 +95,31 @@ export function AgeVerificationGate({ onVerified }) {
   };
 
   return (
-    <div className="min-h-[100dvh] bg-realm-void flex items-center justify-center p-6 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] relative overflow-hidden">
+    <div className="studio-gate">
       <motion.div
-        className="gate-card relative z-10 max-w-md w-full"
+        className="studio-gate__frame"
         role="dialog"
         aria-modal="true"
         aria-labelledby="age-gate-title"
-        initial={reduce ? false : { opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: reduce ? 0.01 : 0.4, ease: [0.22, 1, 0.36, 1] }}
+        initial={reduce ? false : { opacity: 0, y: 28, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={reduce ? { duration: 0.01 } : { type: 'spring', stiffness: 380, damping: 30 }}
       >
-        <HellooooLogo size={40} className="mx-auto mb-5" />
-        <HellooooBrand size="lg" className="justify-center mb-2" />
-        <h2 id="age-gate-title" className="text-lg font-semibold text-white/85 mb-2 text-center">Age verification</h2>
-        <p className="text-sm mb-6 text-center" style={{ color: 'rgba(232,234,246,0.55)' }}>
-          {HELLOOOO_EMOJI} Helloooo is an 18+ platform. Confirm your age
+        <div className="studio-gate__story">
+          <HellooooLogo size={40} />
+          <h2>Real people. Nothing saved.</h2>
+          <p>Helloooo is a live social space. You choose a room, talk, and leave. Chats are not stored.</p>
+          <ul className="studio-gate__points">
+            <li>Anonymous unless you pick a name</li>
+            <li>Report or skip anyone, anytime</li>
+            <li>18+ only</li>
+          </ul>
+        </div>
+        <div className="studio-gate__form">
+        <HellooooBrand size="lg" className="mb-2" />
+        <h3 id="age-gate-title">Age verification</h3>
+        <p className="text-sm mb-6" style={{ color: 'rgba(246,241,232,0.62)' }}>
+          Confirm you are 18 or older
           {skipTurnstile ? ' to continue.' : ' and complete the security check to continue.'}
         </p>
 
@@ -153,9 +163,10 @@ export function AgeVerificationGate({ onVerified }) {
           </button>
         </div>
 
-        <p className="text-xs mt-5 text-center" style={{ color: 'rgba(246,241,232,0.45)' }}>
+        <p className="text-xs mt-5" style={{ color: 'rgba(246,241,232,0.45)' }}>
           By continuing you agree to our Terms of Service and Community Guidelines.
         </p>
+        </div>
       </motion.div>
     </div>
   );

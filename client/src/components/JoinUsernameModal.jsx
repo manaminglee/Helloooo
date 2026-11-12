@@ -80,11 +80,17 @@ export function JoinUsernameModal({
       onClose={onCancel}
       sheet
       overlayClassName="z-[6200]"
-      className="mm-join-modal"
+      className="mm-join-modal studio-join"
       titleId="mm-join-title"
       as="form"
+      layoutId={`studio-mode-${mode}`}
       panelProps={{ onSubmit: submit }}
     >
+        <div className="studio-join__aside">
+          <strong>{copy.title}</strong>
+          <span>{copy.hint}</span>
+        </div>
+        <div className="studio-join__form">
         <div className="mm-join-modal__glow" aria-hidden />
         <header className="mm-join-modal__head">
           <HellooooLogo size={36} />
@@ -152,6 +158,7 @@ export function JoinUsernameModal({
           <button type="submit" className="mm-join-modal__btn mm-join-modal__btn--primary">
             {copy.cta}
           </button>
+        </div>
         </div>
     </MotionDialog>
   );

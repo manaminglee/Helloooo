@@ -85,6 +85,7 @@ export function MotionDialog({
   closeOnBackdrop = true,
   as = 'div',
   panelProps = {},
+  layoutId,
 }) {
   const reduce = useReducedMotion();
   const panelRef = useRef(null);
@@ -149,14 +150,14 @@ export function MotionDialog({
     ? { initial: false, animate: { opacity: 1, y: 0 }, exit: { opacity: 0 } }
     : sheet
       ? {
-          initial: { opacity: 0, y: 28 },
-          animate: { opacity: 1, y: 0 },
-          exit: { opacity: 0, y: 20 },
+          initial: { opacity: 0, y: 56, scale: 0.94 },
+          animate: { opacity: 1, y: 0, scale: 1 },
+          exit: { opacity: 0, y: 36, scale: 0.96 },
         }
       : {
-          initial: { opacity: 0, y: 14, scale: 0.98 },
+          initial: { opacity: 0, y: 36, scale: 0.9 },
           animate: { opacity: 1, y: 0, scale: 1 },
-          exit: { opacity: 0, y: 8, scale: 0.985 },
+          exit: { opacity: 0, y: 16, scale: 0.96 },
         };
 
   if (typeof document === 'undefined') return null;
@@ -186,8 +187,11 @@ export function MotionDialog({
               event.stopPropagation();
               panelProps.onClick?.(event);
             }}
+            layoutId={reduce ? undefined : layoutId}
             {...panelMotion}
-            transition={{ duration: reduce ? 0.01 : 0.28, ease }}
+            transition={reduce
+              ? { duration: 0.01 }
+              : { type: 'spring', stiffness: 420, damping: 32, mass: 0.82 }}
           >
             {children}
           </Panel>

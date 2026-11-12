@@ -11,6 +11,7 @@ import './styles/ui-redesign.css';
 import './styles/landing-v4.css';
 import './styles/ios-native.css';
 import './styles/solstice.css';
+import './styles/studio.css';
 
 markIosPlatformClasses();
 armIosMediaUnlock();

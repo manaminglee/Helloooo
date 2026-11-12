@@ -2,6 +2,7 @@
  * Shared UI for VideoChat + GroupVideoRoom: rating, more menu, reactions, devices, banners.
  */
 import { useEffect, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import { MotionDialog } from '../motion/MotionDialog';
 import { MiniChatGamePanel } from './MiniChatGamePanel';
 import { CountryFlag } from './CountryFlag';
@@ -341,13 +342,14 @@ export function TipCreatorModal({ open, onClose, onTip, balance, creatorName }) 
     <MotionDialog open={open} onClose={onClose} overlayClassName="z-[530]" className="mm-modal-surface max-w-xs" titleId="tip-title">
         <h3 id="tip-title" className="text-base font-semibold text-amber-200 mb-1">Tip creator</h3>
         <p className="text-xs text-white/50 mb-4">Send coins to @{creatorName || 'creator'}</p>
-        <div className="flex gap-2 mb-4">
+        <div className="studio-amounts" role="group" aria-label="Tip amount">
           {options.map((n) => (
             <button
               key={n}
               type="button"
               onClick={() => setAmount(n)}
-              className={`flex-1 py-2 rounded-xl text-sm font-bold border ${amount === n ? 'bg-amber-500 text-black border-amber-500' : 'border-white/10 text-white/70'}`}
+              className={amount === n ? 'is-on' : ''}
+              aria-pressed={amount === n}
             >
               {n}
             </button>
@@ -522,6 +524,7 @@ export function VideoMatchmakingStage({
   onRetryCamera,
   onCancel,
 }) {
+  const reduce = useReducedMotion();
   const initial = String(nickname || 'You').trim().slice(0, 1).toUpperCase() || 'Y';
   return (
     <div className="mm-search-stage" aria-live="polite" aria-label="Searching for a match">
@@ -534,8 +537,18 @@ export function VideoMatchmakingStage({
         </div>
       ) : null}
       <div className="mm-search-stage__orb">
-        <span className="mm-search-stage__ring" aria-hidden />
-        <span className="mm-search-stage__ring mm-search-stage__ring--2" aria-hidden />
+        <motion.span
+          className="mm-search-stage__ring"
+          aria-hidden
+          animate={reduce ? undefined : { scale: [1, 1.12, 1], opacity: [0.7, 0.25, 0.7] }}
+          transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+        />
+        <motion.span
+          className="mm-search-stage__ring mm-search-stage__ring--2"
+          aria-hidden
+          animate={reduce ? undefined : { scale: [1, 1.2, 1], opacity: [0.45, 0.1, 0.45] }}
+          transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut', delay: 0.35 }}
+        />
         <div className="mm-search-stage__preview">
           {hasPreview ? (
             <video
@@ -554,7 +567,12 @@ export function VideoMatchmakingStage({
         </div>
       </div>
       <p className="mm-search-stage__title">Looking for a match<span className="mm-search-stage__dots" /></p>
-      <p className="mm-search-stage__sub">Matching you with someone new</p>
+      <p className="mm-search-stage__sub">Queue, then interests, then a live connection.</p>
+      <ol className="studio-match__steps">
+        <li className="is-on">In queue</li>
+        <li>Interests</li>
+        <li>Connect</li>
+      </ol>
       {tags.length > 0 ? (
         <div className="mm-search-stage__tags">
           {tags.slice(0, 6).map((tag) => (
