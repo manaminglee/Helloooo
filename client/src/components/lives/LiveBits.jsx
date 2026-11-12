@@ -107,7 +107,12 @@ const CommentRow = memo(function CommentRow({ c, onUser }) {
     ? c.text.replace(new RegExp(`^@${c.mention}\\s*`, 'i'), '')
     : c.text;
   return (
-    <div className={`live-comment${c.mention ? ' live-comment--mention' : ''}`}>
+    <motion.div
+      className={`live-comment${c.mention ? ' live-comment--mention' : ''}`}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+    >
       <button
         type="button"
         className="live-comment__user"
@@ -121,7 +126,7 @@ const CommentRow = memo(function CommentRow({ c, onUser }) {
         {c.mention ? <span className="live-comment__mention">@{c.mention} </span> : null}
         {body}
       </span>
-    </div>
+    </motion.div>
   );
 });
 
@@ -166,18 +171,25 @@ const FloatHeart = memo(function FloatHeart({ shape, hue }) {
 });
 
 export const HeartLayer = memo(function HeartLayer({ hearts, onDone }) {
+  const reduce = useReducedMotion();
   return (
     <div className="live-hearts" aria-hidden>
-      {hearts.map((h) => (
-        <span
-          key={h.id}
-          className="live-heart"
-          style={h.style}
-          onAnimationEnd={() => onDone(h.id)}
-        >
-          <FloatHeart shape={h.shape} hue={h.hue} />
-        </span>
-      ))}
+      <AnimatePresence>
+        {hearts.map((h) => (
+          <motion.span
+            key={h.id}
+            className="live-heart"
+            style={h.style}
+            initial={reduce ? false : { opacity: 0, y: 12, scale: 0.6 }}
+            animate={{ opacity: 1, y: reduce ? 0 : -140, scale: 1 }}
+            exit={{ opacity: 0 }}
+            transition={reduce ? { duration: 0.01 } : { duration: 1.5, ease: 'easeOut' }}
+            onAnimationComplete={() => onDone(h.id)}
+          >
+            <FloatHeart shape={h.shape} hue={h.hue} />
+          </motion.span>
+        ))}
+      </AnimatePresence>
     </div>
   );
 });

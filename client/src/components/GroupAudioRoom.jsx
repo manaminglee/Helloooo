@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 import { AudioRoleBadge, AudioLevelBadge, AudioLevelUpBurst, useLevelUpFlash } from './AudioBadges';
 import { createPortal } from 'react-dom';
 import { useAudioChannel } from '../hooks/useAudioChannel';
@@ -1167,12 +1168,15 @@ export function GroupAudioRoom({
 
         <div className="mm-voice-room-grid">
           {channels.map((c) => (
-            <button
+            <motion.button
               key={c.id}
               type="button"
               disabled={connecting}
               onClick={() => tryJoinRoom(c.id, c.hasLockCode, c.entryFee || 0)}
               className={`mm-voice-room-card${c.isPa ? ' mm-voice-room-card--pa' : ''}${c.locked || c.hasLockCode ? ' mm-voice-room-card--locked' : ''}`}
+              whileHover={connecting ? undefined : { y: -4 }}
+              whileTap={connecting ? undefined : { scale: 0.98 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 28 }}
             >
               <div className="mm-voice-room-card__top">
                 <span className="mm-voice-room-card__title">
@@ -1188,7 +1192,7 @@ export function GroupAudioRoom({
                 {c.entryFee > 0 && <span>🪙 {c.entryFee}</span>}
               </div>
               <span className="mm-voice-room-card__cta">{c.hasLockCode ? 'Enter code →' : 'Join →'}</span>
-            </button>
+            </motion.button>
           ))}
           {channels.length === 0 && (
             <div className="mm-voice-room-empty">
