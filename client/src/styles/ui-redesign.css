@@ -6,11 +6,11 @@
    ========================================================================= */
 
 :root {
-  --brand-pink: #ff2d6f;
-  --brand-pink-deep: #d11855;
+  --brand-pink: #e08a45;
+  --brand-pink-deep: #c46e32;
   --brand-pink-soft: rgba(255, 45, 111, 0.16);
   --brand-pink-glow: rgba(255, 45, 111, 0.42);
-  --ui-bg: #07060f;
+  --ui-bg: #12100e;
   --ui-surface: #10121c;
   --ui-card: rgba(16, 18, 30, 0.82);
   --ui-border: rgba(255, 255, 255, 0.1);

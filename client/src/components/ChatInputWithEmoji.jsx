@@ -105,7 +105,7 @@ export function ChatInputWithEmoji({
         type="button"
         onClick={onSend}
         disabled={disabled || !String(value || '').trim()}
-        className="ui-icon-btn shrink-0 min-h-[48px] min-w-[48px] rounded-xl bg-[#ff2d6f] text-white font-semibold disabled:opacity-40"
+        className="ui-icon-btn shrink-0 min-h-[48px] min-w-[48px] rounded-xl bg-[#e08a45] text-[#1c140c] font-semibold disabled:opacity-40"
         aria-label="Send message"
       >
         <MmIcon name="send" size={18} />

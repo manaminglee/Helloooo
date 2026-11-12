@@ -20,8 +20,8 @@
   /* Set from JS (visualViewport) when the keyboard opens. */
   --kb: 0px;
 
-  --live-accent: #ff2d6f;
-  --live-accent-2: #a855f7;
+  --live-accent: #e08a45;
+  --live-accent-2: #f0c48a;
   --live-glass: rgba(18, 18, 28, 0.52);
   --live-glass-strong: rgba(12, 12, 20, 0.88);
   --live-hairline: rgba(255, 255, 255, 0.14);
@@ -554,7 +554,7 @@
   vertical-align: middle;
   transform: translateY(-1px);
 }
-.live-badge--creator   { background: linear-gradient(135deg,#ff2d6f,#ff7aa2); color:#fff; }
+.live-badge--creator   { background: linear-gradient(135deg,#e08a45,#ff7aa2); color:#fff; }
 .live-badge--moderator { background: linear-gradient(135deg,#2563eb,#60a5fa); color:#fff; }
 .live-badge--top_gifter{ background: linear-gradient(135deg,#b45309,#fbbf24); color:#1a1000; }
 .live-badge--vip       { background: linear-gradient(135deg,#7c3aed,#c084fc); color:#fff; }
@@ -826,7 +826,7 @@
 .live-action:active { transform: scale(0.88); }
 .live-action:disabled { opacity: 0.35; }
 .live-action--gift {
-  background: linear-gradient(135deg, #f59e0b, #ec4899 60%, #a855f7);
+  background: linear-gradient(135deg, #f59e0b, #ec4899 60%, #d4a574);
   border-color: rgba(255,255,255,0.28);
   box-shadow: 0 4px 16px rgba(236, 72, 153, 0.42);
 }
@@ -1029,7 +1029,7 @@
 .live-row__avatar {
   width: 36px; height: 36px; border-radius: 50%; flex: 0 0 auto;
   object-fit: cover;
-  background: linear-gradient(135deg,#6366f1,#a855f7);
+  background: linear-gradient(135deg,#6366f1,#d4a574);
   display: grid; place-items: center; font-size: 14px; font-weight: 800;
 }
 .live-row__main { min-width: 0; flex: 1 1 auto; }
@@ -1128,7 +1128,7 @@
 .live-ended__avatar {
   width: 78px; height: 78px; border-radius: 50%; object-fit: cover;
   border: 2px solid rgba(255,255,255,0.2);
-  background: linear-gradient(135deg,#a855f7,#ff2d6f);
+  background: linear-gradient(135deg,#d4a574,#e08a45);
   display: grid; place-items: center; font-size: 30px; font-weight: 800;
 }
 .live-ended__title { font-size: 19px; font-weight: 900; }
@@ -1257,7 +1257,7 @@
   min-height: 100dvh;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 14px; padding: 40px 24px; text-align: center;
-  background: #07060f; color: #fff;
+  background: #12100e; color: #fff;
 }
 
 /* Combo ring countdown (driven by the combo button's key so it restarts). */
@@ -1276,8 +1276,8 @@
   --sa-bottom: max(env(safe-area-inset-bottom, 0px), 10px);
   --sa-left: max(env(safe-area-inset-left, 0px), 14px);
   --sa-right: max(env(safe-area-inset-right, 0px), 14px);
-  --live-accent: #ff2d6f;
-  --live-accent-2: #a855f7;
+  --live-accent: #e08a45;
+  --live-accent-2: #f0c48a;
   --live-hairline: rgba(255, 255, 255, 0.12);
 
   position: fixed;
@@ -1287,7 +1287,7 @@
   overflow: hidden;
   background:
     radial-gradient(120% 60% at 50% 0%, rgba(168, 85, 247, 0.16), transparent 60%),
-    #07060f;
+    #12100e;
   color: #fff;
   font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
   -webkit-tap-highlight-color: transparent;
@@ -1436,7 +1436,7 @@
 .feed-card__avatar {
   width: 26px; height: 26px; border-radius: 50%; flex: 0 0 auto;
   object-fit: cover;
-  background: linear-gradient(135deg, #6366f1, #a855f7);
+  background: linear-gradient(135deg, #6366f1, #d4a574);
   display: grid; place-items: center;
   font-size: 11px; font-weight: 800; color: #fff;
 }
@@ -1800,7 +1800,7 @@
   min-height: 24px;
   flex: 0 0 auto;
   margin-top: 1px;
-  accent-color: #a855f7;
+  accent-color: #d4a574;
 }
 .mm-remember__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .mm-remember__text strong { font-size: 13px; font-weight: 700; color: #fff; }
@@ -1854,7 +1854,7 @@
 .creator-sheet__avatar {
   width: 62px; height: 62px; border-radius: 50%; flex: 0 0 auto;
   object-fit: cover;
-  background: linear-gradient(135deg, #a855f7, #ff2d6f);
+  background: linear-gradient(135deg, #d4a574, #e08a45);
   display: grid; place-items: center;
   font-size: 24px; font-weight: 800; color: #fff;
   border: 2px solid rgba(255, 255, 255, 0.14);
@@ -2005,7 +2005,7 @@
   height: 16px; padding: 0 6px;
   display: inline-flex; align-items: center;
   border-radius: 5px;
-  background: var(--live-accent, #ff2d6f);
+  background: var(--live-accent, #e08a45);
   font-size: 8.5px; font-weight: 900; letter-spacing: 0.5px;
   color: #fff;
 }
@@ -2308,7 +2308,7 @@
   height: 52px;
   border-radius: 50%;
   color: #1a1016;
-  background: linear-gradient(160deg, #ffc9b4 0%, #e07a8a 52%, #8b5cf6 100%);
+  background: linear-gradient(160deg, #f6d7ae 0%, #e08a45 55%, #c46e32 100%);
   box-shadow:
     0 10px 22px rgba(224, 122, 138, 0.38),
     inset 0 1px 0 rgba(255, 255, 255, 0.38);
@@ -2461,7 +2461,7 @@
   padding: 8px 14px;
   font-size: 12px;
   font-weight: 800;
-  background: linear-gradient(135deg, #ff2d6f, #ff6b9d);
+  background: linear-gradient(135deg, #e08a45, #ff6b9d);
   color: #fff;
 }
 .pwa-update__dismiss {
@@ -2552,7 +2552,7 @@
   min-height: 42px;
   border: none;
   border-radius: 10px;
-  background: linear-gradient(135deg, #ff2d6f, #a855f7);
+  background: linear-gradient(135deg, #e08a45, #d4a574);
   color: #fff;
   font-size: 13px;
   font-weight: 800;
@@ -2797,7 +2797,7 @@
 .hp-modal__btn:active { transform: scale(0.97); }
 .hp-modal__btn--go {
   border-color: transparent;
-  background: linear-gradient(135deg, #f43f5e, #a855f7);
+  background: linear-gradient(135deg, #f43f5e, #d4a574);
   box-shadow: 0 10px 26px rgba(168, 85, 247, 0.35);
 }
 .hp-modal__btn--ghost { color: rgba(255, 255, 255, 0.7); }
@@ -3027,7 +3027,7 @@
   background: rgba(255, 255, 255, 0.22);
   transition: background 180ms ease, transform 180ms ease;
 }
-.gt-dot--on { background: var(--live-accent, #ff2d6f); transform: scale(1.25); }
+.gt-dot--on { background: var(--live-accent, #e08a45); transform: scale(1.25); }
 
 /* --- send bar --- */
 .gt-foot {
@@ -3079,7 +3079,7 @@
   color: #fff;
   font-size: 14px;
   font-weight: 900;
-  background: linear-gradient(135deg, var(--live-accent, #ff2d6f), var(--live-accent-2, #a855f7));
+  background: linear-gradient(135deg, var(--live-accent, #e08a45), var(--live-accent-2, #d4a574));
   box-shadow: 0 5px 18px rgba(168, 85, 247, 0.42);
   transition: transform 130ms ease;
 }
@@ -3230,7 +3230,7 @@
   transition: border-color 180ms ease, transform 160ms ease;
 }
 .prelive-look--on .prelive-look__swatch {
-  border-color: var(--live-accent, #ff2d6f);
+  border-color: var(--live-accent, #e08a45);
   transform: scale(1.06);
 }
 

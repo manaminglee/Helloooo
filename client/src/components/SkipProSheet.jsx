@@ -2,7 +2,8 @@
  * Next-match sheet — filters are always available.
  * Coin prices only appear when the server says VIDEO_PAYMENTS_ENABLED.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useDialogEffects } from '../motion/MotionDialog';
 import { MmIcon } from './icons/MmIcon';
 import { loadProMatchPrefs, saveProMatchPrefs } from '../utils/proMatchPrefs';
 import { startPayment } from '../utils/paymentCheckout';
@@ -123,10 +124,13 @@ export function SkipProSheet({
     }
   };
 
+  const panelRef = useRef(null);
+  useDialogEffects(open, onClose, panelRef);
+
   if (!open) return null;
 
   return (
-    <div className="mm-skip-pro-sheet" role="dialog" aria-label="Skip options">
+    <div ref={panelRef} className="mm-skip-pro-sheet" role="dialog" aria-modal="true" aria-label="Skip options">
       <div className="mm-skip-pro-sheet__inner">
         <div className="mm-skip-pro-sheet__head">
           <span className="mm-skip-pro-sheet__title">Find next match</span>

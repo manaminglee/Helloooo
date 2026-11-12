@@ -31,6 +31,7 @@ import { applyPageSeo, applyPrivateSessionSeo } from './utils/seo';
 import { useAudioIdentity } from './hooks/useAudioIdentity';
 import { useVisualViewport } from './hooks/useVisualViewport';
 import { HellooooLoader } from './components/HellooooBrand';
+import { PageTransition } from './motion/MotionDialog';
 // Lazy load off-screen and secondary modules for extreme performance
 const AdminDashboard = lazyRetry(() => import('./components/AdminDashboard'));
 const AgencyDashboard = lazyRetry(() => import('./components/AgencyDashboard'));
@@ -758,13 +759,21 @@ function AppShell() {
     );
   }
 
+  const pageKey = isBlocked
+    ? 'blocked'
+    : appState === STATES.CHAT && mode
+      ? `${appState}:${mode}`
+      : appState;
+
   return (
     <>
       <ConnectionBanner connected={connected} />
       <div className="relative flex min-h-[100dvh] w-full max-w-[100vw] flex-1 flex-col overflow-x-hidden mm-mobile-safe">
-        <Suspense fallback={<LoadingFallback />}>
-          {renderContent()}
-        </Suspense>
+        <PageTransition pageKey={pageKey}>
+          <Suspense fallback={<LoadingFallback />}>
+            {renderContent()}
+          </Suspense>
+        </PageTransition>
       </div>
 
       <Suspense fallback={null}>

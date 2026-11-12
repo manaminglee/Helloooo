@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { HellooooLogo } from './HellooooBrand';
+import { MotionDialog } from '../motion/MotionDialog';
+import { sanitizeDisplayName } from '../utils/displayName';
 
 const MODE_COPY = {
   video: {
@@ -16,7 +18,7 @@ const MODE_COPY = {
   },
   group_video: {
     title: 'Join group video',
-    hint: 'Up to 4 people on camera. Your name appears to the room only.',
+    hint: 'Free rooms fit 4 people on camera. Creators can open larger rooms. Your name stays in the room only.',
     cta: 'Enter room',
     icon: '🎥',
   },
@@ -48,37 +50,41 @@ export function JoinUsernameModal({
   onConfirm,
 }) {
   const [name, setName] = useState(initialName);
+  const [error, setError] = useState('');
   const inputRef = useRef(null);
   const copy = MODE_COPY[mode] || MODE_COPY.video;
 
   useEffect(() => {
     if (!open) return undefined;
     setName((initialName || '').slice(0, 30));
+    setError('');
     const t = window.setTimeout(() => inputRef.current?.focus(), 80);
     return () => window.clearTimeout(t);
   }, [open, initialName, mode]);
 
-  if (!open) return null;
-
   const trimmed = name.trim();
   const submit = (e) => {
     e?.preventDefault?.();
-    onConfirm?.(trimmed || 'Anonymous');
+    const result = sanitizeDisplayName(name);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setError('');
+    onConfirm?.(result.name);
   };
 
   return (
-    <div
-      className="mm-modal-overlay mm-modal-overlay--sheet z-[6200]"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="mm-join-title"
-      onClick={onCancel}
+    <MotionDialog
+      open={open}
+      onClose={onCancel}
+      sheet
+      overlayClassName="z-[6200]"
+      className="mm-join-modal"
+      titleId="mm-join-title"
+      as="form"
+      panelProps={{ onSubmit: submit }}
     >
-      <form
-        className="mm-join-modal"
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={submit}
-      >
         <div className="mm-join-modal__glow" aria-hidden />
         <header className="mm-join-modal__head">
           <HellooooLogo size={36} />
@@ -95,12 +101,21 @@ export function JoinUsernameModal({
           ref={inputRef}
           className="mm-join-modal__input"
           value={name}
-          onChange={(e) => setName(e.target.value.slice(0, 30))}
+          onChange={(e) => {
+            setName(e.target.value.slice(0, 30));
+            if (error) setError('');
+          }}
+          aria-invalid={error ? 'true' : undefined}
+          aria-describedby={error ? 'mm-join-error' : undefined}
+          data-autofocus=""
           placeholder="Anonymous"
           maxLength={30}
           autoComplete="nickname"
           enterKeyHint="go"
         />
+        {error && (
+          <p id="mm-join-error" className="mm-join-modal__error" role="alert">{error}</p>
+        )}
         <div className="mm-join-modal__meta">
           <span>{trimmed.length}/30</span>
           <button
@@ -138,7 +153,6 @@ export function JoinUsernameModal({
             {copy.cta}
           </button>
         </div>
-      </form>
-    </div>
+    </MotionDialog>
   );
 }

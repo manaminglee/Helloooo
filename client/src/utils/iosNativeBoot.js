@@ -8,7 +8,7 @@ export async function bootIosNativeShell() {
       import('@capacitor/app'),
     ]);
     await StatusBar.setStyle({ style: Style.Dark });
-    await StatusBar.setBackgroundColor({ color: '#07060f' }).catch(() => {});
+    await StatusBar.setBackgroundColor({ color: '#12100e' }).catch(() => {});
     App.addListener('backButton', ({ canGoBack }) => {
       if (canGoBack) window.history.back();
     });

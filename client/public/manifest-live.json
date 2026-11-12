@@ -8,8 +8,8 @@
   "start_url": "/?src=pwa",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#07060f",
-  "theme_color": "#ff2d6f",
+  "background_color": "#12100e",
+  "theme_color": "#e08a45",
   "orientation": "portrait",
   "categories": [
     "social",

@@ -2,6 +2,7 @@
  * Age verification + Cloudflare Turnstile - shown first before preloader
  */
 import { useState, Suspense } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import { lazyRetry } from '../utils/lazyRetry';
 import { API_BASE } from '../config/apiBase';
 import { HellooooBrand, HellooooLogo, HELLOOOO_EMOJI } from './HellooooBrand';
@@ -29,6 +30,7 @@ function shouldSkipTurnstile() {
 }
 
 export function AgeVerificationGate({ onVerified }) {
+  const reduce = useReducedMotion();
   const skipTurnstile = shouldSkipTurnstile();
   const [turnstileToken, setTurnstileToken] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -94,10 +96,18 @@ export function AgeVerificationGate({ onVerified }) {
 
   return (
     <div className="min-h-[100dvh] bg-realm-void flex items-center justify-center p-6 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] relative overflow-hidden">
-      <div className="gate-card relative z-10 max-w-md w-full">
+      <motion.div
+        className="gate-card relative z-10 max-w-md w-full"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="age-gate-title"
+        initial={reduce ? false : { opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: reduce ? 0.01 : 0.4, ease: [0.22, 1, 0.36, 1] }}
+      >
         <HellooooLogo size={40} className="mx-auto mb-5" />
         <HellooooBrand size="lg" className="justify-center mb-2" />
-        <h2 className="text-lg font-bold text-white/80 mb-2 text-center">Age Verification</h2>
+        <h2 id="age-gate-title" className="text-lg font-semibold text-white/85 mb-2 text-center">Age verification</h2>
         <p className="text-sm mb-6 text-center" style={{ color: 'rgba(232,234,246,0.55)' }}>
           {HELLOOOO_EMOJI} Helloooo is an 18+ platform. Confirm your age
           {skipTurnstile ? ' to continue.' : ' and complete the security check to continue.'}
@@ -119,20 +129,23 @@ export function AgeVerificationGate({ onVerified }) {
         )}
 
         {error && (
-          <p className="text-red-400 text-sm text-center mb-4">{error}</p>
+          <p className="text-red-300 text-sm text-center mb-4" role="alert">{error}</p>
         )}
 
         <div className="flex flex-col gap-3">
           <button
             id="age-confirm-btn"
+            type="button"
             onClick={handleAgeConfirm}
             disabled={(!skipTurnstile && turnstileSiteKey && !turnstileToken) || isVerifying}
+            aria-busy={isVerifying}
             className="btn btn-primary w-full py-3 text-base rounded-xl disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isVerifying ? 'Verifying...' : '✓ I am 18 years or older'}
+            {isVerifying ? 'Verifying…' : 'I am 18 years or older'}
           </button>
           <button
             id="age-decline-btn"
+            type="button"
             onClick={handleDecline}
             className="btn btn-ghost w-full py-3 text-base rounded-xl"
           >
@@ -140,10 +153,10 @@ export function AgeVerificationGate({ onVerified }) {
           </button>
         </div>
 
-        <p className="text-xs mt-5 text-center" style={{ color: 'rgba(232,234,246,0.35)' }}>
+        <p className="text-xs mt-5 text-center" style={{ color: 'rgba(246,241,232,0.45)' }}>
           By continuing you agree to our Terms of Service and Community Guidelines.
         </p>
-      </div>
+      </motion.div>
     </div>
   );
 }

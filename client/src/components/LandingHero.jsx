@@ -129,15 +129,17 @@ export function LandingHero({
               Anonymous video, text, group and voice. No sign-up, no nickname.
             </motion.p>
             <div className="lv4-hero__actions">
-              <button
+              <motion.button
                 type="button"
                 className="lv4-cta"
                 disabled={!connected || isJoining}
                 onClick={startVideo}
+                whileHover={reduce || !connected || isJoining ? undefined : { scale: 1.03 }}
+                whileTap={reduce || !connected || isJoining ? undefined : { scale: 0.97 }}
               >
                 Start chatting
                 <span aria-hidden>→</span>
-              </button>
+              </motion.button>
             </div>
             {!connected && (
               <p className="lv4-hero__status">Connecting to servers…</p>

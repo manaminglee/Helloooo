@@ -2,6 +2,7 @@
  * Creator-only YouTube Live setup — stream key stays in memory for this session only.
  */
 import { useEffect, useState } from 'react';
+import { MotionDialog } from '../motion/MotionDialog';
 
 /** Accept raw key or full rtmp(s)://…/live2/KEY from YouTube Studio. */
 export function normalizeYoutubeStreamKey(raw) {
@@ -35,8 +36,6 @@ export function CreatorLiveModal({ open, onClose, isLive, onStart, onStop }) {
     }
   }, [open]);
 
-  if (!open) return null;
-
   const handleStart = async () => {
     const key = normalizeYoutubeStreamKey(streamKey);
     if (key.length < 8) {
@@ -55,14 +54,17 @@ export function CreatorLiveModal({ open, onClose, isLive, onStart, onStop }) {
   };
 
   return (
-    <div className="mm-modal-overlay z-[2500]" onClick={onClose}>
-      <div
-        className="mm-modal-surface max-w-md rounded-3xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <MotionDialog
+      open={open}
+      onClose={busy ? undefined : onClose}
+      closeOnBackdrop={!busy}
+      overlayClassName="z-[2500]"
+      className="mm-modal-surface max-w-md rounded-3xl"
+      titleId="yt-live-title"
+    >
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
-            <h3 className="text-sm font-black uppercase tracking-widest text-rose-400">YouTube Live</h3>
+            <h3 id="yt-live-title" className="text-sm font-semibold text-rose-300">YouTube Live</h3>
             <p className="text-xs text-white/50 mt-1">Streams only the 2×2 video grid — creators only.</p>
           </div>
           <button type="button" onClick={onClose} className="text-white/40 hover:text-white px-2" aria-label="Close">✕</button>
@@ -101,7 +103,7 @@ export function CreatorLiveModal({ open, onClose, isLive, onStart, onStop }) {
               Key is never stored on Helloooo.
             </p>
             {error && (
-              <p className="text-[11px] text-rose-300/95 leading-relaxed rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2">
+              <p className="text-[11px] text-rose-300/95 leading-relaxed rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2" role="alert">
                 {error}
               </p>
             )}
@@ -123,7 +125,6 @@ export function CreatorLiveModal({ open, onClose, isLive, onStart, onStop }) {
             </button>
           </div>
         )}
-      </div>
-    </div>
+    </MotionDialog>
   );
 }

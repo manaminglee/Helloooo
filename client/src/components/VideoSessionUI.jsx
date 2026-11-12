@@ -2,6 +2,7 @@
  * Shared UI for VideoChat + GroupVideoRoom: rating, more menu, reactions, devices, banners.
  */
 import { useEffect, useRef, useState } from 'react';
+import { MotionDialog } from '../motion/MotionDialog';
 import { MiniChatGamePanel } from './MiniChatGamePanel';
 import { CountryFlag } from './CountryFlag';
 import { PHASE_3_PRO } from '../constants/features';
@@ -44,12 +45,10 @@ export function ChatMatchStatus({ status, peerCountry, peerName, matchedInterest
 }
 
 export function ConversationRatingModal({ open, onClose, onRate, title = 'How was your chat?' }) {
-  if (!open) return null;
   return (
-    <div className="mm-modal-overlay z-[2000] animate-fade-in" onClick={onClose}>
-      <div className="mm-modal-surface max-w-sm text-center" onClick={(e) => e.stopPropagation()}>
-        <div className="text-4xl mb-4">⭐</div>
-        <h3 className="text-lg font-black uppercase tracking-tight text-white mb-2">{title}</h3>
+    <MotionDialog open={open} onClose={onClose} overlayClassName="z-[2000]" className="mm-modal-surface max-w-sm text-center" titleId="rate-chat-title">
+        <div className="text-4xl mb-4" aria-hidden>⭐</div>
+        <h3 id="rate-chat-title" className="text-lg font-semibold text-white mb-2">{title}</h3>
         <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-8">Anonymous feedback helps improve matches.</p>
         <div className="flex gap-2">
           {['Poor', 'Neutral', 'Elite'].map((label, idx) => (
@@ -63,9 +62,8 @@ export function ConversationRatingModal({ open, onClose, onRate, title = 'How wa
             </button>
           ))}
         </div>
-        <button type="button" onClick={onClose} className="mt-4 text-[10px] text-white/30 hover:text-white/60 uppercase tracking-widest">Skip</button>
-      </div>
-    </div>
+        <button type="button" onClick={onClose} className="mt-4 text-xs text-white/45 hover:text-white/80">Skip</button>
+    </MotionDialog>
   );
 }
 
@@ -105,7 +103,6 @@ export function VideoMoreSheet({
   balance = 0,
   essentialOnly = false,
 }) {
-  if (!open) return null;
   const Item = ({ onClick, label, sub, active, disabled }) => (
     <button
       type="button"
@@ -119,11 +116,17 @@ export function VideoMoreSheet({
   );
 
   return (
-    <div className="mm-modal-overlay mm-modal-overlay--sheet z-[500]" onClick={onClose}>
-      <div className="mm-modal-surface w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[85vh] custom-scrollbar" onClick={(e) => e.stopPropagation()}>
+    <MotionDialog
+      open={open}
+      onClose={onClose}
+      sheet
+      overlayClassName="z-[500]"
+      className="mm-modal-surface w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[85vh] custom-scrollbar"
+      titleId="video-more-title"
+    >
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xs font-black uppercase tracking-widest text-white/50">More options</h3>
-          <button type="button" onClick={onClose} className="text-white/40 hover:text-white px-2">✕</button>
+          <h3 id="video-more-title" className="text-sm font-semibold text-white/80">More options</h3>
+          <button type="button" onClick={onClose} className="text-white/40 hover:text-white px-2 min-h-[44px] min-w-[44px]" aria-label="Close">✕</button>
         </div>
         <div className="grid gap-2">
           {essentialOnly ? (
@@ -197,8 +200,7 @@ export function VideoMoreSheet({
             <MiniChatGamePanel onSendPrompt={(text) => { onIcebreaker?.(text, true); onClose?.(); }} />
           </div>
         )}
-      </div>
-    </div>
+    </MotionDialog>
   );
 }
 
@@ -239,34 +241,50 @@ export function FloatingVideoReactions({ reactions }) {
 }
 
 export function DevicePickerSheet({ open, onClose, videoDevices, audioDevices, selectedVideoId, selectedAudioId, onSelectVideo, onSelectAudio }) {
-  if (!open) return null;
+  const cameras = videoDevices || [];
+  const mics = audioDevices || [];
   return (
-    <div className="mm-modal-overlay mm-modal-overlay--sheet z-[520]" onClick={onClose}>
-      <div className="mm-modal-surface w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl pb-[max(1rem,env(safe-area-inset-bottom))]" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-xs font-black uppercase tracking-widest text-white/50 mb-4">Audio & video devices</h3>
-        <label className="block text-[10px] font-bold text-white/40 uppercase mb-2">Camera</label>
+    <MotionDialog
+      open={open}
+      onClose={onClose}
+      sheet
+      overlayClassName="z-[520]"
+      className="mm-modal-surface w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl pb-[max(1rem,env(safe-area-inset-bottom))]"
+      titleId="device-picker-title"
+    >
+        <h3 id="device-picker-title" className="text-sm font-semibold text-white/80 mb-4">Audio and video devices</h3>
+        <label className="block text-xs font-semibold text-white/50 mb-2" htmlFor="mm-camera-select">Camera</label>
+        {cameras.length === 0 ? (
+          <p className="mb-4 text-sm text-white/45" role="status">No cameras found. Check browser permission and try again.</p>
+        ) : (
         <select
+          id="mm-camera-select"
           value={selectedVideoId || ''}
           onChange={(e) => onSelectVideo(e.target.value)}
-          className="w-full mb-4 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5 text-sm text-white outline-none focus:border-violet-500/50"
+          className="w-full mb-4 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5 text-sm text-white outline-none focus:border-amber-400/60"
         >
-          {videoDevices.map((d) => (
-            <option key={d.deviceId} value={d.deviceId} className="bg-[#111]">{d.label || `Camera ${d.deviceId.slice(0, 6)}`}</option>
+          {cameras.map((d) => (
+            <option key={d.deviceId} value={d.deviceId} className="bg-[#1c1814]">{d.label || `Camera ${d.deviceId.slice(0, 6)}`}</option>
           ))}
         </select>
-        <label className="block text-[10px] font-bold text-white/40 uppercase mb-2">Microphone</label>
+        )}
+        <label className="block text-xs font-semibold text-white/50 mb-2" htmlFor="mm-mic-select">Microphone</label>
+        {mics.length === 0 ? (
+          <p className="text-sm text-white/45" role="status">No microphones found.</p>
+        ) : (
         <select
+          id="mm-mic-select"
           value={selectedAudioId || ''}
           onChange={(e) => onSelectAudio(e.target.value)}
-          className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2.5 text-sm text-white outline-none focus:border-violet-500/50"
+          className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2.5 text-sm text-white outline-none focus:border-amber-400/60"
         >
-          {audioDevices.map((d) => (
-            <option key={d.deviceId} value={d.deviceId} className="bg-[#111]">{d.label || `Mic ${d.deviceId.slice(0, 6)}`}</option>
+          {mics.map((d) => (
+            <option key={d.deviceId} value={d.deviceId} className="bg-[#1c1814]">{d.label || `Mic ${d.deviceId.slice(0, 6)}`}</option>
           ))}
         </select>
-        <button type="button" onClick={onClose} className="mt-4 w-full py-3 rounded-xl bg-violet-600 text-white text-sm font-bold">Done</button>
-      </div>
-    </div>
+        )}
+        <button type="button" onClick={onClose} className="mt-4 w-full py-3 rounded-xl bg-[#f0c48a] text-[#1c140c] text-sm font-semibold">Done</button>
+    </MotionDialog>
   );
 }
 
@@ -317,12 +335,11 @@ export function VideoSessionBanners({
 
 export function TipCreatorModal({ open, onClose, onTip, balance, creatorName }) {
   const [amount, setAmount] = useState(10);
-  if (!open) return null;
   const options = [10, 25, 50];
+  const short = Number(balance) < amount;
   return (
-    <div className="mm-modal-overlay z-[530]" onClick={onClose}>
-      <div className="mm-modal-surface max-w-xs border-amber-500/20" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-sm font-black text-amber-400 uppercase tracking-widest mb-1">Tip creator</h3>
+    <MotionDialog open={open} onClose={onClose} overlayClassName="z-[530]" className="mm-modal-surface max-w-xs" titleId="tip-title">
+        <h3 id="tip-title" className="text-base font-semibold text-amber-200 mb-1">Tip creator</h3>
         <p className="text-xs text-white/50 mb-4">Send coins to @{creatorName || 'creator'}</p>
         <div className="flex gap-2 mb-4">
           {options.map((n) => (
@@ -336,17 +353,17 @@ export function TipCreatorModal({ open, onClose, onTip, balance, creatorName }) 
             </button>
           ))}
         </div>
-        <p className="text-[10px] text-white/30 mb-4 text-center">Your balance: {balance} coins</p>
+        <p className="text-xs text-white/45 mb-4 text-center">Your balance: {balance} coins</p>
+        {short && <p className="text-xs text-rose-200 mb-3 text-center" role="status">Not enough coins for {amount}. Pick a smaller tip or earn more first.</p>}
         <button
           type="button"
-          disabled={balance < amount}
+          disabled={short}
           onClick={() => { onTip(amount); onClose(); }}
-          className="w-full py-3 rounded-xl bg-amber-500 text-black font-black uppercase text-xs disabled:opacity-40"
+          className="w-full py-3 rounded-xl bg-amber-400 text-black text-sm font-semibold disabled:opacity-40"
         >
           Send {amount} coins
         </button>
-      </div>
-    </div>
+    </MotionDialog>
   );
 }
 
