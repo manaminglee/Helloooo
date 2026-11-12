@@ -1,7 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { API_BASE } from '../config/apiBase';
 import { getCreatorAuthHeaders, getCreatorSessionToken } from '../utils/creatorAuth';
 import { emitCreatorAuth } from './useSocket';
+import { fetchJsonWithTimeout, isTimeoutError } from '../utils/fetchJsonWithTimeout';
+
+const BOOTSTRAP_TIMEOUT_MS = 8000;
+const AUTH_TIMEOUT_MS = 12000;
+const TRUST_TIMEOUT_MS = 5000;
 
 const STORAGE_KEY = 'mm_audio_session';
 const USERNAME_KEY = 'mm_audio_username';
@@ -58,6 +63,9 @@ export function useAudioIdentity(socket) {
   const [hasCreatorSession, setHasCreatorSession] = useState(() => !!getCreatorSessionToken());
   const [deviceTrusted, setDeviceTrusted] = useState(() => !!readDeviceToken());
   const [creatorLinkFailed, setCreatorLinkFailed] = useState(false);
+  const [savedUsername, setSavedUsername] = useState(() => readSavedUsername());
+  const sessionGenRef = useRef(0);
+  const inflightRef = useRef(null);
 
   const attachSocket = useCallback((sessionToken) => {
     if (!socket || !sessionToken) return;
@@ -70,13 +78,12 @@ export function useAudioIdentity(socket) {
   const rememberThisDevice = useCallback(async (sessionToken) => {
     if (!sessionToken) return false;
     try {
-      const res = await fetch(`${API_BASE}/api/audio-identity/trust-device`, {
+      const { data } = await fetchJsonWithTimeout(`${API_BASE}/api/audio-identity/trust-device`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-audio-session': sessionToken },
         credentials: 'include',
         body: JSON.stringify({ label: navigator.platform || 'This device' }),
-      });
-      const data = await res.json().catch(() => ({}));
+      }, TRUST_TIMEOUT_MS);
       if (!data?.ok || !data.deviceToken) return false;
       persistDeviceToken(data.deviceToken, data.deviceId);
       setDeviceTrusted(true);
@@ -87,11 +94,15 @@ export function useAudioIdentity(socket) {
   }, []);
 
   const persistSession = useCallback((sessionToken, id) => {
+    sessionGenRef.current += 1;
     setToken(sessionToken);
     setIdentity(id);
     setCreatorLinkFailed(false);
     try { sessionStorage.setItem(STORAGE_KEY, sessionToken); } catch { /* ignore */ }
-    if (id?.username) persistUsername(id.username);
+    if (id?.username) {
+      persistUsername(id.username);
+      setSavedUsername(id.username);
+    }
     attachSocket(sessionToken);
   }, [attachSocket]);
 
@@ -105,12 +116,11 @@ export function useAudioIdentity(socket) {
     setHasCreatorSession(true);
     try {
       emitCreatorAuth(creatorTok);
-      const res = await fetch(`${API_BASE}/api/audio-identity/from-creator`, {
+      const { res, data } = await fetchJsonWithTimeout(`${API_BASE}/api/audio-identity/from-creator`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getCreatorAuthHeaders() },
         credentials: 'include',
-      });
-      const data = await res.json().catch(() => ({}));
+      }, AUTH_TIMEOUT_MS);
       if (!res.ok || !data.ok || !data.token || !data.identity) {
         setCreatorLinkFailed(true);
         setError(data.error || 'Could not sign in with creator account');
@@ -120,9 +130,11 @@ export function useAudioIdentity(socket) {
       setCreatorLinkFailed(false);
       setError('');
       return true;
-    } catch {
+    } catch (err) {
       setCreatorLinkFailed(true);
-      setError('Network error linking creator account');
+      setError(isTimeoutError(err)
+        ? 'Creator sign-in timed out — use your voice username and PIN, or try again.'
+        : 'Network error linking creator account');
       return false;
     }
   }, [persistSession]);
@@ -152,6 +164,8 @@ export function useAudioIdentity(socket) {
 
   useEffect(() => {
     let cancelled = false;
+    const bootGen = sessionGenRef.current;
+    const stale = () => cancelled || sessionGenRef.current !== bootGen;
     async function bootstrap() {
       setHydrating(true);
       setCreatorLinkFailed(false);
@@ -160,7 +174,7 @@ export function useAudioIdentity(socket) {
         if (getCreatorSessionToken()) {
           setHasCreatorSession(true);
           const ok = await loginFromCreator();
-          if (cancelled) return;
+          if (stale()) return;
           if (ok) return;
           setCreatorLinkFailed(true);
           // Fall through to normal audio restore if creator link failed
@@ -168,21 +182,29 @@ export function useAudioIdentity(socket) {
 
         let currentToken = token;
         if (currentToken) {
-          const res = await fetch(`${API_BASE}/api/audio-identity/me`, {
-            headers: { 'x-audio-session': currentToken },
-            credentials: 'include',
-          });
-          const data = await res.json().catch(() => ({}));
-          if (cancelled) return;
-          if (data?.ok && data.identity) {
-            setIdentity(data.identity);
-            attachSocket(currentToken);
-            return;
+          try {
+            const { data } = await fetchJsonWithTimeout(`${API_BASE}/api/audio-identity/me`, {
+              headers: { 'x-audio-session': currentToken },
+              credentials: 'include',
+            }, BOOTSTRAP_TIMEOUT_MS);
+            if (stale()) return;
+            if (data?.ok && data.identity) {
+              setIdentity(data.identity);
+              if (data.identity.username) {
+                persistUsername(data.identity.username);
+                setSavedUsername(data.identity.username);
+              }
+              attachSocket(currentToken);
+              return;
+            }
+            // Explicit miss — stale after server restart
+            currentToken = null;
+            setToken(null);
+            try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+          } catch {
+            if (stale()) return;
+            // Timeout/network: keep the token; show sign-in if identity never loaded.
           }
-          // Stale session token after server restart — clear it
-          currentToken = null;
-          setToken(null);
-          try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
         }
 
         // Trusted device → exchange the rotating device token for a session.
@@ -190,25 +212,27 @@ export function useAudioIdentity(socket) {
         // drop it and fall through to a normal sign-in (server returns 200).
         const deviceToken = readDeviceToken();
         if (deviceToken) {
-          const res = await fetch(`${API_BASE}/api/audio-identity/resume`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ deviceToken }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (cancelled) return;
-          if (data?.ok && data.token && data.identity) {
-            persistDeviceToken(data.deviceToken, data.deviceId);  // rotated — old one is dead
-            setDeviceTrusted(true);
-            setToken(data.token);
-            setIdentity(data.identity);
-            try { sessionStorage.setItem(STORAGE_KEY, data.token); } catch { /* ignore */ }
-            if (data.identity?.username) persistUsername(data.identity.username);
-            attachSocket(data.token);
+          try {
+            const { data } = await fetchJsonWithTimeout(`${API_BASE}/api/audio-identity/resume`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ deviceToken }),
+            }, BOOTSTRAP_TIMEOUT_MS);
+            if (stale()) return;
+            if (data?.ok && data.token && data.identity) {
+              persistDeviceToken(data.deviceToken, data.deviceId);  // rotated — old one is dead
+              setDeviceTrusted(true);
+              persistSession(data.token, data.identity);
+              return;
+            }
+          } catch {
+            if (stale()) return;
+            // Timeout/network — keep the device token so a later visit can retry.
             return;
           }
-          // Any failed resume — clear device trust and continue bootstrap
+          if (stale()) return;
+          // Explicit failed resume — clear device trust and continue bootstrap
           persistDeviceToken(null);
           setDeviceTrusted(false);
         }
@@ -245,53 +269,69 @@ export function useAudioIdentity(socket) {
   }, [hasCreatorSession, hydrating, identity?.username, creatorLinkFailed, loginFromCreator]);
 
   const register = async ({ username, pin, nameColor, remember = true }) => {
+    if (inflightRef.current) return false;
+    inflightRef.current = 'register';
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/api/audio-identity/register`, {
+      const { res, data } = await fetchJsonWithTimeout(`${API_BASE}/api/audio-identity/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ username, pin, nameColor }),
-      });
-      const data = await res.json();
+      }, AUTH_TIMEOUT_MS);
       if (!res.ok || !data.ok) {
         setError(data.error || 'Registration failed');
         return false;
       }
+      if (!data.token || !data.identity?.username) {
+        setError('Registration failed');
+        return false;
+      }
       persistSession(data.token, data.identity);
-      if (remember) await rememberThisDevice(data.token);
+      if (remember) void rememberThisDevice(data.token);
       return true;
-    } catch {
-      setError('Network error — try again');
+    } catch (err) {
+      setError(isTimeoutError(err)
+        ? 'The request timed out. If this username was just created, sign in with your PIN instead of creating again.'
+        : 'Network error — try again');
       return false;
     } finally {
+      inflightRef.current = null;
       setLoading(false);
     }
   };
 
   const login = async ({ username, pin, remember = true }) => {
+    if (inflightRef.current) return false;
+    inflightRef.current = 'login';
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/api/audio-identity/login`, {
+      const { res, data } = await fetchJsonWithTimeout(`${API_BASE}/api/audio-identity/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ username, pin }),
-      });
-      const data = await res.json();
+      }, AUTH_TIMEOUT_MS);
       if (!res.ok || !data.ok) {
         setError(data.error || 'Login failed');
         return false;
       }
+      if (!data.token || !data.identity?.username) {
+        setError('Login failed');
+        return false;
+      }
       persistSession(data.token, data.identity);
-      if (remember) await rememberThisDevice(data.token);
+      if (remember) void rememberThisDevice(data.token);
       return true;
-    } catch {
-      setError('Network error — try again');
+    } catch (err) {
+      setError(isTimeoutError(err)
+        ? 'Sign-in timed out. Check your connection and try again.'
+        : 'Network error — try again');
       return false;
     } finally {
+      inflightRef.current = null;
       setLoading(false);
     }
   };
@@ -299,6 +339,7 @@ export function useAudioIdentity(socket) {
   const clearLocalIdentity = useCallback(() => {
     setIdentity(null);
     setToken(null);
+    setSavedUsername('');
     try {
       sessionStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(USERNAME_KEY);
@@ -323,6 +364,7 @@ export function useAudioIdentity(socket) {
     setDeviceTrusted(false);
     try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
     try { localStorage.removeItem(USERNAME_KEY); } catch { /* ignore */ }
+    setSavedUsername('');
   }, [token, socket]);
 
   /** Opt in to staying signed in here. Only meaningful with a live session. */
@@ -362,6 +404,15 @@ export function useAudioIdentity(socket) {
     }
   }, [token]);
 
+  const applyCoins = useCallback((next) => {
+    const n = Number(next);
+    if (!Number.isFinite(n) || n < 0) return;
+    setIdentity((prev) => {
+      if (!prev?.username || prev.coins === n) return prev;
+      return { ...prev, coins: n };
+    });
+  }, []);
+
   const refresh = useCallback(async () => {
     if (!token) return;
     try {
@@ -392,7 +443,7 @@ export function useAudioIdentity(socket) {
     logout,
     refresh,
     clearLocalIdentity,
-    savedUsername: readSavedUsername(),
+    savedUsername,
     hydrating,
     isSignedIn: !!identity?.username,
     hasCreatorSession,
@@ -401,5 +452,6 @@ export function useAudioIdentity(socket) {
     trustDevice,
     forgetDevice,
     listDevices,
+    applyCoins,
   };
 }

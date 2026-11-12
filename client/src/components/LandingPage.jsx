@@ -189,7 +189,7 @@ const INSIGHTS = [
 // `group_text` now routes to live Voice Rooms.
 
 export function LandingPage({ onJoin, connected: appConnected, coinState, isJoining = false, registered = false, currentActiveSeconds = 0, joinMeta = {}, setJoinMeta, country: userCountry = null }) {
-  const { balance, streak, canClaim, nextClaim, claimCoins, adsEnabled, adScripts } = coinState || {};
+  const { balance, streak, canClaim, nextClaim, claimCoins, adsEnabled, adScripts, walletReady } = coinState || {};
   const [interests, setInterests] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const { socket, connected: localConnected, country, onlineCount: socketOnlineCount, isCreator: socketIsCreator } = useSocket();
@@ -851,9 +851,7 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
                 onClick={() => setShowSettings(true)}
                 className="mm-compact-btn p-2 rounded-xl border border-white/10 bg-white/5 text-white/50 hover:text-white hover:bg-white/10 transition-colors"
               />
-              {connected && balance !== undefined && (
-                <CoinBadge balance={balance} streak={streak} canClaim={canClaim} nextClaim={nextClaim ?? 0} claimCoins={claimCoins} registered={registered} currentActiveSeconds={currentActiveSeconds} isCreator={!!creatorStatus || socketIsCreator} />
-              )}
+              <CoinBadge balance={balance} loading={!walletReady && balance == null} streak={streak} canClaim={canClaim} nextClaim={nextClaim ?? 0} claimCoins={claimCoins} registered={registered} currentActiveSeconds={currentActiveSeconds} isCreator={!!creatorStatus || socketIsCreator} />
               <OnlineViewersBadge count={onlineCount ?? 0} country={country} />
               {creatorReferralCode && (
                 <CreatorNotificationBell
@@ -1814,6 +1812,7 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
           creatorStatus={creatorStatus}
           connected={connected}
           balance={balance}
+          walletReady={walletReady}
           streak={streak}
           canClaim={canClaim}
           nextClaim={nextClaim}

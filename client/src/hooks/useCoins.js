@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { API_BASE } from '../config/apiBase';
 import { mmDebug } from '../utils/mmDebug';
+import { fetchJsonWithTimeout } from '../utils/fetchJsonWithTimeout';
 
 const CLAIM_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -34,13 +35,15 @@ export function useCoins() {
     const [loading, setLoading] = useState(true);
     const [hasSynced, setHasSynced] = useState(false);
     const retryTimerRef = useRef(null);
+    const fetchGenRef = useRef(0);
 
     const fetchStatus = async (retries = 3) => {
+        const gen = ++fetchGenRef.current;
         try {
-            const res = await fetch(`${API_BASE}/api/user/coins`, { credentials: 'include' });
+            const { res, data } = await fetchJsonWithTimeout(`${API_BASE}/api/user/coins`, { credentials: 'include' }, 8000);
+            if (gen !== fetchGenRef.current) return;
             if (res.ok) {
-                const data = await res.json();
-                setBalance(data.coins);
+                if (data.coins !== undefined) setBalance(data.coins);
                 setStreak(data.streak);
                 setCanClaim(!!data.canClaim);
                 setNextClaim(data.nextClaim ?? 0);
@@ -52,11 +55,11 @@ export function useCoins() {
             }
         } catch (e) {
             mmDebug('coins.fetch', e);
-            if (retries > 0) {
+            if (retries > 0 && gen === fetchGenRef.current) {
                 retryTimerRef.current = setTimeout(() => fetchStatus(retries - 1), 2000);
             }
         } finally {
-            setLoading(false);
+            if (gen === fetchGenRef.current) setLoading(false);
         }
     };
 
@@ -115,5 +118,6 @@ export function useCoins() {
         registered,
         activeSeconds,
         loading,
+        hasSynced,
     };
 }

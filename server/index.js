@@ -2820,7 +2820,15 @@ app.post('/api/verify-turnstile', async (req, res) => {
     }
     const data = await r.json();
     if (data.success) return res.json({ success: true });
-    return res.status(400).json({ success: false, 'error-codes': data['error-codes'] });
+    const codes = data['error-codes'] || [];
+    const expired = codes.includes('timeout-or-duplicate') || codes.includes('invalid-input-response');
+    return res.status(400).json({
+      success: false,
+      'error-codes': codes,
+      error: expired
+        ? 'Security check expired. Please complete it again.'
+        : 'Security check failed. Please try again.',
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: 'Verification failed' });
   }
@@ -3142,8 +3150,12 @@ app.get('/api/turn', (req, res) => {
 const COIN_CLAIM_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 app.post('/api/user/credit-age', async (req, res) => {
-  const ip = getClientIp(req);
-  await getCoinUser(ip);
+  try {
+    const ip = getClientIp(req);
+    await getCoinUser(ip);
+  } catch (err) {
+    console.warn('[credit-age] bonus credit failed:', err?.message || err);
+  }
   res.json({ success: true });
 });
 

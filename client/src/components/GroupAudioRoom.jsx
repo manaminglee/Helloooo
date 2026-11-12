@@ -603,7 +603,7 @@ export function GroupAudioRoom({
   const [entryAnim, setEntryAnim] = useState(null);
   const [localIdentity, setLocalIdentity] = useState(audioIdentity);
   const isSignedIn = !!(audioIdentityHook?.isSignedIn && (localIdentity?.username || audioIdentity?.username));
-  const identityHydrating = !!(audioIdentityHook?.hydrating || (audioIdentityHook?.token && !isSignedIn));
+  const identityHydrating = !!audioIdentityHook?.hydrating;
 
   useEffect(() => { setCoinBalance(coins); }, [coins]);
   useEffect(() => { setLocalIdentity(audioIdentity); }, [audioIdentity]);
@@ -1037,9 +1037,8 @@ export function GroupAudioRoom({
 
   if (!channel) {
     const creatorSession = !!audioIdentityHook?.hasCreatorSession;
-    const linkFailed = !!audioIdentityHook?.creatorLinkFailed;
 
-    if (!isSignedIn && audioIdentityHook && (audioIdentityHook.hydrating || (creatorSession && !linkFailed))) {
+    if (!isSignedIn && audioIdentityHook && identityHydrating) {
       return (
         <div className="mm-shell mm-section mm-voice-lobby mm-voice-lobby--locked flex items-center justify-center min-h-[50dvh]">
           <p className="mm-body text-white/60">
@@ -1050,13 +1049,6 @@ export function GroupAudioRoom({
     }
 
     if (!isSignedIn && audioIdentityHook) {
-      if (identityHydrating && !linkFailed) {
-        return (
-          <div className="mm-shell mm-section mm-voice-lobby mm-voice-lobby--locked flex items-center justify-center min-h-[50dvh]">
-            <p className="mm-body text-white/60">Restoring your voice identity…</p>
-          </div>
-        );
-      }
       return (
         <div className="mm-shell mm-section mm-voice-lobby mm-voice-lobby--locked">
           <header className="mm-voice-lobby__hero mm-voice-lobby__hero--dim">

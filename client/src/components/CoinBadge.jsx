@@ -25,6 +25,7 @@ export function CoinBadge({
   registered = false,
   currentActiveSeconds = 0,
   isCreator = false,
+  loading = false,
 }) {
   const [showPopover, setShowPopover] = useState(false);
   const [isClaiming, setIsClaiming] = useState(false);
@@ -214,12 +215,13 @@ export function CoinBadge({
         title={isCreator ? 'Creator account — bonus visibility in rooms' : undefined}
         aria-expanded={showPopover}
         aria-haspopup="dialog"
+        aria-label={loading || balance == null ? 'Nuts balance loading' : `${balance} Nuts`}
       >
         {isCreator && (
           <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-violet-400 ring-2 ring-black shadow-[0_0_8px_#c4b5fd]" aria-hidden />
         )}
         <span className="text-sm group-hover:rotate-12 transition-transform">🪙</span>
-        <span className="font-black text-xs text-white tabular-nums">{balance}</span>
+        <span className="font-black text-xs text-white tabular-nums">{loading || balance == null ? '—' : balance}</span>
         <div className="w-px h-3 bg-white/10 mx-1" />
         <span className="text-[9px] font-black uppercase text-white/30 tracking-tighter italic">🔥 {streak}d</span>
 

@@ -28,6 +28,24 @@ function registerAudioIdentity(app, io, deps) {
   /** Optional: fold IP guest coins into audio wallet on sign-in. */
   let migrateGuestWallet = null;
 
+  const storageTimeoutMs = Number(deps.storageTimeoutMs) > 0
+    ? Number(deps.storageTimeoutMs)
+    : Math.max(500, Number(process.env.AUDIO_IDENTITY_STORAGE_TIMEOUT_MS) || 6000);
+
+  function withStorageTimeout(thenable, label) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const err = new Error(`${label || 'account storage'} timed out`);
+        err.code = 'ETIMEDOUT';
+        reject(err);
+      }, storageTimeoutMs);
+    });
+    return Promise.race([Promise.resolve(thenable), timeout]).finally(() => clearTimeout(timer));
+  }
+
+  const STORAGE_UNAVAILABLE = 'Could not reach account storage — try again in a moment.';
+
   /* "Remember this device" — audio rooms and lives share this identity, and
      both handle real money, so the PIN is proven once and then a rotating,
      hashed device credential keeps the person signed in. */
@@ -40,6 +58,8 @@ function registerAudioIdentity(app, io, deps) {
   const loginAttempts = new Map();
   const locks = new Map();
   let hydrated = false;
+  let hydrateInFlight = null;
+  let hydrateCooldownUntil = 0;
 
   function ensureShape() {
     if (!localDb.audio_identities) localDb.audio_identities = {};
@@ -171,22 +191,34 @@ function registerAudioIdentity(app, io, deps) {
 
   async function hydrateFromSupabase() {
     if (!supabase || hydrated) return;
-    try {
-      const { data, error } = await supabase.from('mm_audio_identities').select('*');
-      if (error) {
-        console.warn('[audioIdentity] Supabase load failed:', error.message);
-        return;
+    if (Date.now() < hydrateCooldownUntil) return;
+    if (hydrateInFlight) return hydrateInFlight;
+    hydrateInFlight = (async () => {
+      try {
+        const { data, error } = await withStorageTimeout(
+          supabase.from('mm_audio_identities').select('*'),
+          'identity storage load',
+        );
+        if (error) {
+          console.warn('[audioIdentity] Supabase load failed:', error.message);
+          hydrateCooldownUntil = Date.now() + 30_000;
+          return;
+        }
+        for (const row of data || []) {
+          const k = String(row.username_key || row.username || '').toLowerCase();
+          if (k) identities.set(k, rowToRecord(row));
+        }
+        indexPinFingerprints();
+        hydrated = true;
+        console.log(`[audioIdentity] Loaded ${data?.length || 0} identities from Supabase`);
+      } catch (e) {
+        console.warn('[audioIdentity] Supabase hydrate error:', e.message);
+        hydrateCooldownUntil = Date.now() + 30_000;
+      } finally {
+        hydrateInFlight = null;
       }
-      for (const row of data || []) {
-        const k = String(row.username_key || row.username || '').toLowerCase();
-        if (k) identities.set(k, rowToRecord(row));
-      }
-      indexPinFingerprints();
-      hydrated = true;
-      console.log(`[audioIdentity] Loaded ${data?.length || 0} identities from Supabase`);
-    } catch (e) {
-      console.warn('[audioIdentity] Supabase hydrate error:', e.message);
-    }
+    })();
+    return hydrateInFlight;
   }
 
   async function ensureHydrated() {
@@ -260,8 +292,15 @@ function registerAudioIdentity(app, io, deps) {
       const row = recordToRow(rec);
       if (meta.registerIp) row.register_ip = meta.registerIp;
       if (meta.loginIp) row.last_login_ip = meta.loginIp;
-      const { error } = await supabase.from('mm_audio_identities').upsert(row);
-      if (error) console.warn('[audioIdentity] Supabase upsert failed:', error.message);
+      try {
+        const { error } = await withStorageTimeout(
+          supabase.from('mm_audio_identities').upsert(row),
+          'identity save',
+        );
+        if (error) console.warn('[audioIdentity] Supabase upsert failed:', error.message);
+      } catch (e) {
+        console.warn('[audioIdentity] Supabase upsert error:', e.message);
+      }
     }
   }
 
@@ -462,16 +501,21 @@ function registerAudioIdentity(app, io, deps) {
     if (isWeakPin(pinStr)) return { ok: false, error: 'Pick a less obvious PIN — avoid 1234, 1111, etc.' };
     const key = name.toLowerCase();
 
+    return withLock(`register:${key}`, async () => {
     // PIN is checked with username on login — do not require globally unique PINs
     // (only ~9k non-weak 4-digit codes exist; uniqueness blocks new signups).
-    if (identities.has(key)) return { ok: false, error: 'Username taken — try another.' };
+    if (identities.has(key)) return { ok: false, error: 'Username taken — try another. If this is your account, sign in with your PIN.' };
     if (supabase) {
-      const { data: existing } = await supabase
-        .from('mm_audio_identities')
-        .select('username_key')
-        .eq('username_key', key)
-        .maybeSingle();
-      if (existing) return { ok: false, error: 'Username taken — try another.' };
+      try {
+        const { data: existing, error } = await withStorageTimeout(
+          supabase.from('mm_audio_identities').select('username_key').eq('username_key', key).maybeSingle(),
+          'username check',
+        );
+        if (error) return { ok: false, error: STORAGE_UNAVAILABLE };
+        if (existing) return { ok: false, error: 'Username taken — try another. If this is your account, sign in with your PIN.' };
+      } catch {
+        return { ok: false, error: STORAGE_UNAVAILABLE };
+      }
     }
 
     const color = pickNameColor(nameColor);
@@ -499,6 +543,7 @@ function registerAudioIdentity(app, io, deps) {
     const token = createSession(key, ip);
     audit?.('audio_identity_register', { username: name, ip });
     return { ok: true, token, identity: publicView(rec) };
+    });
   }
 
   async function login({ username, pin, ip }) {
@@ -507,10 +552,18 @@ function registerAudioIdentity(app, io, deps) {
     const key = String(username || '').trim().toLowerCase();
     let rec = identities.get(key);
     if (!rec && supabase) {
-      const { data } = await supabase.from('mm_audio_identities').select('*').eq('username_key', key).maybeSingle();
-      if (data) {
-        rec = rowToRecord(data);
-        identities.set(key, rec);
+      try {
+        const { data, error } = await withStorageTimeout(
+          supabase.from('mm_audio_identities').select('*').eq('username_key', key).maybeSingle(),
+          'identity lookup',
+        );
+        if (error) return { ok: false, error: STORAGE_UNAVAILABLE };
+        if (data) {
+          rec = rowToRecord(data);
+          identities.set(key, rec);
+        }
+      } catch {
+        return { ok: false, error: STORAGE_UNAVAILABLE };
       }
     }
     if (!rec) return { ok: false, error: 'Unknown username — create a new identity?' };
