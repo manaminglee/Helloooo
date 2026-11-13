@@ -10,22 +10,22 @@
 /* Helloooo design system — mobile-first tokens, cards, chat, 3D motion */
 
 /* ============================================================
-   DESIGN TOKENS — Nocturne Bloom (violet · fuchsia · sea-glass)
+   DESIGN TOKENS — Solstice (warm ink · ivory · amber)
    ============================================================ */
 :root {
   --font-sans: 'Outfit', system-ui, sans-serif;
-  --font-display: 'Syne', var(--font-sans);
-  --c-bg: #07060f;
-  --c-surface: #0e111f;
-  --c-card: rgba(16, 20, 38, 0.78);
-  --c-border: rgba(255, 255, 255, 0.07);
-  --c-border-strong: rgba(255, 255, 255, 0.12);
-  --c-text: #f4f4f8;
-  --c-muted: #8b93a8;
-  /* Primary accent — electric violet */
-  --c-accent: #a78bfa;
-  --c-accent-deep: #7c3aed;
-  --c-accent-glow: rgba(167, 139, 250, 0.45);
+  --font-display: 'Fraunces', 'Iowan Old Style', Georgia, serif;
+  --c-bg: #12100e;
+  --c-surface: #1b1714;
+  --c-card: rgba(32, 26, 21, 0.92);
+  --c-border: rgba(246, 236, 220, 0.1);
+  --c-border-strong: rgba(246, 236, 220, 0.18);
+  --c-text: #f6f1e8;
+  --c-muted: #b3a79a;
+  /* Primary accent — lantern amber */
+  --c-accent: #e8b56a;
+  --c-accent-deep: #c4843a;
+  --c-accent-glow: rgba(232, 181, 106, 0.4);
   /* Harmony — mint live / coral warn / amber coin */
   --c-teal: #2dd4bf;
   --c-teal-light: #5eead4;

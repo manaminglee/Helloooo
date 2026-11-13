@@ -2,23 +2,23 @@
   "appId": "site.helloooo.app",
   "appName": "Helloooo",
   "webDir": "dist",
-  "backgroundColor": "#07060f",
+  "backgroundColor": "#12100e",
   "ios": {
     "contentInset": "automatic",
     "scrollEnabled": true,
-    "backgroundColor": "#07060f",
+    "backgroundColor": "#12100e",
     "preferredContentMode": "mobile",
     "limitsNavigationsToAppBoundDomains": false
   },
   "plugins": {
     "SplashScreen": {
       "launchAutoHide": true,
-      "backgroundColor": "#07060f",
+      "backgroundColor": "#12100e",
       "showSpinner": false
     },
     "StatusBar": {
       "style": "DARK",
-      "backgroundColor": "#07060f"
+      "backgroundColor": "#12100e"
     },
     "PushNotifications": {
       "presentationOptions": ["badge", "sound", "alert"]

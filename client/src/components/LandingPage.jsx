@@ -33,6 +33,7 @@ import { LandingSideMenu } from './LandingSideMenu';
 import { OnlineViewersBadge } from './OnlineViewersBadge';
 import { CreatorAvatar } from './CreatorAvatar';
 import { JoinUsernameModal } from './JoinUsernameModal';
+import { MotionDialog } from '../motion/MotionDialog';
 
 // Below-the-fold / secondary UI — keep landing first paint light.
 const MiniTrendChart = lazyRetry(() =>
@@ -180,7 +181,7 @@ const MM_INTEREST_PRESETS_KEY = 'mm_anon_interest_presets_v1';
 const INSIGHTS = [
   'Popular right now: music and gaming rooms.',
   'Tip: add interests before starting a chat for better matches.',
-  'Group video rooms support up to 4 people.',
+  'Free group video rooms fit 4 people. Larger rooms are available for creators.',
   'Your session stays anonymous — no account required.',
   'Report unsafe behavior from any chat screen.',
 ];
@@ -775,9 +776,14 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
       />
 
       {/* COMMUNITY POLICY (first-time video / group video) */}
-      {showCommunityPolicy && (
-        <div className="mm-modal-overlay z-[6300]" role="dialog" aria-modal="true" aria-labelledby="community-policy-title">
-          <div className="mm-join-modal mm-join-modal--policy">
+      <MotionDialog
+        open={showCommunityPolicy}
+        onClose={() => { setShowCommunityPolicy(false); setPendingVideoMode(null); }}
+        closeOnBackdrop={false}
+        overlayClassName="z-[6300]"
+        className="mm-join-modal mm-join-modal--policy"
+        titleId="community-policy-title"
+      >
             <h2 id="community-policy-title" className="mm-join-modal__title">Community safety</h2>
             <p className="mm-join-modal__hint">
               Video on Helloooo is anonymous and live. You must be 18+ where required. No nudity, no harassment, no illegal content.
@@ -799,9 +805,7 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
                 I understand
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </MotionDialog>
 
       {/* SCANNING OVERLAY */}
       {scanning && (
@@ -1769,41 +1773,37 @@ export function LandingPage({ onJoin, connected: appConnected, coinState, isJoin
       )}
 
       {/* STANDARD MODAL */}
-      {modal && (
-        <div className="mm-modal-overlay z-[6500] animate-in-zoom" onClick={() => setModal(null)}>
-          <div className="relative w-full max-w-sm bg-black border border-white/10 rounded-[40px] p-10 text-center" onClick={e => e.stopPropagation()}>
-            <button onClick={() => setModal(null)} className="absolute top-6 right-8 text-white/20 hover:text-white transition-colors text-xl">✕</button>
-            <h3 className="text-2xl font-black text-white italic uppercase mb-6 tracking-tighter">{MODALS[modal]?.title}</h3>
-            <p className="text-[11px] text-white/40 leading-relaxed font-bold uppercase tracking-widest whitespace-pre-line">{MODALS[modal]?.body}</p>
-            <button onClick={() => setModal(null)} className="mt-10 w-full h-14 bg-violet-500 text-black font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-white transition-all shadow-xl shadow-violet-500/25">Got it</button>
-          </div>
-        </div>
-      )}
+      <MotionDialog
+        open={!!modal && !!MODALS[modal]}
+        onClose={() => setModal(null)}
+        overlayClassName="z-[6500]"
+        className="mm-modal-surface sol-dialog"
+        titleId="landing-info-title"
+      >
+        <button type="button" onClick={() => setModal(null)} className="sol-dialog__close" aria-label="Close">✕</button>
+        <h3 id="landing-info-title" className="sol-dialog__title">{MODALS[modal]?.title}</h3>
+        <p className="sol-dialog__body">{MODALS[modal]?.body}</p>
+        <button type="button" onClick={() => setModal(null)} className="sol-dialog__action">Got it</button>
+      </MotionDialog>
 
       {/* CUSTOM APP DIALOG — replaces system alert/confirm */}
-      {dialog && (
-        <div className="mm-modal-overlay z-[7000]">
-          <div className="w-full max-w-xs bg-[#0a0a0a] border border-white/10 rounded-[40px] p-8 shadow-2xl animate-in-zoom">
-            <div className="text-center mb-6">
-              <div className="text-3xl mb-4">{dialog.confirm ? '⚠️' : 'ℹ️'}</div>
-              <h4 className="text-base font-black uppercase tracking-widest text-white italic mb-3">{dialog.title}</h4>
-              <p className="text-[11px] text-white/40 font-bold leading-relaxed">{dialog.body}</p>
-            </div>
-            <div className={`flex gap-3 ${dialog.confirm ? 'flex-row' : 'flex-col'}`}>
-              <button
-                onClick={dialog.onConfirm}
-                className="flex-1 h-12 bg-violet-400 text-black font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-white transition-all"
-              >OK</button>
-              {dialog.confirm && dialog.onCancel && (
-                <button
-                  onClick={dialog.onCancel}
-                  className="flex-1 h-12 bg-white/5 border border-white/10 text-white/40 font-black uppercase tracking-widest text-[10px] rounded-2xl hover:bg-white/10 transition-all"
-                >Cancel</button>
-              )}
-            </div>
-          </div>
+      <MotionDialog
+        open={!!dialog}
+        onClose={() => (dialog?.confirm && dialog?.onCancel ? dialog.onCancel() : dialog?.onConfirm?.())}
+        closeOnBackdrop={false}
+        overlayClassName="z-[7000]"
+        className="mm-modal-surface sol-dialog"
+        titleId="landing-dialog-title"
+      >
+        <h4 id="landing-dialog-title" className="sol-dialog__title">{dialog?.title}</h4>
+        <p className="sol-dialog__body">{dialog?.body}</p>
+        <div className="sol-dialog__row">
+          <button type="button" onClick={dialog?.onConfirm} className="sol-dialog__action">OK</button>
+          {dialog?.confirm && dialog?.onCancel && (
+            <button type="button" onClick={dialog.onCancel} className="sol-dialog__action sol-dialog__ghost">Cancel</button>
+          )}
         </div>
-      )}
+      </MotionDialog>
 
       {showMobileMenu && (
         <LandingSideMenu

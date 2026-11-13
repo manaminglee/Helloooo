@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 import { AudioRoleBadge, AudioLevelBadge, AudioLevelUpBurst, useLevelUpFlash } from './AudioBadges';
 import { createPortal } from 'react-dom';
 import { useAudioChannel } from '../hooks/useAudioChannel';
@@ -12,6 +13,7 @@ import { playLockSound, playUnlockSound } from '../utils/sounds';
 import { countryToFlag } from '../utils/countryFlag';
 import { AudioName, AudioCoinShop, AudioIdentityGate } from './AudioIdentityGate';
 import { primaryNameColor, resolveNameStyle, isGradientNameColor } from '../utils/audioNameStyle';
+import { MotionDialog } from '../motion/MotionDialog';
 
 const LOBBY_FEATURES = [
   { icon: '👤', label: 'Tap any speaker', hint: 'PA invite · gift · hello' },
@@ -72,16 +74,32 @@ function AudioRoomToast({ children, className = '' }) {
 
 function LockCodeModal({ open, topic, onSubmit, onClose, onKnock }) {
   const [digits, setDigits] = useState('');
-  useEffect(() => { if (open) setDigits(''); }, [open]);
+  const sent = useRef(false);
+  const onSubmitRef = useRef(onSubmit);
+  onSubmitRef.current = onSubmit;
   useEffect(() => {
-    if (!open || digits.length !== 4) return;
-    const t = setTimeout(() => onSubmit(digits), 120);
+    if (!open) return;
+    setDigits('');
+    sent.current = false;
+  }, [open]);
+  const submit = (code) => {
+    if (sent.current || String(code || '').length !== 4) return;
+    sent.current = true;
+    onSubmitRef.current?.(code);
+  };
+  useEffect(() => {
+    if (!open || digits.length !== 4) return undefined;
+    const t = setTimeout(() => submit(digits), 180);
     return () => clearTimeout(t);
-  }, [open, digits, onSubmit]);
-  if (!open || typeof document === 'undefined') return null;
-  return createPortal(
-    <div className="mm-modal-overlay z-[600]" onClick={onClose}>
-      <div className="mm-audio-room-modal mm-audio-room-modal--center text-center" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Enter room code">
+  }, [open, digits]);
+  return (
+    <MotionDialog
+      open={open}
+      onClose={onClose}
+      overlayClassName="z-[600]"
+      className="mm-audio-room-modal mm-audio-room-modal--center text-center"
+      label="Enter room code"
+    >
         <span className="mm-audio-lock-modal__icon" aria-hidden>🔒</span>
         <h3 className="mm-audio-lock-modal__title">Locked room</h3>
         <p className="mm-audio-lock-modal__sub">{topic ? `Enter the 4-digit code for “${topic}”` : 'Enter the 4-digit admin code'}</p>
@@ -101,11 +119,9 @@ function LockCodeModal({ open, topic, onSubmit, onClose, onKnock }) {
           {onKnock && (
             <button type="button" className="mm-btn mm-btn--ghost flex-1" onClick={onKnock}>🚪 Knock</button>
           )}
-          <button type="button" className="mm-btn mm-btn--primary flex-1" disabled={digits.length !== 4} onClick={() => onSubmit(digits)}>Join</button>
+          <button type="button" className="mm-btn mm-btn--primary flex-1" disabled={digits.length !== 4} onClick={() => submit(digits)}>Join</button>
         </div>
-      </div>
-    </div>,
-    document.body,
+    </MotionDialog>
   );
 }
 
@@ -1144,12 +1160,15 @@ export function GroupAudioRoom({
 
         <div className="mm-voice-room-grid">
           {channels.map((c) => (
-            <button
+            <motion.button
               key={c.id}
               type="button"
               disabled={connecting}
               onClick={() => tryJoinRoom(c.id, c.hasLockCode, c.entryFee || 0)}
               className={`mm-voice-room-card${c.isPa ? ' mm-voice-room-card--pa' : ''}${c.locked || c.hasLockCode ? ' mm-voice-room-card--locked' : ''}`}
+              whileHover={connecting ? undefined : { y: -4 }}
+              whileTap={connecting ? undefined : { scale: 0.98 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 28 }}
             >
               <div className="mm-voice-room-card__top">
                 <span className="mm-voice-room-card__title">
@@ -1165,7 +1184,7 @@ export function GroupAudioRoom({
                 {c.entryFee > 0 && <span>🪙 {c.entryFee}</span>}
               </div>
               <span className="mm-voice-room-card__cta">{c.hasLockCode ? 'Enter code →' : 'Join →'}</span>
-            </button>
+            </motion.button>
           ))}
           {channels.length === 0 && (
             <div className="mm-voice-room-empty">

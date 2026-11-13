@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { MotionDialog } from '../motion/MotionDialog';
 
 const REASONS = [
   { id: 'harassment', label: 'Harassment or hate' },
@@ -23,7 +24,6 @@ export function ReportSafetyModal({
   const [reason, setReason] = useState('harassment');
   const [alsoBlock, setAlsoBlock] = useState(true);
   const [phase, setPhase] = useState('form'); // 'form' | 'done'
-  const panelRef = useRef(null);
   const closeBtnRef = useRef(null);
 
   useEffect(() => {
@@ -32,8 +32,6 @@ export function ReportSafetyModal({
       return;
     }
     setPhase('form');
-    const t = requestAnimationFrame(() => closeBtnRef.current?.focus?.());
-    return () => cancelAnimationFrame(t);
   }, [open]);
 
   const handleClose = useCallback(() => {
@@ -41,46 +39,14 @@ export function ReportSafetyModal({
     onClose?.();
   }, [onClose]);
 
-  useEffect(() => {
-    if (!open || phase !== 'form') return;
-    const el = panelRef.current;
-    if (!el) return;
-    const focusables = el.querySelectorAll('button, [href], select, input, textarea, [tabindex]:not([tabindex="-1"])');
-    const list = [...focusables].filter((n) => !n.disabled && n.offsetParent !== null);
-    const onKey = (e) => {
-      if (e.key !== 'Tab' || list.length === 0) return;
-      const first = list[0];
-      const last = list[list.length - 1];
-      if (e.shiftKey) {
-        if (document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else if (document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    el.addEventListener('keydown', onKey);
-    return () => el.removeEventListener('keydown', onKey);
-  }, [open, phase]);
-
-  if (!open) return null;
-
   return (
-    <div
-      className="mm-modal-overlay z-[5000]"
-      onClick={handleClose}
-      role="presentation"
+    <MotionDialog
+      open={open}
+      onClose={handleClose}
+      overlayClassName="z-[5000]"
+      className="mm-modal-surface max-w-md rounded-3xl"
+      titleId="report-modal-title"
     >
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="report-modal-title"
-        className="mm-modal-surface max-w-md rounded-3xl"
-        onClick={(e) => e.stopPropagation()}
-      >
         {phase === 'form' ? (
           <>
             <h3 id="report-modal-title" className="text-lg font-black uppercase tracking-wide text-white mb-1">
@@ -90,21 +56,22 @@ export function ReportSafetyModal({
 
             {prepend}
 
-            <label className="block text-[10px] font-black uppercase tracking-widest text-white/35 mb-2" htmlFor="mm-report-reason">
-              Reason
-            </label>
-            <select
-              id="mm-report-reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              className="w-full mb-5 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none focus:border-rose-500/40"
-            >
+            <p className="text-xs font-semibold text-white/50 mb-2" id="mm-report-reason-label">What happened?</p>
+            <ul className="studio-reasons" role="radiogroup" aria-labelledby="mm-report-reason-label">
               {REASONS.map((r) => (
-                <option key={r.id} value={r.id} className="bg-[#111]">
-                  {r.label}
-                </option>
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={reason === r.id}
+                    className={reason === r.id ? 'is-on' : ''}
+                    onClick={() => setReason(r.id)}
+                  >
+                    {r.label}
+                  </button>
+                </li>
               ))}
-            </select>
+            </ul>
 
             <label className="flex items-center gap-3 cursor-pointer mb-6">
               <input type="checkbox" checked={alsoBlock} onChange={(e) => setAlsoBlock(e.target.checked)} className="rounded border-white/20" />
@@ -130,16 +97,15 @@ export function ReportSafetyModal({
         ) : (
           <div className="text-center py-2">
             <div className="text-3xl mb-3" aria-hidden>✓</div>
-            <h3 className="text-lg font-black uppercase tracking-wide text-white mb-2">Report received</h3>
+            <h3 id="report-modal-title" className="text-lg font-semibold text-white mb-2">Report received</h3>
             <p className="text-[11px] text-white/50 leading-relaxed mb-6">
               Thanks for helping keep Helloooo safe. Moderators review anonymous reports; we never sell personal data. You can leave this call whenever you want (Next / Leave).
             </p>
-            <button type="button" onClick={handleClose} className="w-full rounded-2xl bg-white/10 border border-white/10 py-3 text-[11px] font-black uppercase text-white hover:bg-white/15">
+            <button type="button" onClick={handleClose} className="w-full rounded-2xl bg-white/10 border border-white/10 py-3 text-sm font-semibold text-white hover:bg-white/15">
               Close
             </button>
           </div>
         )}
-      </div>
-    </div>
+    </MotionDialog>
   );
 }

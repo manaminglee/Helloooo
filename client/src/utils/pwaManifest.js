@@ -6,7 +6,7 @@
  */
 
 const UNIFIED_MANIFEST = '/manifest.json';
-const THEME = { default: '#ff2d6f', live: '#ff2d6f' };
+const THEME = { default: '#12100e', live: '#e08a45' };
 
 function linkEl() {
   let el = document.querySelector('link[rel="manifest"]');

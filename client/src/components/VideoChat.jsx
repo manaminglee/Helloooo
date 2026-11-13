@@ -816,6 +816,8 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
   };
 
   const [pipPos, setPipPos] = useState('tr');
+  const [pipOffset, setPipOffset] = useState(null);
+  const pipDrag = useRef(null);
   const [pipSize, setPipSize] = useState('md');
   const [pipHidden, setPipHidden] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -2932,7 +2934,28 @@ export default function VideoChat({ socket, connected, country, onlineCount, int
             <div className={`mm-desk-body${isSidebarDesk ? ' mm-desk-body--sidebar' : ''}`}>
               <div className={`mm-desk-media${isSidebarDesk ? ' mm-desk-media--sidebar' : ''}`}>
                 <div className={isSidebarDesk ? 'mm-desk-video-col' : 'mm-desk-video-row'}>
-              <div className="mm-desk-pane">
+              <div
+                className="mm-desk-pane incall-pip"
+                style={pipOffset ? { left: pipOffset.x, top: pipOffset.y, right: 'auto', bottom: 'auto' } : undefined}
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  pipDrag.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top, w: rect.width, h: rect.height };
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                }}
+                onPointerMove={(e) => {
+                  if (!pipDrag.current) return;
+                  const parent = e.currentTarget.parentElement?.getBoundingClientRect();
+                  if (!parent) return;
+                  const x = e.clientX - parent.left - pipDrag.current.dx;
+                  const y = e.clientY - parent.top - pipDrag.current.dy;
+                  setPipOffset({
+                    x: Math.max(8, Math.min(x, parent.width - pipDrag.current.w - 8)),
+                    y: Math.max(8, Math.min(y, parent.height - pipDrag.current.h - 8)),
+                  });
+                }}
+                onPointerUp={() => { pipDrag.current = null; }}
+              >
                 <div className="mm-desk-pane__tag mm-desk-pane__tag--you">
                   <span className="mm-desk-dot mm-desk-dot--green" aria-hidden /> You
                 </div>

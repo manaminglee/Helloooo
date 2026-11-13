@@ -10,6 +10,9 @@ import './index.css';
 import './styles/ui-redesign.css';
 import './styles/landing-v4.css';
 import './styles/ios-native.css';
+import './styles/solstice.css';
+import './styles/studio.css';
+import './styles/incall-studio.css';
 
 markIosPlatformClasses();
 armIosMediaUnlock();
@@ -68,7 +71,7 @@ class ErrorBoundary extends React.Component {
       }
 
       return (
-        <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#07060f', color: '#fff', fontFamily: 'system-ui,sans-serif', padding: 24, textAlign: 'center', gap: 12 }}>
+        <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#12100e', color: '#fff', fontFamily: 'system-ui,sans-serif', padding: 24, textAlign: 'center', gap: 12 }}>
           <h2 style={{ margin: 0, fontSize: 18, color: chunkErr ? '#c084fc' : '#f87171' }}>
             {chunkErr ? 'App updated' : 'Something went wrong'}
           </h2>

@@ -1,24 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
-import { motion, useMotionValueEvent, useReducedMotion, useScroll, useTransform } from 'framer-motion';
-import { useLowPower } from '../context/LowPowerContext';
-import { stagger } from '../utils/landingMotion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { LandingMorphStage } from './LandingModeCards';
 
-const easeOut = [0.22, 1, 0.36, 1];
+const spring = { type: 'spring', stiffness: 380, damping: 28 };
 
-const wordUp = {
-  hidden: { opacity: 0, y: 32 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.72, ease: easeOut },
-  },
-};
-
-const wordFade = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1, transition: { duration: 0.3 } },
-};
+const STEPS = [
+  { n: '01', title: 'Pick a room', body: 'Video, text, a group of 4, voice, or a live.' },
+  { n: '02', title: 'We match you', body: 'Anonymous by default. Interests are optional.' },
+  { n: '03', title: 'Leave anytime', body: 'Skip, report, or close. Nothing is saved.' },
+];
 
 export function LandingHero({
   connected,
@@ -28,137 +17,89 @@ export function LandingHero({
   counts = {},
 }) {
   const reduce = useReducedMotion();
-  const { lowPower } = useLowPower();
-  const pinRef = useRef(null);
-  const stickyRef = useRef(null);
-  const { scrollYProgress } = useScroll({
-    target: pinRef,
-    offset: ['start start', 'end end'],
-  });
-  const morph = useTransform(scrollYProgress, [0.1, 0.82], [0, 1]);
-  const [cardsOn, setCardsOn] = useState(!!reduce);
-
-  useMotionValueEvent(morph, 'change', (value) => {
-    setCardsOn(value >= 0.48);
-  });
-
-  useEffect(() => {
-    if (reduce) setCardsOn(true);
-  }, [reduce]);
-
-  useEffect(() => {
-    const pin = pinRef.current;
-    const sticky = stickyRef.current;
-    if (!pin || !sticky || reduce) return undefined;
-
-    let frame = 0;
-    const update = () => {
-      frame = 0;
-      const rect = pin.getBoundingClientRect();
-      const vh = window.innerHeight;
-      sticky.classList.remove('is-fixed', 'is-end');
-      if (rect.top <= 0 && rect.bottom > vh) {
-        sticky.classList.add('is-fixed');
-      } else if (rect.top < 0 && rect.bottom <= vh) {
-        sticky.classList.add('is-end');
-      }
-    };
-    const onScroll = () => {
-      if (!frame) frame = window.requestAnimationFrame(update);
-    };
-    update();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onScroll);
-    return () => {
-      window.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onScroll);
-      if (frame) window.cancelAnimationFrame(frame);
-    };
-  }, [reduce]);
-
 
   const startVideo = () => {
     if (onStartChat) onStartChat();
     else onStart?.('video');
   };
 
-  const morphStyle = reduce ? { '--lv4-morph': 1 } : { '--lv4-morph': morph };
-  const words = reduce ? wordFade : wordUp;
-  const stillOrb = reduce || lowPower;
-
   return (
-    <section
-      ref={pinRef}
-      className={`lv4-pin${reduce ? ' lv4-pin--static' : ''}`}
-      data-landing-pin=""
-    >
-      <div className="lv4-pin__sticky" ref={stickyRef}>
-        <div className="lv4-hero">
-          <div className="lv4-orb-wrap" aria-hidden>
-            {stillOrb ? (
-              <div className="lv4-orb lv4-orb--static" />
-            ) : (
-              <motion.div
-                className="lv4-orb"
-                animate={{ x: [0, 16, -12, 0], y: [0, -12, 10, 0] }}
-                transition={{ duration: 18, repeat: Infinity, ease: 'easeInOut' }}
-              />
-            )}
-          </div>
-
-          <div className="lv4-hero__copy">
-            <motion.h1
-              className="lv4-hero__title"
-              initial="hidden"
-              animate="visible"
-              variants={stagger(0.12, 0.06)}
-            >
-              <motion.span className="lv4-hero__strangers" variants={words}>
-                Strangers,
-              </motion.span>
-              <motion.span className="lv4-hero__meet" variants={words}>
-                meet.
-              </motion.span>
-            </motion.h1>
-            <motion.p
-              className="lv4-hero__sub"
-              initial={reduce ? { opacity: 0 } : { opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.55, delay: 0.28, ease: easeOut }}
-            >
-              Anonymous video, text, group and voice. No sign-up, no nickname.
-            </motion.p>
-            <div className="lv4-hero__actions">
-              <button
-                type="button"
-                className="lv4-cta"
-                disabled={!connected || isJoining}
-                onClick={startVideo}
-              >
-                Start chatting
-                <span aria-hidden>→</span>
-              </button>
-            </div>
-            {!connected && (
-              <p className="lv4-hero__status">Connecting to servers…</p>
-            )}
-            {connected && isJoining && (
-              <p className="lv4-hero__status">Joining…</p>
-            )}
-          </div>
-
-          <LandingMorphStage
-            morphStyle={morphStyle}
-            cardsOn={cardsOn || !!reduce}
-            onStart={onStart}
-            connected={connected}
-            isJoining={isJoining}
-            counts={counts}
-          />
-
-          <p className="lv4-moderation">Moderated 24/7 · 18+</p>
+    <section className="studio" data-landing-pin="">
+      <div className="studio-copy">
+        <motion.p
+          className="studio-kicker"
+          initial={reduce ? false : { opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={reduce ? { duration: 0.01 } : spring}
+        >
+          <span className="studio-kicker__dot" aria-hidden />
+          Live now · moderated 24/7 · 18+
+        </motion.p>
+        <motion.h1
+          className="studio-title"
+          initial={reduce ? false : { opacity: 0, y: 22 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={reduce ? { duration: 0.01 } : { ...spring, delay: 0.05 }}
+        >
+          Say hello
+          <em>to someone new.</em>
+        </motion.h1>
+        <motion.p
+          className="studio-lead"
+          initial={reduce ? false : { opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={reduce ? { duration: 0.01 } : { ...spring, delay: 0.1 }}
+        >
+          A private place for face-to-face video, quiet text, small groups, and drop-in voice. No account, no history.
+        </motion.p>
+        <div className="studio-actions">
+          <motion.button
+            type="button"
+            className="studio-cta"
+            disabled={!connected || isJoining}
+            onClick={startVideo}
+            whileHover={reduce || !connected || isJoining ? undefined : { scale: 1.04, y: -2 }}
+            whileTap={reduce || !connected || isJoining ? undefined : { scale: 0.97 }}
+            transition={spring}
+          >
+            Start chatting
+          </motion.button>
+          {!connected && <p className="studio-status">Connecting to servers…</p>}
+          {connected && isJoining && <p className="studio-status">Joining…</p>}
         </div>
       </div>
+
+      <LandingMorphStage
+        onStart={onStart}
+        connected={connected}
+        isJoining={isJoining}
+        counts={counts}
+      />
+
+      <motion.ol
+        className="studio-steps"
+        initial="hidden"
+        whileInView="visible"
+        viewport={{ once: true, margin: '-40px' }}
+        variants={reduce ? undefined : { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } }}
+      >
+        {STEPS.map((step) => (
+          <motion.li
+            key={step.n}
+            className="studio-step"
+            variants={reduce ? undefined : {
+              hidden: { opacity: 0, y: 18 },
+              visible: { opacity: 1, y: 0, transition: spring },
+            }}
+          >
+            <span className="studio-step__n">{step.n}</span>
+            <div>
+              <h3>{step.title}</h3>
+              <p>{step.body}</p>
+            </div>
+          </motion.li>
+        ))}
+      </motion.ol>
     </section>
   );
 }

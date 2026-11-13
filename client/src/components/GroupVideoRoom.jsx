@@ -3,6 +3,7 @@
  * Premium 2x2 grid layout, Multi-way call, side chat panel
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { VideoLogoPlaceholder, VideoWatermark } from './VideoPanelChrome';
 import { HellooooBrand } from './HellooooBrand';
 import { useIceServers } from '../hooks/useIceServers';
@@ -226,10 +227,10 @@ function VideoTile({ stream, isMe, isEmpty, isSearching, isActiveSpeaker = false
 
   if (isEmpty) {
     return (
-      <div className={`video-tile min-h-0 min-w-0 overflow-hidden ${deskStyle ? 'mm-group-desk-tile' : ''}`}>
+      <motion.div layout className={`video-tile min-h-0 min-w-0 overflow-hidden ${deskStyle ? 'mm-group-desk-tile' : ''}`}>
         <VideoLogoPlaceholder label="Waiting for participant" compact />
         <VideoWatermark />
-      </div>
+      </motion.div>
     );
   }
 
@@ -240,7 +241,14 @@ function VideoTile({ stream, isMe, isEmpty, isSearching, isActiveSpeaker = false
   const place = country ? countryName(country) : '';
 
   return (
-    <div className={`video-tile relative min-h-0 min-w-0 transition-all duration-500 overflow-hidden ${deskStyle ? 'mm-group-desk-tile' : ''} ${isMe ? 'mirror' : ''} ${isActiveSpeaker && !deskStyle ? 'ring-4 ring-violet-500/40 ring-inset shadow-[0_0_30px_rgba(167,139,250,0.2)] scale-[1.02] z-10' : deskStyle && isActiveSpeaker ? 'mm-group-desk-tile--speaking' : 'brightness-90 hover:brightness-100'}`}>
+    <motion.div
+      layout
+      initial={{ opacity: 0, scale: 0.94 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.92 }}
+      transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+      className={`video-tile relative min-h-0 min-w-0 overflow-hidden ${deskStyle ? 'mm-group-desk-tile' : ''} ${isMe ? 'mirror' : ''} ${isActiveSpeaker && !deskStyle ? 'ring-4 ring-amber-300/50 ring-inset z-10' : deskStyle && isActiveSpeaker ? 'mm-group-desk-tile--speaking' : ''}`}
+    >
       {stream ? (
         <video ref={ref} autoPlay playsInline muted={isMe} className="absolute inset-0 w-full h-full object-cover bg-black" />
       ) : (
@@ -295,14 +303,11 @@ function VideoTile({ stream, isMe, isEmpty, isSearching, isActiveSpeaker = false
       </div>
       )}
 
-      {isActiveSpeaker && !deskStyle && (
-        <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-500 text-black text-[7px] font-black uppercase tracking-widest animate-pulse shadow-lg">
-          <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" /><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" /></svg>
-          Speaking
-        </div>
+      {isActiveSpeaker && (
+        <span className="incall-speak" aria-hidden />
       )}
 
-    </div>
+    </motion.div>
   );
 }
 
@@ -2036,7 +2041,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               )}
               <FloatingVideoReactions reactions={localReactions.map((r) => ({ id: r.id, emoji: r.emoji, x: r.x, y: r.y }))} />
               <div className="mm-group-desk-grid">
+                <AnimatePresence>
                 <VideoTile
+                  key="local"
                   deskStyle
                   isMe
                   stream={outboundStream}
@@ -2058,6 +2065,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                 {Array.from({ length: Math.max(0, 3 - peers.length) }).map((_, i) => (
                   <VideoTile key={`empty-${i}`} deskStyle isEmpty />
                 ))}
+                </AnimatePresence>
               </div>
             </div>
 
@@ -2192,7 +2200,9 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
                 </div>
               )}
               <FloatingVideoReactions reactions={localReactions.map((r) => ({ id: r.id, emoji: r.emoji, x: r.x, y: r.y }))} />
+              <AnimatePresence>
               <VideoTile
+                key="local-m"
                 deskStyle
                 hideTileMic
                 isMe
@@ -2216,6 +2226,7 @@ export default function GroupVideoRoom({ roomId: roomIdProp, interest: interestP
               {Array.from({ length: Math.max(0, 3 - peers.length) }).map((_, i) => (
                 <VideoTile key={`mob-empty-${i}`} deskStyle hideTileMic isEmpty />
               ))}
+              </AnimatePresence>
             </div>
 
             <div ref={chatPanelRef} className={`mm-group-mobile-chat ${chatCollapsed ? 'mm-group-mobile-chat--collapsed' : ''}`}>

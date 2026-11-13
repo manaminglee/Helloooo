@@ -22,7 +22,7 @@ export const LANDING_MODE_CARDS = [
     id: 'group_video',
     icon: '🎥',
     name: 'Group video',
-    hint: 'Up to 8 people',
+    hint: 'Free rooms of 4',
     tag: 'Squad',
     accent: 'from-indigo-500/20 to-violet-500/10',
     ring: 'group-hover:border-indigo-400/50',

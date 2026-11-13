@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import { countryToFlag } from '../utils/countryFlag';
 import { mmDebug } from '../utils/mmDebug';
 import { nextMsgId } from '../utils/uniqueId';
@@ -44,6 +45,7 @@ const BlueTick = () => (
 );
 
 function ChatBubble({ m, isMe }) {
+  const reduce = useReducedMotion();
   const { vanishMessages } = usePrefs();
   const [timeLeft, setTimeLeft] = useState(60);
 
@@ -70,7 +72,12 @@ function ChatBubble({ m, isMe }) {
   const time = m.ts ? new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
   return (
-    <div className={`mm-text-chat__row ${isMe ? 'mm-text-chat__row--me' : ''}`}>
+    <motion.div
+      className={`mm-text-chat__row ${isMe ? 'mm-text-chat__row--me' : ''}`}
+      initial={reduce ? false : { opacity: 0, x: isMe ? 18 : -18, scale: 0.96 }}
+      animate={{ opacity: 1, x: 0, scale: 1 }}
+      transition={reduce ? { duration: 0.01 } : { type: 'spring', stiffness: 460, damping: 28 }}
+    >
       <div className={`mm-text-chat__bubble ${isMe ? 'mm-text-chat__bubble--me' : 'mm-text-chat__bubble--them'}`}>
         {!isMe && (
           <span className="mm-text-chat__bubble-name">
@@ -92,7 +99,7 @@ function ChatBubble({ m, isMe }) {
           {time && <span>{time}</span>}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -111,6 +118,7 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
   const [showReportModal, setShowReportModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showSkipSheet, setShowSkipSheet] = useState(false);
+  const reduceMotion = useReducedMotion();
   const roomIdRef = useRef(null);
   const chatScrollRef = useRef(null);
   const chatEndRef = useRef(null);
@@ -544,14 +552,27 @@ export default function TextChat({ socket, connected, country, onlineCount, inte
 
       <main className="mm-text-chat__main">
         {(status === 'idle' || status === 'searching') && (
-          <div className="mm-text-chat__empty">
-            <div className="mm-text-chat__empty-icon" aria-hidden>{status === 'idle' ? '💬' : '🔍'}</div>
-            <h2>{status === 'idle' ? 'Text chat' : SEARCHING_STATUSES[searchStatusIndex]}</h2>
-            <p>{status === 'idle' ? 'Tap start to match with someone new.' : 'Hang tight — finding your next chat…'}</p>
+          <div className="studio-match">
+            <div className="studio-match__orb" aria-hidden>
+              {status === 'searching' && [0, 1, 2].map((i) => (
+                <motion.span
+                  key={i}
+                  className="studio-match__ring"
+                  animate={reduceMotion ? undefined : { scale: [1, 1.18, 1], opacity: [0.55, 0.15, 0.55] }}
+                  transition={reduceMotion ? { duration: 0 } : { duration: 2.2, repeat: Infinity, delay: i * 0.35, ease: 'easeInOut' }}
+                  style={{ inset: 12 + i * 14 }}
+                />
+              ))}
+              <div className="studio-match__core">{status === 'idle' ? 'Hi' : '…'}</div>
+            </div>
+            <h2>{status === 'idle' ? 'Ready when you are' : SEARCHING_STATUSES[searchStatusIndex]}</h2>
+            <p>{status === 'idle' ? 'Start a chat and we will find someone who wants to talk.' : 'Stay on this screen. You can stop the search anytime.'}</p>
             {status === 'searching' && (
-              <div className="mm-text-chat__dots" aria-hidden>
-                <span /><span /><span />
-              </div>
+              <ol className="studio-match__steps">
+                {SEARCHING_STATUSES.map((label, i) => (
+                  <li key={label} className={i === searchStatusIndex ? 'is-on' : ''}>{label.replace('…', '')}</li>
+                ))}
+              </ol>
             )}
           </div>
         )}

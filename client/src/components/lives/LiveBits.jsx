@@ -1,5 +1,7 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { useDialogEffects } from '../../motion/MotionDialog';
 import { MmIcon } from '../icons/MmIcon';
 import { GiftArt } from '../icons/GiftArt';
 import { GiftCelebrationOverlay } from '../../gifts/GiftCelebrationOverlay';
@@ -105,7 +107,12 @@ const CommentRow = memo(function CommentRow({ c, onUser }) {
     ? c.text.replace(new RegExp(`^@${c.mention}\\s*`, 'i'), '')
     : c.text;
   return (
-    <div className={`live-comment${c.mention ? ' live-comment--mention' : ''}`}>
+    <motion.div
+      className={`live-comment${c.mention ? ' live-comment--mention' : ''}`}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+    >
       <button
         type="button"
         className="live-comment__user"
@@ -119,7 +126,7 @@ const CommentRow = memo(function CommentRow({ c, onUser }) {
         {c.mention ? <span className="live-comment__mention">@{c.mention} </span> : null}
         {body}
       </span>
-    </div>
+    </motion.div>
   );
 });
 
@@ -164,18 +171,25 @@ const FloatHeart = memo(function FloatHeart({ shape, hue }) {
 });
 
 export const HeartLayer = memo(function HeartLayer({ hearts, onDone }) {
+  const reduce = useReducedMotion();
   return (
     <div className="live-hearts" aria-hidden>
-      {hearts.map((h) => (
-        <span
-          key={h.id}
-          className="live-heart"
-          style={h.style}
-          onAnimationEnd={() => onDone(h.id)}
-        >
-          <FloatHeart shape={h.shape} hue={h.hue} />
-        </span>
-      ))}
+      <AnimatePresence>
+        {hearts.map((h) => (
+          <motion.span
+            key={h.id}
+            className="live-heart"
+            style={h.style}
+            initial={reduce ? false : { opacity: 0, y: 12, scale: 0.6 }}
+            animate={{ opacity: 1, y: reduce ? 0 : -140, scale: 1 }}
+            exit={{ opacity: 0 }}
+            transition={reduce ? { duration: 0.01 } : { duration: 1.5, ease: 'easeOut' }}
+            onAnimationComplete={() => onDone(h.id)}
+          >
+            <FloatHeart shape={h.shape} hue={h.hue} />
+          </motion.span>
+        ))}
+      </AnimatePresence>
     </div>
   );
 });
@@ -223,54 +237,95 @@ export const FullscreenGift = memo(function FullscreenGift({ gift, onDone }) {
 
 /** Bottom sheet. Rendered in a portal so no ancestor transform can clip it. */
 export function Sheet({ open, title, onClose, children, tall = false, foot = null, className = '' }) {
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  const reduce = useReducedMotion();
+  const panelRef = useRef(null);
+  const titleId = useId();
+  useDialogEffects(open, onClose, panelRef);
 
-  if (!open) return null;
   return createPortal(
-    <div className="live-sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <div
-        className={['live-sheet', tall ? 'live-sheet--tall' : '', className].filter(Boolean).join(' ')}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="live-sheet__grip" />
-        <div className="live-sheet__head">
-          <span className="live-sheet__title">{title}</span>
-          <button type="button" className="live-icon-btn" onClick={onClose} aria-label="Close">
-            <MmIcon name="close" size={15} />
-          </button>
-        </div>
-        <div className="live-sheet__body">{children}</div>
-        {foot}
-      </div>
-    </div>,
+    <AnimatePresence>
+      {open ? (
+        <motion.div
+          className="live-sheet-backdrop"
+          onClick={onClose}
+          initial={reduce ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: reduce ? 0.01 : 0.2 }}
+        >
+          <motion.div
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            className={['live-sheet', tall ? 'live-sheet--tall' : '', className].filter(Boolean).join(' ')}
+            onClick={(e) => e.stopPropagation()}
+            initial={reduce ? false : { y: 28, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 24, opacity: 0 }}
+            transition={{ duration: reduce ? 0.01 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div className="live-sheet__grip" />
+            <div className="live-sheet__head">
+              <span className="live-sheet__title" id={titleId}>{title}</span>
+              <button type="button" className="live-icon-btn" onClick={onClose} aria-label="Close">
+                <MmIcon name="close" size={15} />
+              </button>
+            </div>
+            <div className="live-sheet__body">{children}</div>
+            {foot}
+          </motion.div>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>,
     document.body,
   );
 }
 
 export function ConfirmDialog({ open, title, message, confirmLabel = 'Confirm', danger = false, onConfirm, onCancel }) {
-  if (!open) return null;
+  const reduce = useReducedMotion();
+  const panelRef = useRef(null);
+  const titleId = useId();
+  useDialogEffects(open, onCancel, panelRef);
   return createPortal(
-    <div className="live-center-backdrop" role="dialog" aria-modal="true" onClick={onCancel}>
-      <div className="live-confirm" onClick={(e) => e.stopPropagation()}>
-        <p className="live-confirm__title">{title}</p>
-        {message && <p className="live-confirm__sub">{message}</p>}
-        <div className="live-confirm__row">
-          <button type="button" className="live-btn" onClick={onCancel}>Cancel</button>
-          <button
-            type="button"
-            className={`live-btn ${danger ? 'live-btn--danger' : 'live-btn--primary'}`}
-            onClick={onConfirm}
+    <AnimatePresence>
+      {open ? (
+        <motion.div
+          className="live-center-backdrop"
+          onClick={onCancel}
+          initial={reduce ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: reduce ? 0.01 : 0.2 }}
+        >
+          <motion.div
+            ref={panelRef}
+            className="live-confirm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            onClick={(e) => e.stopPropagation()}
+            initial={reduce ? false : { opacity: 0, scale: 0.98, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: reduce ? 0.01 : 0.24 }}
           >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>,
+            <p className="live-confirm__title" id={titleId}>{title}</p>
+            {message && <p className="live-confirm__sub">{message}</p>}
+            <div className="live-confirm__row">
+              <button type="button" className="live-btn" onClick={onCancel}>Cancel</button>
+              <button
+                type="button"
+                className={`live-btn ${danger ? 'live-btn--danger' : 'live-btn--primary'}`}
+                onClick={onConfirm}
+              >
+                {confirmLabel}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>,
     document.body,
   );
 }

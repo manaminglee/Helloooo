@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import { usePrefs, setPref } from '../utils/userPrefs';
 import { HellooooBrand, HellooooLogo } from './HellooooBrand';
 export { GearIcon, SettingsGearButton } from './SettingsGear';
@@ -58,6 +59,7 @@ const QUALITY_OPTIONS = [
 ];
 
 export function SettingsPanel({ onClose }) {
+  const reduce = useReducedMotion();
   const prefs = usePrefs();
   const closeBtnRef = useRef(null);
   const restoreFocusRef = useRef(null);
@@ -89,21 +91,27 @@ export function SettingsPanel({ onClose }) {
       onKeyDown={handleKeyDown}
     >
       {/* Backdrop */}
-      <button
+      <motion.button
         type="button"
         aria-label="Close settings"
         onClick={onClose}
-        className="absolute inset-0 h-full w-full cursor-default bg-[#04050a] animate-fade-in"
+        className="absolute inset-0 h-full w-full cursor-default bg-[#120f0c]"
         tabIndex={-1}
+        initial={reduce ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: reduce ? 0.01 : 0.2 }}
       />
 
-      {/* Panel */}
-      <aside className="ui-sheet absolute right-0 top-0 flex h-full w-full max-w-sm flex-col border-l border-white/10 bg-[#0a0a10] shadow-[-24px_0_80px_rgba(0,0,0,0.6)] animate-drawer-in mm-mobile-safe">
-        {/* Header */}
+      <motion.aside
+        className="ui-sheet absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-white/10 bg-[#1c1814] shadow-[-24px_0_80px_rgba(0,0,0,0.6)] mm-mobile-safe"
+        initial={reduce ? false : { x: 48, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        transition={reduce ? { duration: 0.01 } : { type: 'spring', stiffness: 380, damping: 34 }}
+      >
         <div className="flex items-center justify-between border-b border-white/[0.06] px-6 py-5">
           <div>
-            <h2 className="text-sm font-black uppercase tracking-[0.3em] text-white">Settings</h2>
-            <p className="mt-1 text-[9px] font-bold uppercase tracking-[0.25em] text-white/25">Saved on this device</p>
+            <p className="text-xs text-[#f0c48a]">On this device</p>
+            <h2 className="font-display text-2xl text-white" style={{ fontFamily: 'Fraunces, Georgia, serif', fontWeight: 560 }}>Settings</h2>
           </div>
           <button
             ref={closeBtnRef}
@@ -202,7 +210,7 @@ export function SettingsPanel({ onClose }) {
             </div>
           </section>
         </div>
-      </aside>
+      </motion.aside>
     </div>
   );
 }

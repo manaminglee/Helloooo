@@ -2,7 +2,7 @@ const { expect } = require('@playwright/test');
 
 const VIDEO_MODE_NAME = 'Video chat: Meet a stranger face to face';
 const TEXT_MODE_NAME = 'Text chat: Just type, stay anonymous';
-const GROUP_MODE_NAME = 'Group video: Up to 8 people';
+const GROUP_MODE_NAME = 'Group video: Free rooms of 4';
 const LIVE_MODE_NAME = 'Live: Watch creators';
 
 function livesEntry(page) {

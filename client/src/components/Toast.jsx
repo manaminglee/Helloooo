@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 
 /**
  * Toast.jsx — Global toast system for Mana Mingle.
@@ -20,8 +21,6 @@ export function useToast() {
 
 const MAX_VISIBLE = 3;
 const DEFAULT_DURATION = 4000;
-const EXIT_MS = 220;
-
 let idSeq = 0;
 
 const TYPE_STYLES = {
@@ -48,10 +47,16 @@ const TYPE_STYLES = {
 };
 
 function ToastItem({ toast, onClose }) {
+  const reduce = useReducedMotion();
   const style = TYPE_STYLES[toast.type] || TYPE_STYLES.info;
   return (
-    <div
-      className={`pointer-events-auto relative flex items-center gap-3 overflow-hidden rounded-2xl border border-white/10 bg-black/85 py-3 pl-4 pr-2 shadow-[0_8px_40px_rgba(0,0,0,0.55)] backdrop-blur-xl ${toast.leaving ? 'mm-toast-out' : 'mm-toast-in'}`}
+    <motion.div
+      layout={!reduce}
+      initial={reduce ? false : { opacity: 0, y: -12, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={reduce ? { opacity: 0 } : { opacity: 0, y: -8, scale: 0.98 }}
+      transition={{ duration: reduce ? 0.01 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className="pointer-events-auto relative flex items-center gap-3 overflow-hidden rounded-2xl border border-white/10 bg-[#1c1814]/95 py-3 pl-4 pr-2 shadow-[0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-xl"
     >
       <span
         aria-hidden
@@ -71,7 +76,7 @@ function ToastItem({ toast, onClose }) {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
         </svg>
       </button>
-    </div>
+    </motion.div>
   );
 }
 
@@ -86,18 +91,7 @@ export function ToastProvider({ children }) {
       clearTimeout(autoTimer);
       timersRef.current.delete(id);
     }
-    if (timersRef.current.has(`exit-${id}`)) return; // already leaving
-    setToasts((prev) => {
-      const target = prev.find((t) => t.id === id);
-      if (!target || target.leaving) return prev;
-      return prev.map((t) => (t.id === id ? { ...t, leaving: true } : t));
-    });
-    // Remove after the exit animation completes
-    const removalTimer = setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-      timersRef.current.delete(`exit-${id}`);
-    }, EXIT_MS);
-    timersRef.current.set(`exit-${id}`, removalTimer);
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
   const toast = useCallback((message, opts = {}) => {
@@ -129,9 +123,11 @@ export function ToastProvider({ children }) {
         className="pointer-events-none fixed inset-x-0 top-0 z-[9998] flex flex-col items-center gap-2 px-3 pt-[calc(0.75rem+env(safe-area-inset-top))] sm:px-4"
       >
         <div className="flex w-full max-w-sm flex-col gap-2">
-          {toasts.map((t) => (
-            <ToastItem key={t.id} toast={t} onClose={() => dismiss(t.id)} />
-          ))}
+          <AnimatePresence initial={false}>
+            {toasts.map((t) => (
+              <ToastItem key={t.id} toast={t} onClose={() => dismiss(t.id)} />
+            ))}
+          </AnimatePresence>
         </div>
       </div>
     </ToastContext.Provider>
